@@ -10,6 +10,18 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 langgraph>=0.2.0
 
+# Vision (incident detection + face anonymization)
+# torch must resolve before ultralytics; on CPU-only or non-default CUDA hosts
+# install it from the matching PyTorch index first.
+torch>=2.13.0
+torchvision>=0.28.0
+ultralytics>=8.4.115
+opencv-python>=5.0.0.93
+numpy>=2.4.6
+# ByteTrack's linear assignment. Ultralytics pip-installs this at runtime on the
+# first model.track() call if it is absent, which stalls or fails offline.
+lap>=0.5.12
+
 # Database (uncomment as needed)
 # sqlalchemy>=2.0.0
 # alembic>=1.14.0
