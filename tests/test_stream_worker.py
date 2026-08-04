@@ -46,12 +46,7 @@ class FakeCapture:
         self.props: dict[int, float] = {}
         self.resets = 0
 
-    def set(self, prop_id: int, value: float) -> bool:
-        self.props[prop_id] = value
-        if prop_id == cv2.CAP_PROP_POS_FRAMES and value == 0:
-            self.resets += 1
-            self._remaining = self.initial_grabs
-        return True
+
 
     def isOpened(self) -> bool:  # noqa: N802 - matches the cv2 API
         return self._opened and not self.released
@@ -76,6 +71,9 @@ class FakeCapture:
 
     def set(self, prop: int, value: float) -> bool:  # noqa: A003
         self.props[prop] = value
+        if prop == cv2.CAP_PROP_POS_FRAMES and value == 0:
+            self.resets += 1
+            self._remaining = self.initial_grabs
         return True
 
     def release(self) -> None:
