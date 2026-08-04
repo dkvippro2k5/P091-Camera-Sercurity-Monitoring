@@ -41,8 +41,17 @@ class FakeCapture:
         self._frame_count = frame_count
         self._opened = opened
         self._fps = fps
+        self.initial_grabs = grabs
         self.released = False
         self.props: dict[int, float] = {}
+        self.resets = 0
+
+    def set(self, prop_id: int, value: float) -> bool:
+        self.props[prop_id] = value
+        if prop_id == cv2.CAP_PROP_POS_FRAMES and value == 0:
+            self.resets += 1
+            self._remaining = self.initial_grabs
+        return True
 
     def isOpened(self) -> bool:  # noqa: N802 - matches the cv2 API
         return self._opened and not self.released
@@ -151,11 +160,9 @@ def test_finite_source_ends_instead_of_restarting(mock_pipeline, monkeypatch):
 
 def test_finite_source_loops_when_explicitly_requested(mock_pipeline, monkeypatch):
     """The looping demo behaviour stays available behind an opt-in flag."""
-    opens = []
+    cap = FakeCapture(grabs=2, frame_count=2)
 
     def fake_open(self):
-        cap = FakeCapture(grabs=2, frame_count=2)
-        opens.append(cap)
         return cap
 
     monkeypatch.setattr(CameraStreamWorker, "_open_capture", fake_open)
@@ -166,7 +173,7 @@ def test_finite_source_loops_when_explicitly_requested(mock_pipeline, monkeypatc
     )
     worker.start()
 
-    assert wait_until(lambda: len(opens) >= 2), "loop_finite_sources did not restart the file"
+    assert wait_until(lambda: cap.resets >= 1), "loop_finite_sources did not restart the file"
     worker.stop()
 
 

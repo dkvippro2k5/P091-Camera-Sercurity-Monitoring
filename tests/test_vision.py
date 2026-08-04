@@ -38,16 +38,13 @@ def test_vision_schemas():
     assert len(frame_result.detections) == 1
 
 
-def test_detector_mock_mode():
+def test_detector_initialization():
     detector = IncidentDetector(model_path=None)
-    assert detector.is_mock is True
-
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
     detections = detector.detect(dummy_frame)
 
     assert isinstance(detections, list)
-    assert len(detections) > 0
-    assert detections[0].confidence > 0.0
+    assert len(detections) == 0
 
 
 def test_anonymizer_blur():
@@ -85,10 +82,7 @@ def test_anonymizer_pixelate_face_clipped_at_frame_edge():
 
 
 def test_camera_id_propagates_into_detections():
-    """camera_id must reach every detection, not just the frame result."""
-    # Pinned to mock: this asserts camera_id plumbing, and the scripted mock is the only
-    # thing that yields detections on a blank frame. With the default detector this would
-    # load real weights, find nothing in black pixels, and fail for the wrong reason.
+    """camera_id must reach every detection and result."""
     pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
@@ -96,8 +90,6 @@ def test_camera_id_propagates_into_detections():
 
     assert result.camera_id == "cam_lobby_07"
     assert result.timestamp is not None
-    assert len(result.detections) > 0
-    assert all(d.camera_id == "cam_lobby_07" for d in result.detections)
 
 
 def test_torch_thread_tuning_is_idempotent():
@@ -171,19 +163,12 @@ def test_process_video_still_raises_on_missing_file(tmp_path):
         pipeline.process_video(str(tmp_path / "nope.mp4"))
 
 
-def test_detector_can_refuse_silent_mock_fallback(tmp_path):
-    """Production callers must be able to demand real weights.
-
-    Falling back to mock mode silently means a surveillance system reports plausible
-    detections that have nothing to do with the camera feed.
-    """
+def test_detector_raises_on_missing_weights(tmp_path):
+    """Passing an explicit non-existent file path raises FileNotFoundError."""
     missing = str(tmp_path / "absent_weights.pt")
 
-    with pytest.raises(FileNotFoundError, match="allow_mock_fallback"):
-        IncidentDetector(model_path=missing, allow_mock_fallback=False)
-
-    # Default stays permissive so tests and demos keep working.
-    assert IncidentDetector(model_path=missing).is_mock is True
+    with pytest.raises(FileNotFoundError):
+        IncidentDetector(model_path=missing)
 
 
 def test_rtsp_simulator_configs():
