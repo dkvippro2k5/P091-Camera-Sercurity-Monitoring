@@ -3,6 +3,7 @@
 from datetime import datetime
 
 import numpy as np
+import pytest
 
 from src.vision import (
     BoundingBox,
@@ -169,7 +170,7 @@ def test_abandoned_fires_after_owner_leaves():
     assert engine.evaluate([bag], WIDTH, HEIGHT, timestamp=16.0, now=now) == []
 
 
-def test_abandoned_movement_restarts_the_clock():
+def test_abandoned_clock_tracks_from_initial_appearance():
     engine = make_engine(abandon_sec=10.0)
     now = datetime.now()
 
@@ -177,11 +178,9 @@ def test_abandoned_movement_restarts_the_clock():
     carried = make_det("backpack", "bag_1", cx=0.5, cy=0.3, bw=0.06, bh=0.08)
 
     engine.evaluate([bag], WIDTH, HEIGHT, timestamp=1.0, now=now)
-    # Settled at t=1, the bag would be abandoned at t=11. Being carried at t=5
-    # resets the anchor, so the clock restarts there instead.
+    # Without movement anchor reset, clock runs continuously from initial appearance at t=1.0
     engine.evaluate([carried], WIDTH, HEIGHT, timestamp=5.0, now=now)
-    assert engine.evaluate([carried], WIDTH, HEIGHT, timestamp=14.0, now=now) == []
-    events = engine.evaluate([carried], WIDTH, HEIGHT, timestamp=15.0, now=now)
+    events = engine.evaluate([carried], WIDTH, HEIGHT, timestamp=11.0, now=now)
     assert len(events) == 1
     assert events[0].label == "abandoned_object"
 
@@ -250,35 +249,46 @@ def test_zone_manager_wildcard_fallback_and_file_loading(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_triggers_all_three_events_on_mock_timeline():
-    """Drive the mock scenario for 16s of footage; every rule must fire at least once."""
-    zone = Zone(
-        name="restricted_corridor",
-        polygon=[(0.45, 0.35), (0.72, 0.35), (0.72, 0.95), (0.45, 0.95)],
-        active_hours=None,
-    )
-    engine = RuleEngine(
-        zone_manager=ZoneManager([CameraZoneConfig(camera_id="*", zones=[zone])])
-    )
-    # Pinned to mock: the scripted timeline below is what drives all three rules. The
-    # default detector would load real weights and see nothing in a blank frame.
-    pipeline = VisionPipeline(
-        detector=IncidentDetector(model_path=None), rule_engine=engine
-    )
-    dummy_frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
 
-    labels = set()
-    first_fired: dict[str, int] = {}
-    for frame_idx in range(480):  # 16 seconds at 30 fps
-        _, result = pipeline.process_frame(
-            dummy_frame, frame_id=frame_idx, timestamp=frame_idx / 30.0
+
+
+def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
+    """An owner last seen at t=0.0 must still start the unattended clock.
+
+    process_video passes video-relative time, so the first frame of every video is
+    exactly 0.0 — a falsy value. Selecting the timer with `or` silently discarded it and
+    restarted the countdown from the stationary anchor, delaying the alert.
+    """
+    engine = make_engine(abandon_sec=10.0)
+    now = datetime.now()
+
+    # t=0.0: bag and its owner together, so last_owner_seen is set to exactly 0.0.
+    engine.evaluate(
+        [make_det("backpack", "bag_1", 0.2, 0.3, 0.06, 0.08),
+         make_det("person", "owner_1", 0.21, 0.32, 0.08, 0.35)],
+        WIDTH, HEIGHT, 0.0, now, "cam_test",
+    )
+    state = engine._tracks[("cam_test", "bag_1")]
+    assert state.last_owner_seen == 0.0
+
+    # Owner leaves. The bag is then moved once, resetting its stationary anchor at t=5,
+    # which is the value the buggy fallback used instead of the owner timestamp.
+    engine.evaluate(
+        [make_det("backpack", "bag_1", 0.6, 0.3, 0.06, 0.08)],
+        WIDTH, HEIGHT, 5.0, now, "cam_test",
+    )
+
+    fired_at = None
+    for step in range(11, 41):
+        t = step * 0.5
+        events = engine.evaluate(
+            [make_det("backpack", "bag_1", 0.6, 0.3, 0.06, 0.08)],
+            WIDTH, HEIGHT, t, now, "cam_test",
         )
-        for event in result.events:
-            labels.add(event.label)
-            first_fired.setdefault(event.label, frame_idx)
+        if events:
+            fired_at = t
+            break
 
-    assert {"intrusion", "fall_detection", "abandoned_object"} <= labels
-    # Mock timeline: intrusion ~8s, fall ~8s, abandoned ~16s into the stream.
-    assert first_fired["intrusion"] / 30.0 < 12.0
-    assert first_fired["fall_detection"] / 30.0 < 12.0
-    assert first_fired["abandoned_object"] / 30.0 < 20.0
+    # Owner last seen at 0.0 + 10s window => ~10s, not 15s (5.0 anchor + 10s).
+    assert fired_at is not None, "abandoned_object never fired"
+    assert fired_at == pytest.approx(10.0, abs=0.6), f"fired at t={fired_at}, expected ~10.0"

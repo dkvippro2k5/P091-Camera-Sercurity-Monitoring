@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import time
 from datetime import UTC, datetime
@@ -10,12 +11,15 @@ from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.rule_engine import RuleEngine
-from src.vision.schemas import FrameAnalysisResult, VideoAnalysisSummary
+from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
 from src.vision.zone_config import ZoneManager
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ZONES_PATH = "data/vision/zones.json"
+# Repo-relative default resolved against the project root, so a process launched from
+# another directory still finds the zone config instead of silently running with no zones.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_ZONES_PATH = os.path.join(_PROJECT_ROOT, "data", "vision", "zones.json")
 
 
 class VisionPipeline:
@@ -30,11 +34,15 @@ class VisionPipeline:
         rule_engine: RuleEngine | None = None,
         zones_path: str | None = DEFAULT_ZONES_PATH,
         draw_overlays: bool = True,
+        inference_size: tuple[int, int] | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.anonymizer = anonymizer or FaceAnonymizer()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
         self.draw_overlays = draw_overlays
+        # When set (e.g. (640, 480)), frames are resized before detection for faster
+        # inference, and bounding boxes are scaled back to the original resolution.
+        self.inference_size = inference_size
 
     def process_frame(
         self,
@@ -48,6 +56,10 @@ class VisionPipeline:
 
         Detection runs on the original frame; blurring is applied only to the frame
         that gets written out, so anonymization never degrades detection accuracy.
+
+        `frame` is never modified. The returned array may still *alias* `frame` when
+        there was nothing to blur and overlays are disabled, so treat it as read-only
+        unless you copy it first.
 
         Args:
             frame: Input BGR image numpy array.
@@ -67,12 +79,32 @@ class VisionPipeline:
         wall_time = now or datetime.now()
         height, width = frame.shape[:2]
 
-        # 1. Detect tracked objects on the unmodified frame
+        # 1. Optionally resize for faster detection, then scale boxes back.
+        if self.inference_size and (width, height) != self.inference_size:
+            inf_w, inf_h = self.inference_size
+            det_frame = cv2.resize(frame, (inf_w, inf_h), interpolation=cv2.INTER_LINEAR)
+            scale_x = width / inf_w
+            scale_y = height / inf_h
+        else:
+            det_frame = frame
+            scale_x = scale_y = 1.0
+
+        # 2. Detect tracked objects on the (possibly resized) frame
         detections = self.detector.detect(
-            frame, frame_id=frame_id, camera_id=camera_id, timestamp=timestamp
+            det_frame, frame_id=frame_id, camera_id=camera_id, timestamp=timestamp
         )
 
-        # 2. Apply temporal rules to decide which of them constitute incidents
+        # Scale bounding boxes back to original resolution if we resized
+        if scale_x != 1.0 or scale_y != 1.0:
+            for det in detections:
+                det.bbox = BoundingBox(
+                    xmin=int(det.bbox.xmin * scale_x),
+                    ymin=int(det.bbox.ymin * scale_y),
+                    xmax=int(det.bbox.xmax * scale_x),
+                    ymax=int(det.bbox.ymax * scale_y),
+                )
+
+        # 3. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
             frame_width=width,
@@ -82,15 +114,23 @@ class VisionPipeline:
             camera_id=camera_id,
         )
 
-        # 3. Blur faces for privacy on the outgoing frame
+        # 4. Blur faces for privacy on the outgoing frame
         anonymized_frame = self.anonymizer.blur_faces(frame)
 
-        # 4. Annotate zones and incidents for the operator view
+        # 5. Annotate zones and incidents for the operator view
         if self.draw_overlays:
+            # blur_faces hands back the input array untouched when it found no faces, and
+            # the draw_* helpers composite in place. Without this copy the overlays land on
+            # the caller's frame — in the live path that is the reader thread's shared
+            # single-slot buffer, so the "original" frame would no longer exist anywhere.
+            if anonymized_frame is frame:
+                anonymized_frame = frame.copy()
+
             zones = self.rule_engine.zone_manager.zones_for(camera_id)
+            active_incidents = self.rule_engine.get_active_incidents(detections, camera_id=camera_id)
             anonymized_frame = draw_zones(anonymized_frame, zones, wall_time)
-            anonymized_frame = draw_tracks(anonymized_frame, detections)
-            anonymized_frame = draw_events(anonymized_frame, events)
+            anonymized_frame = draw_tracks(anonymized_frame, detections, active_incidents)
+            anonymized_frame = draw_events(anonymized_frame, active_incidents)
 
         processing_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -124,6 +164,10 @@ class VisionPipeline:
 
         Returns:
             VideoAnalysisSummary metadata object.
+
+        Raises:
+            FileNotFoundError: The path does not exist.
+            ValueError: The file exists but cannot be decoded.
         """
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Input video file not found at '{video_path}'")
@@ -131,8 +175,21 @@ class VisionPipeline:
         camera_id = camera_id or "cam_01"
 
         cap = cv2.VideoCapture(video_path)
+        # os.path.exists above only proves the path is there. A truncated or non-video file
+        # opens as a closed capture, and without this the loop below never runs and we
+        # return a summary — plus a handover JSON — claiming a successful zero-frame job.
+        if not cap.isOpened():
+            cap.release()
+            raise ValueError(
+                f"Could not decode video '{video_path}'. The file may be corrupt, truncated, "
+                "or in a codec this OpenCV build does not support."
+            )
+
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        # Guard NaN as well as 0.0/None: NaN propagates into every dwell timer through
+        # `frame_idx / fps` and makes each rule comparison silently False.
+        reported_fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = reported_fps if reported_fps and math.isfinite(reported_fps) and reported_fps > 0 else 30.0
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -151,30 +208,33 @@ class VisionPipeline:
         # one would fire bogus events on the first frames.
         self.rule_engine.reset()
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        # Released in finally: an exception mid-decode would otherwise hold the file
+        # handle (and the writer's partial output) until GC.
+        try:
+            while True:
+                if max_frames and frame_idx >= max_frames:
+                    break
 
-            if max_frames and frame_idx >= max_frames:
-                break
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # Video-relative time, so a 3s dwell means 3s of footage no matter how fast
-            # the file decodes.
-            anonymized_frame, frame_res = self.process_frame(
-                frame, frame_id=frame_idx, camera_id=camera_id, timestamp=frame_idx / fps
-            )
-            frame_results.append(frame_res)
-            total_events += len(frame_res.events)
+                # Video-relative time, so a 3s dwell means 3s of footage no matter how fast
+                # the file decodes.
+                anonymized_frame, frame_res = self.process_frame(
+                    frame, frame_id=frame_idx, camera_id=camera_id, timestamp=frame_idx / fps
+                )
+                frame_results.append(frame_res)
+                total_events += len(frame_res.events)
 
+                if writer:
+                    writer.write(anonymized_frame)
+
+                frame_idx += 1
+        finally:
+            cap.release()
             if writer:
-                writer.write(anonymized_frame)
-
-            frame_idx += 1
-
-        cap.release()
-        if writer:
-            writer.release()
+                writer.release()
 
         total_elapsed = time.perf_counter() - start_processing_time
         avg_fps = round(frame_idx / total_elapsed, 2) if total_elapsed > 0 else 0.0

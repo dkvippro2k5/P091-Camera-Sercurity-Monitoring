@@ -65,7 +65,7 @@ class RuleEngine:
         zone_manager: ZoneManager | None = None,
         fall_dwell_sec: float = 3.0,
         fall_aspect_ratio: float = 1.2,
-        abandon_sec: float = 10.0,
+        abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
         track_ttl_sec: float = 5.0,
@@ -78,7 +78,10 @@ class RuleEngine:
         self.stationary_tolerance_ratio = stationary_tolerance_ratio
         self.track_ttl_sec = track_ttl_sec
 
-        self._tracks: dict[str, TrackState] = {}
+        # Keyed by (camera_id, track_id) to prevent cross-camera collisions.
+        # Two independent YOLO trackers can emit the same track_id (e.g. "track_1");
+        # without the camera prefix their temporal states would corrupt each other.
+        self._tracks: dict[tuple[str | None, str], TrackState] = {}
 
     def reset(self) -> None:
         """Clear all track state, e.g. between videos."""
@@ -87,6 +90,11 @@ class RuleEngine:
     @property
     def active_tracks(self) -> int:
         return len(self._tracks)
+
+    @staticmethod
+    def _track_key(camera_id: str | None, track_id: str) -> tuple[str | None, str]:
+        """Composite key so identical track_ids from different cameras stay separate."""
+        return (camera_id, track_id)
 
     def evaluate(
         self,
@@ -116,7 +124,7 @@ class RuleEngine:
         persons = [d for d in detections if d.label in PERSON_CLASSES]
         objects = [d for d in detections if d.label in CARRIABLE_CLASSES]
 
-        self._update_tracks(detections, timestamp)
+        self._update_tracks(detections, timestamp, camera_id)
 
         events: list[IncidentDetection] = []
         events.extend(
@@ -130,13 +138,72 @@ class RuleEngine:
         self._evict_stale(timestamp)
         return events
 
-    def _update_tracks(self, detections: list[IncidentDetection], timestamp: float) -> None:
+    def get_active_incidents(
+        self,
+        detections: list[IncidentDetection],
+        camera_id: str | None = None,
+    ) -> list[IncidentDetection]:
+        """Return all active/ongoing incidents for current frame detections (for persistent overlay drawing)."""
+        active: list[IncidentDetection] = []
         for det in detections:
             if not det.track_id:
                 continue
-            state = self._tracks.get(det.track_id)
+            state = self._tracks.get(self._track_key(camera_id, det.track_id))
             if state is None:
-                self._tracks[det.track_id] = TrackState(
+                continue
+
+            for zone_name in state.alerted_zones:
+                active.append(
+                    IncidentDetection(
+                        label=LABEL_INTRUSION,
+                        track_id=det.track_id,
+                        confidence=det.confidence,
+                        timestamp=det.timestamp,
+                        camera_id=camera_id,
+                        bbox=det.bbox,
+                        zone_name=zone_name,
+                        reason=f"{det.track_id} in restricted zone '{zone_name}'",
+                    )
+                )
+
+            if state.fall_fired:
+                active.append(
+                    IncidentDetection(
+                        label=LABEL_FALL,
+                        track_id=det.track_id,
+                        confidence=det.confidence,
+                        timestamp=det.timestamp,
+                        camera_id=camera_id,
+                        bbox=det.bbox,
+                        reason=f"{det.track_id} collapsed",
+                    )
+                )
+
+            if state.abandoned_fired:
+                active.append(
+                    IncidentDetection(
+                        label=LABEL_ABANDONED,
+                        track_id=det.track_id,
+                        confidence=det.confidence,
+                        timestamp=det.timestamp,
+                        camera_id=camera_id,
+                        bbox=det.bbox,
+                        reason=f"{det.label} ({det.track_id}) unattended",
+                    )
+                )
+
+        return active
+
+    def _update_tracks(
+        self, detections: list[IncidentDetection], timestamp: float, camera_id: str | None = None
+    ) -> None:
+        for det in detections:
+            if not det.track_id:
+                continue
+            key = self._track_key(camera_id, det.track_id)
+            state = self._tracks.get(key)
+            if state is None:
+                self._tracks[key] = TrackState(
                     track_id=det.track_id,
                     label=det.label,
                     first_seen=timestamp,
@@ -149,10 +216,10 @@ class RuleEngine:
 
     def _evict_stale(self, timestamp: float) -> None:
         expired = [
-            tid for tid, s in self._tracks.items() if timestamp - s.last_seen > self.track_ttl_sec
+            key for key, s in self._tracks.items() if timestamp - s.last_seen > self.track_ttl_sec
         ]
-        for tid in expired:
-            del self._tracks[tid]
+        for key in expired:
+            del self._tracks[key]
 
     def _check_intrusion(
         self,
@@ -168,7 +235,7 @@ class RuleEngine:
         for person in persons:
             if not person.track_id:
                 continue
-            state = self._tracks.get(person.track_id)
+            state = self._tracks.get(self._track_key(camera_id, person.track_id))
             if state is None:
                 continue
 
@@ -220,7 +287,7 @@ class RuleEngine:
         for person in persons:
             if not person.track_id:
                 continue
-            state = self._tracks.get(person.track_id)
+            state = self._tracks.get(self._track_key(camera_id, person.track_id))
             if state is None:
                 continue
 
@@ -268,23 +335,19 @@ class RuleEngine:
         """Fire when a carriable object sits still with no person inside radius R."""
         events = []
         radius = frame_width * self.owner_radius_ratio
-        tolerance = frame_width * self.stationary_tolerance_ratio
 
         for obj in objects:
             if not obj.track_id:
                 continue
-            state = self._tracks.get(obj.track_id)
+            state = self._tracks.get(self._track_key(camera_id, obj.track_id))
             if state is None:
                 continue
 
             cx = (obj.bbox.xmin + obj.bbox.xmax) / 2.0
             cy = (obj.bbox.ymin + obj.bbox.ymax) / 2.0
 
-            # Reset the stationary clock if the object was carried somewhere new.
-            if state.anchor is None or math.dist(state.anchor, (cx, cy)) > tolerance:
-                state.anchor = (cx, cy)
+            if state.stationary_since is None:
                 state.stationary_since = timestamp
-                state.abandoned_fired = False
 
             owner_near = any(
                 math.dist(
@@ -300,7 +363,15 @@ class RuleEngine:
                 continue
 
             # Never-attended objects age from when they were first seen sitting still.
-            unattended_since = state.last_owner_seen or state.stationary_since or timestamp
+            # `is not None` rather than truthiness: process_video passes video-relative
+            # time, so an owner last seen on the very first frame gives exactly 0.0, and
+            # `or` would discard it and restart the clock from the stationary anchor.
+            if state.last_owner_seen is not None:
+                unattended_since = state.last_owner_seen
+            elif state.stationary_since is not None:
+                unattended_since = state.stationary_since
+            else:
+                unattended_since = timestamp
             elapsed = timestamp - unattended_since
 
             if elapsed >= self.abandon_sec and not state.abandoned_fired:

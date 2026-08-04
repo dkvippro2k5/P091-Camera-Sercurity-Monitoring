@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime, time
+from functools import lru_cache
 
 from src.vision.schemas import CameraZoneConfig, Zone
 
@@ -46,8 +47,13 @@ def point_in_polygon(x: float, y: float, polygon: list[tuple[float, float]]) -> 
     return inside
 
 
+@lru_cache(maxsize=256)
 def parse_active_hours(active_hours: str | None) -> tuple[time, time] | None:
-    """Parse an 'HH:MM-HH:MM' window into start/end times. Returns None if always active."""
+    """Parse an 'HH:MM-HH:MM' window into start/end times. Returns None if always active.
+
+    Cached: this runs per zone per frame, and without it a malformed window would emit a
+    warning on every frame of every stream.
+    """
     if not active_hours:
         return None
     try:

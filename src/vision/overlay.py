@@ -29,8 +29,13 @@ _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 def draw_zones(frame: np.ndarray, zones: list[Zone], now: datetime) -> np.ndarray:
     """Draw each zone polygon, dimmed when outside its active hours."""
+    if not zones:
+        return frame
+
     height, width = frame.shape[:2]
 
+    # Single overlay copy for all zones instead of one per zone.
+    overlay = frame.copy()
     for zone in zones:
         active = is_zone_active(zone, now)
         color = COLOR_ZONE_ACTIVE if active else COLOR_ZONE_IDLE
@@ -38,10 +43,19 @@ def draw_zones(frame: np.ndarray, zones: list[Zone], now: datetime) -> np.ndarra
             [[int(x * width), int(y * height)] for x, y in zone.polygon], dtype=np.int32
         ).reshape((-1, 1, 2))
 
-        # Translucent fill so the scene stays readable underneath.
-        overlay = frame.copy()
         cv2.fillPoly(overlay, [pts], color)
-        cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, dst=frame)
+
+    # Blend all zone fills in one pass.
+    cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, dst=frame)
+
+    # Draw outlines and labels on top of the blended frame.
+    for zone in zones:
+        active = is_zone_active(zone, now)
+        color = COLOR_ZONE_ACTIVE if active else COLOR_ZONE_IDLE
+        pts = np.array(
+            [[int(x * width), int(y * height)] for x, y in zone.polygon], dtype=np.int32
+        ).reshape((-1, 1, 2))
+
         cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=2)
 
         label = zone.name if active else f"{zone.name} (idle)"
@@ -81,9 +95,22 @@ def draw_events(frame: np.ndarray, events: list[IncidentDetection]) -> np.ndarra
     return frame
 
 
-def draw_tracks(frame: np.ndarray, detections: list[IncidentDetection]) -> np.ndarray:
-    """Draw thin boxes for tracked objects that did not trigger anything."""
+def draw_tracks(
+    frame: np.ndarray,
+    detections: list[IncidentDetection],
+    events: list[IncidentDetection] | None = None,
+) -> np.ndarray:
+    """Draw thin boxes for tracked objects, skipping any that triggered an incident.
+
+    Call before draw_events. Objects with an event get their bold labelled box there;
+    drawing them here too would leave a thin box under every incident.
+    """
+    flagged = {e.track_id for e in events or [] if e.track_id}
+
     for det in detections:
+        if det.track_id and det.track_id in flagged:
+            continue
+
         box = det.bbox
         cv2.rectangle(frame, (box.xmin, box.ymin), (box.xmax, box.ymax), (90, 90, 90), 1)
         if det.track_id:

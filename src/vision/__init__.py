@@ -18,7 +18,7 @@ from src.vision.schemas import (
     VideoAnalysisSummary,
     Zone,
 )
-from src.vision.stream_manager import MultiStreamManager
+from src.vision.stream_manager import MultiStreamManager, tune_torch_for_multistream
 from src.vision.stream_simulator import RTSPSimulator
 from src.vision.stream_worker import CameraStreamWorker
 from src.vision.zone_config import ZoneManager, is_zone_active, point_in_polygon
@@ -46,4 +46,5 @@ __all__ = [
     "MultiStreamManager",
     "CameraStreamWorker",
     "RTSPSimulator",
+    "tune_torch_for_multistream",
 ]

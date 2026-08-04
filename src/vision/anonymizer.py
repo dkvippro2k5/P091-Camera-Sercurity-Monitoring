@@ -7,8 +7,13 @@ logger = logging.getLogger(__name__)
 
 
 class FaceAnonymizer:
-    """Face Anonymizer class that detects face regions and applies blurring/pixelation
-    for privacy compliance (GDPR / Human-In-The-Loop guidelines).
+    """Detects face regions and blurs/pixelates them to support privacy requirements.
+
+    NOTE: backed by OpenCV's frontal-face Haar cascade, which only finds faces looking
+    roughly at the camera. Profiles, turned heads, and small or occluded faces pass
+    through unblurred, so this reduces identifiability but is not sufficient on its own
+    to call a deployment GDPR-compliant. Swap in a modern detector (YuNet, SCRFD) before
+    relying on it for that.
     """
 
     def __init__(
@@ -51,7 +56,7 @@ class FaceAnonymizer:
     def blur_faces(
         self,
         frame: np.ndarray,
-        faces: list[tuple[int, int, int, int]] = None,
+        faces: list[tuple[int, int, int, int]] | None = None,
         method: str = "gaussian",
     ) -> np.ndarray:
         """Apply blur on detected face bounding regions.
@@ -62,14 +67,21 @@ class FaceAnonymizer:
             method: 'gaussian' or 'pixelate'.
 
         Returns:
-            Anonymized BGR image numpy array.
+            Anonymized BGR image numpy array. This is `frame` itself, unmodified, when
+            there was nothing to blur — callers that intend to draw on the result must
+            copy it first.
         """
         if frame is None or frame.size == 0:
             return frame
 
-        anonymized = frame.copy()
         if faces is None:
             faces = self.detect_faces(frame)
+
+        # Fast path: no faces detected, skip the expensive frame copy.
+        if not faces:
+            return frame
+
+        anonymized = frame.copy()
 
         for (x, y, w, h) in faces:
             # Ensure ROI boundaries are within image bounds
