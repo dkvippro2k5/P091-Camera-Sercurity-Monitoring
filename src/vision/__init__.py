@@ -2,6 +2,7 @@
 
 from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
+from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import (
@@ -26,6 +27,7 @@ from src.vision.zone_config import ZoneManager, is_zone_active, point_in_polygon
 __all__ = [
     "IncidentDetector",
     "FaceAnonymizer",
+    "MotionGate",
     "VisionPipeline",
     "RuleEngine",
     "LABEL_INTRUSION",

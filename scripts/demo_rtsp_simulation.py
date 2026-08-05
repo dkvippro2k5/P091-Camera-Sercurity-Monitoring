@@ -22,7 +22,7 @@ if sys.platform == "win32":
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.vision import MultiStreamManager, RTSPSimulator  # noqa: E402
+from src.vision import MotionGate, MultiStreamManager, RTSPSimulator, VisionPipeline  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("demo_rtsp_simulation")
@@ -35,6 +35,8 @@ def main():
     parser.add_argument("duration", nargs="?", type=int, default=0, help="Run duration in seconds (0 = run continuously until 'q' or Ctrl+C)")
     parser.add_argument("--show", action="store_true", help="Display live visual window with bounding boxes & face blur")
     parser.add_argument("--output", type=str, default=None, help="Save annotated output video to path (e.g. output_rtsp.mp4)")
+    parser.add_argument("--inference-size", type=int, default=416, help="YOLO inference resolution (e.g. 416, 320 for speedup)")
+    parser.add_argument("--motion-gate", action="store_true", help="Enable motion gating to skip YOLO on quiet/idle frames")
 
     args = parser.parse_args()
 
@@ -43,6 +45,8 @@ def main():
     run_duration_sec = args.duration
     show_gui = args.show
     output_path = args.output
+    inf_size = args.inference_size
+    use_motion_gate = args.motion_gate
 
     latest_frames = {}
     frame_lock = threading.Lock()
@@ -83,17 +87,32 @@ def main():
     print("🎬 VISION RTSP STREAM MONITOR & INCIDENT DETECTOR")
     print(f"Source URL/File: {source_arg}")
     print(f"Cameras count: {num_cameras}")
+    print(f"Inference resolution: {inf_size}x{inf_size}" if inf_size > 0 else "Full Resolution")
+    print(f"Motion Gate: {'ENABLED' if use_motion_gate else 'DISABLED (pass --motion-gate to enable)'}")
     print(f"Duration: {'UNLIMITED (press q or Ctrl+C to stop)' if run_duration_sec <= 0 else f'{run_duration_sec}s'}")
     print(f"Live GUI Preview: {'ENABLED' if show_gui else 'DISABLED (run with --show to view window)'}")
     print(f"Output Recording: {output_path or 'DISABLED'}")
     print("=" * 70)
 
+    pipeline_template = VisionPipeline(
+        inference_size=(inf_size, inf_size) if inf_size > 0 else None,
+        motion_gate=MotionGate(enabled=use_motion_gate),
+    )
+
     manager = MultiStreamManager(
+        shared_pipeline=pipeline_template,
         global_on_incident_callback=on_incident,
         global_on_frame_callback=on_frame,
     )
 
-    if source_arg.startswith("rtsp://") or source_arg.startswith("http://"):
+    sources = [s.strip() for s in source_arg.split(",") if s.strip()]
+
+    if len(sources) > 1:
+        for i, src in enumerate(sources, 1):
+            cam_id = f"cam_{i:02d}"
+            manager.add_camera(camera_id=cam_id, rtsp_url=src, target_fps=15.0, autostart=False, loop_finite_sources=True)
+            print(f"  [+] Added camera stream: {cam_id} ({src})")
+    elif source_arg.startswith("rtsp://") or source_arg.startswith("http://"):
         for i in range(1, num_cameras + 1):
             cam_id = f"cam_{i:02d}"
             # Zero-padded to match cam_id and publish_rtsp.py's default path (cam_01), so
