@@ -19,13 +19,13 @@ Khi tham gia AI20K Build Phase, mỗi đội cần xây dựng một AI Agent ho
 
 ### Bước 1: Fork hoặc Clone
 
-```bash
+```powershell
 # Clone template
 git clone https://github.com/AI20K-Build-Cohort-2/starter-code-template.git team-YOUR_TEAM_NAME
 cd team-YOUR_TEAM_NAME
 
 # Xóa git history cũ và khởi tạo lại
-rm -rf .git
+Remove-Item -Recurse -Force .git
 git init
 git add .
 git commit -m "feat: khởi tạo dự án từ template"
@@ -33,16 +33,16 @@ git commit -m "feat: khởi tạo dự án từ template"
 
 ### Bước 2: Setup môi trường
 
-```bash
+```powershell
 # Tạo virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
 
 # Cài dependencies
 pip install -e ".[dev]"
 
 # Cấu hình API keys
-cp .env.example .env
+Copy-Item .env.example .env
 # Mở .env và thêm OPENAI_API_KEY của bạn
 # Đồng thời cập nhật AI_LOG_API_KEY bằng key riêng từ link mời của BTC
 # (giá trị trong .env.example chỉ là placeholder)
@@ -50,19 +50,19 @@ cp .env.example .env
 
 ### Bước 3: Cài AI Logging Hooks
 
-```bash
-# Linux / macOS / Git Bash
-bash scripts/setup_hooks.sh
-
+```powershell
 # Windows PowerShell
-# powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
+
+# Linux / macOS / Git Bash
+# bash scripts/setup_hooks.sh
 ```
 
 Hooks tự động log mọi AI prompt khi dùng Claude Code, Cursor, Codex, Gemini CLI, Antigravity, hoặc GitHub Copilot. Không cần thao tác thủ công.
 
 ### Bước 4: Chạy server
 
-```bash
+```powershell
 # Chạy FastAPI backend
 uvicorn src.main:app --reload --port 8000
 
