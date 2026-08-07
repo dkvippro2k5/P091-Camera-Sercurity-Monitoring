@@ -9,6 +9,9 @@ __pycache__
 docs/
 presentation/
 eval/
+# The React app now lives under src/, but it has its own image (see docker-compose).
+# Without this the backend build context drags node_modules/ and dist/ in with it.
+src/frontend/
 *.md
 !requirements.txt
 .dockerignore

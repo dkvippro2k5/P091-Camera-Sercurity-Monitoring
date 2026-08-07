@@ -1,5 +1,8 @@
 target-version = "py311"
 line-length = 120
+# The React app lives under src/ but is not Python; node_modules in particular can carry
+# vendored .py files that would otherwise be linted as if they were ours.
+extend-exclude = ["src/frontend"]
 
 [lint]
 select = ["E", "F", "I", "N", "W", "UP"]
