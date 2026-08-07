@@ -9,8 +9,10 @@ import numpy as np
 
 from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
-from src.vision.overlay import draw_events, draw_tracks, draw_zones
-from src.vision.rule_engine import RuleEngine
+from src.vision.motion import MotionGate
+from src.vision.overlay import draw_events, draw_pose, draw_tracks, draw_zones
+from src.vision.pose import PoseEstimator
+from src.vision.rule_engine import PERSON_CLASSES, RuleEngine
 from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
 from src.vision.zone_config import ZoneManager
 
@@ -35,6 +37,8 @@ class VisionPipeline:
         zones_path: str | None = DEFAULT_ZONES_PATH,
         draw_overlays: bool = True,
         inference_size: tuple[int, int] | None = None,
+        pose_estimator: PoseEstimator | None = None,
+        motion_gate: MotionGate | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.anonymizer = anonymizer or FaceAnonymizer()
@@ -43,6 +47,17 @@ class VisionPipeline:
         # When set (e.g. (640, 480)), frames are resized before detection for faster
         # inference, and bounding boxes are scaled back to the original resolution.
         self.inference_size = inference_size
+        # Both are stateful and must not be shared between streams: the gate holds the
+        # previous frame, and the pose model holds its own inference state.
+        # Default-constructed rather than left None so pose confirmation switches on by
+        # itself once the checkpoint is present. With no weights, PoseEstimator reports
+        # available=False and _check_falls keeps using the bbox heuristic, so this costs
+        # nothing on a machine that has none (no download — auto_download defaults False).
+        self.pose_estimator = pose_estimator or PoseEstimator()
+        self.motion_gate = motion_gate or MotionGate(enabled=False)
+        # Carried across a gated skip so overlays stay populated instead of flickering
+        # empty on every skipped frame.
+        self._last_detections: list = []
 
     def process_frame(
         self,
@@ -79,6 +94,16 @@ class VisionPipeline:
         wall_time = now or datetime.now()
         height, width = frame.shape[:2]
 
+        # 0. Skip inference entirely on a provably idle scene. Only ever skips when there
+        # is no motion AND no live track state AND the heartbeat has not elapsed — see
+        # motion.py for why all three are load-bearing.
+        if not self.motion_gate.should_process(
+            frame,
+            timestamp=stream_time,
+            has_active_tracks=self.rule_engine.has_active_tracks(camera_id),
+        ):
+            return self._skipped_result(frame, frame_id, camera_id, wall_time, start_time)
+
         # 1. Optionally resize for faster detection, then scale boxes back.
         if self.inference_size and (width, height) != self.inference_size:
             inf_w, inf_h = self.inference_size
@@ -90,9 +115,7 @@ class VisionPipeline:
             scale_x = scale_y = 1.0
 
         # 2. Detect tracked objects on the (possibly resized) frame
-        detections = self.detector.detect(
-            det_frame, frame_id=frame_id, camera_id=camera_id, timestamp=timestamp
-        )
+        detections = self.detector.detect(det_frame, frame_id=frame_id, camera_id=camera_id, timestamp=timestamp)
 
         # Scale bounding boxes back to original resolution if we resized
         if scale_x != 1.0 or scale_y != 1.0:
@@ -103,6 +126,10 @@ class VisionPipeline:
                     xmax=int(det.bbox.xmax * scale_x),
                     ymax=int(det.bbox.ymax * scale_y),
                 )
+
+        # 2b. Second cascade stage: attach pose only to persons the cheap pre-filter
+        # flagged. On a normal frame nobody qualifies and no pose inference happens.
+        self._attach_pose(frame, detections)
 
         # 3. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
@@ -130,9 +157,15 @@ class VisionPipeline:
             active_incidents = self.rule_engine.get_active_incidents(detections, camera_id=camera_id)
             anonymized_frame = draw_zones(anonymized_frame, zones, wall_time)
             anonymized_frame = draw_tracks(anonymized_frame, detections, active_incidents)
+            # Between tracks and events on purpose: the skeleton should sit above the thin
+            # track box but below an incident's bold label, which must stay readable.
+            # Only fall candidates carry keypoints, so this is a no-op on a normal frame.
+            anonymized_frame = draw_pose(anonymized_frame, detections)
             anonymized_frame = draw_events(anonymized_frame, active_incidents)
 
         processing_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+        self._last_detections = detections
 
         result = FrameAnalysisResult(
             frame_id=frame_id,
@@ -144,6 +177,57 @@ class VisionPipeline:
         )
 
         return anonymized_frame, result
+
+    def _attach_pose(self, frame: np.ndarray, detections: list) -> None:
+        """Populate `keypoints` on person detections that look like fall candidates.
+
+        Mutates the detections in place. Runs pose only on the gated subset, which is what
+        keeps the accuracy win from costing throughput: on a frame of upright people the
+        pre-filter rejects everyone and the pose model is never invoked.
+        """
+        if self.pose_estimator is None or not self.pose_estimator.available:
+            return
+
+        for det in detections:
+            if det.label not in PERSON_CLASSES:
+                continue
+            if not self.rule_engine.is_fall_candidate(det):
+                continue
+            det.keypoints = self.pose_estimator.estimate(frame, det.bbox)
+
+    def _skipped_result(
+        self,
+        frame: np.ndarray,
+        frame_id: int,
+        camera_id: str | None,
+        wall_time: datetime,
+        start_time: float,
+    ) -> tuple[np.ndarray, FrameAnalysisResult]:
+        """Build the result for a frame the motion gate skipped.
+
+        Faces are still blurred: the frame is handed to previews and recorders regardless
+        of whether inference ran, and PRD section 3.3 requires every face blurred on every
+        outgoing frame. Skipping detection is a throughput decision, not a privacy one.
+        """
+        anonymized_frame = self.anonymizer.blur_faces(frame)
+
+        if self.draw_overlays:
+            if anonymized_frame is frame:
+                anonymized_frame = frame.copy()
+            zones = self.rule_engine.zone_manager.zones_for(camera_id)
+            anonymized_frame = draw_zones(anonymized_frame, zones, wall_time)
+            # Carry the last known detections so the operator view does not flicker empty
+            # between inferences on an idle scene.
+            anonymized_frame = draw_tracks(anonymized_frame, self._last_detections, [])
+
+        return anonymized_frame, FrameAnalysisResult(
+            frame_id=frame_id,
+            camera_id=camera_id,
+            timestamp=datetime.now(UTC).isoformat(),
+            detections=[],
+            events=[],
+            processing_time_ms=round((time.perf_counter() - start_time) * 1000, 2),
+        )
 
     def process_video(
         self,
@@ -205,8 +289,11 @@ class VisionPipeline:
         start_processing_time = time.perf_counter()
 
         # Each video is an independent scene; carrying dwell timers over from the previous
-        # one would fire bogus events on the first frames.
+        # one would fire bogus events on the first frames. The motion gate holds a
+        # reference frame from the old scene, which would read as a full-frame change.
         self.rule_engine.reset()
+        self.motion_gate.reset()
+        self._last_detections = []
 
         # Released in finally: an exception mid-decode would otherwise hold the file
         # handle (and the writer's partial output) until GC.

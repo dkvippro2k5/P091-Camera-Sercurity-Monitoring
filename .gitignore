@@ -60,4 +60,8 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
+# Frontend
+src/frontend/node_modules/
+src/frontend/dist/
+
 .claude 

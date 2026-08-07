@@ -126,6 +126,28 @@ class ZoneManager:
         logger.info(f"Loaded {manager.zone_count} zone(s) for {len(configs)} camera(s) from '{path}'")
         return manager
 
+    def set_zones(self, camera_id: str, zones: list[Zone]) -> None:
+        """Replace the zone list for one camera at runtime.
+
+        Cameras are configured while the system is already running, so zones cannot all be
+        known at load time. Mutating this shared instance is what makes a newly drawn
+        polygon visible to a worker that was constructed before it existed —
+        MultiStreamManager deliberately shares one ZoneManager across every pipeline
+        (zones are immutable config, unlike tracker state), so one write reaches them all.
+        Rebinding the whole list rather than editing it in place keeps a worker thread
+        mid-iteration from ever seeing a half-updated polygon set.
+
+        An empty list is stored, not deleted: `zones_for` falls back to the wildcard entry
+        only for cameras it has never heard of, so an explicit `[]` is the way to say
+        "this camera has intrusion turned off" without the shared `"*"` zone leaking in.
+        Use `clear_zones` to actually forget a camera.
+        """
+        self._by_camera[camera_id] = list(zones)
+
+    def clear_zones(self, camera_id: str) -> None:
+        """Forget a camera entirely, so it inherits the wildcard entry again."""
+        self._by_camera.pop(camera_id, None)
+
     @property
     def zone_count(self) -> int:
         return sum(len(zones) for zones in self._by_camera.values())

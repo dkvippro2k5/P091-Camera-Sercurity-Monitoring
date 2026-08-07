@@ -24,6 +24,20 @@ EVENT_COLORS = {
 }
 DEFAULT_EVENT_COLOR = (255, 255, 255)
 
+COLOR_POSE_BONE = (255, 200, 60)
+COLOR_POSE_JOINT = (80, 255, 120)
+
+# COCO-17 bone list, matching the keypoint indices in pose.py. Ordered head → arms →
+# torso → legs so a partially-confident skeleton degrades into recognisable pieces
+# rather than disconnected segments.
+_SKELETON = (
+    (0, 1), (0, 2), (1, 3), (2, 4),           # nose → eyes → ears
+    (5, 6),                                    # shoulder line
+    (5, 7), (7, 9), (6, 8), (8, 10),           # arms
+    (5, 11), (6, 12), (11, 12),                # torso
+    (11, 13), (13, 15), (12, 14), (14, 16),    # legs
+)
+
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -91,6 +105,43 @@ def draw_events(frame: np.ndarray, events: list[IncidentDetection]) -> np.ndarra
         cv2.putText(
             frame, caption, (box.xmin + 3, text_y), _FONT, 0.5, (20, 20, 20), 1, cv2.LINE_AA
         )
+
+    return frame
+
+
+def draw_pose(
+    frame: np.ndarray,
+    detections: list[IncidentDetection],
+    min_confidence: float = 0.3,
+) -> np.ndarray:
+    """Draw the COCO-17 skeleton for any detection carrying keypoints.
+
+    Keypoints are already in frame coordinates — `PoseEstimator.estimate` offsets them out
+    of crop space before returning, so no rescaling happens here.
+
+    Low-confidence joints are skipped rather than drawn at their predicted position: an
+    occluded ankle is emitted at a plausible-looking guess, and a limb drawn to it reads as
+    a real measurement. A bone needs *both* ends above the threshold to be drawn.
+    """
+    for det in detections:
+        if not det.keypoints:
+            continue
+
+        for a, b in _SKELETON:
+            if a >= len(det.keypoints) or b >= len(det.keypoints):
+                continue
+            xa, ya, ca = det.keypoints[a]
+            xb, yb, cb = det.keypoints[b]
+            if ca < min_confidence or cb < min_confidence:
+                continue
+            cv2.line(frame, (int(xa), int(ya)), (int(xb), int(yb)), COLOR_POSE_BONE, 2, cv2.LINE_AA)
+
+        for x, y, conf in det.keypoints:
+            if conf < min_confidence:
+                continue
+            # Dark rim first, so a joint stays visible over a bright patch of the scene.
+            cv2.circle(frame, (int(x), int(y)), 4, (20, 20, 20), -1, cv2.LINE_AA)
+            cv2.circle(frame, (int(x), int(y)), 3, COLOR_POSE_JOINT, -1, cv2.LINE_AA)
 
     return frame
 

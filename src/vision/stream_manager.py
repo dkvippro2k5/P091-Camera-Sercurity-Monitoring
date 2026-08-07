@@ -7,6 +7,7 @@ import numpy as np
 
 from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
+from src.vision.motion import MotionGate
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import RuleEngine
 from src.vision.schemas import FrameAnalysisResult
@@ -103,6 +104,25 @@ class MultiStreamManager:
     make them run at 15; it just means nothing throttles them below the hardware limit.
     Check `get_status()["average_inference_capacity_fps"]` against your target to see
     whether the box is actually keeping up.
+
+    MOTION GATING — A/B, same box, 2026-08-05
+    -----------------------------------------
+    `MotionGate` (motion.py) defaults OFF, which is why the numbers above still stand. It
+    buys throughput only on an idle scene, and the A/B says so plainly:
+
+        busy footage (input_test.mp4, 200 frames, moving people):
+            gate off -> 5.36 fps, 200 inferences, 0.0% skipped, 2 events
+            gate on  -> 5.72 fps, 200 inferences, 0.0% skipped, 2 events
+
+        idle 720p scene (static frame + sensor noise, 120 frames):
+            gate off -> 5.62 fps,   120 inferences,  0.0% skipped
+            gate on  -> 136.89 fps,   4 inferences, 96.7% skipped
+
+    Two things worth reading off this. The gate never skips while anything is moving or
+    any track is alive, so on busy footage it is a no-op — the 6% is noise, not a win, and
+    both runs emit the *same 2 events*, which is the property that matters. The win is the
+    3am corridor, where it is ~24x. It also shows the 21/255 threshold correctly treats
+    sensor noise as "still" rather than churning inference on it.
     """
 
     def __init__(
@@ -159,6 +179,7 @@ class MultiStreamManager:
 
         detector = template.detector
         engine = template.rule_engine
+        gate = template.motion_gate
 
         def factory() -> VisionPipeline:
             return VisionPipeline(
@@ -178,13 +199,30 @@ class MultiStreamManager:
                     zone_manager=engine.zone_manager,
                     fall_dwell_sec=engine.fall_dwell_sec,
                     fall_aspect_ratio=engine.fall_aspect_ratio,
+                    fall_pose_gate_ratio=engine.fall_pose_gate_ratio,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,
                     track_ttl_sec=engine.track_ttl_sec,
+                    track_stitch_window_sec=engine.track_stitch_window_sec,
+                    track_stitch_radius_ratio=engine.track_stitch_radius_ratio,
+                    alert_cooldown_sec=engine.alert_cooldown_sec,
                 ),
                 draw_overlays=template.draw_overlays,
                 inference_size=template.inference_size,
+                # The pose model is stateless between calls and loading a second copy per
+                # camera would multiply memory for no benefit, so the instance is shared.
+                pose_estimator=template.pose_estimator,
+                # The gate is NOT shared: it holds the previous frame, so one instance
+                # across cameras would diff camera A against camera B and see motion
+                # everywhere — silently disabling the gate it was added to provide.
+                motion_gate=MotionGate(
+                    enabled=gate.enabled,
+                    pixel_threshold=gate.pixel_threshold,
+                    min_changed_fraction=gate.min_changed_fraction,
+                    heartbeat_sec=gate.heartbeat_sec,
+                    diff_size=gate.diff_size,
+                ),
             )
 
         return factory
@@ -308,8 +346,7 @@ class MultiStreamManager:
         # .get_stats. This is headroom per camera, so it stays high on an idle system.
         avg_capacity = (
             round(
-                sum(s["inference_capacity_fps"] for s in camera_stats if s["running"])
-                / max(1, active_count),
+                sum(s["inference_capacity_fps"] for s in camera_stats if s["running"]) / max(1, active_count),
                 2,
             )
             if active_count > 0
@@ -324,9 +361,7 @@ class MultiStreamManager:
             "cameras": camera_stats,
         }
 
-    def _handle_worker_result(
-        self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray
-    ) -> None:
+    def _handle_worker_result(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
         """Internal handler called by worker threads on every analyzed frame.
 
         Fans out to two callbacks with different gating: every frame goes to the frame

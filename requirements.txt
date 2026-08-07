@@ -5,6 +5,9 @@ pydantic>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
 
+# Multipart form parsing — required by FastAPI's UploadFile (camera video upload).
+python-multipart>=0.0.20
+
 # AI / LangChain
 langchain>=0.3.0
 langchain-openai>=0.3.0

@@ -1,0 +1,119 @@
+/* Design tokens for the monitoring UI.
+ *
+ * Every colour pair used for text or a control boundary is annotated with its measured
+ * WCAG 2.1 contrast ratio, because this is a control-room display: it runs 24/7, is read
+ * at a distance, and is often the only thing between an incident and a response. The
+ * ratios below were computed against the surface each token is actually painted on, not
+ * against pure black — a token that passes on #000 can still fail on a raised card.
+ *
+ * Two thresholds matter here:
+ *   1.4.3 Contrast (Minimum)      — 4.5:1 body text, 3:1 for >=24px or >=18.7px bold
+ *   1.4.11 Non-text Contrast      — 3:1 for control boundaries and meaningful graphics
+ */
+
+:root {
+  /* ---------------------------------------------------------------- surfaces */
+  /* A four-step elevation ramp. The previous palette used #14161a / #1a1d22 / #1b1e23,
+     three shades within 1.2:1 of each other — so "raised" read as flat and the tile
+     border was doing all the work of separating a camera from the page. */
+  --bg: #0d0f12;
+  --surface-1: #15181d; /* camera tiles, modal, rail cards */
+  --surface-2: #1c2027; /* inputs, secondary buttons */
+  --surface-3: #262b34; /* hover */
+
+  /* Decorative dividers are exempt from 1.4.11, so this stays low-contrast on purpose. */
+  --border-subtle: #2a2f38;
+  /* Control boundaries are NOT exempt. 3.29:1 on --surface-1 (the old #3a3f47 was
+     1.55:1, so every button and input outline failed 1.4.11 by roughly half). */
+  --border-strong: #616b7a;
+
+  /* ---------------------------------------------------------------- text */
+  --text-primary: #f1f5f9; /* 17.6:1 on --bg */
+  --text-secondary: #94a3b8; /* 7.5:1 on --bg, 6.9:1 on --surface-1 */
+  /* 5.5:1 on --bg. Deliberately lighter than a conventional "tertiary" slate-500,
+     which lands at 4.03:1 and fails body text — there is no size in this UI where
+     that would have been safe. */
+  --text-tertiary: #7c8aa0;
+
+  /* ---------------------------------------------------------------- accent */
+  /* 5.2:1 with #fff text and 3.7:1 as a shape against --bg, so the fill satisfies
+     1.4.3 and the button's own silhouette satisfies 1.4.11. The old #2f6fdb gave
+     3.9:1 with its #e6e8eb label — the primary CTA, including "Acknowledge", failed. */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-text: #ffffff;
+  /* Focus ring: 7.9:1 on --bg. Must clear the accent fill too, since a focused
+     primary button rings against its own background. */
+  --focus-ring: #7ba7f0;
+
+  /* ---------------------------------------------------------------- semantic */
+  --live: #34d399; /* 9.2:1 on --surface-1 — safe as text, not just as a dot */
+  --offline: #94a3b8; /* 6.9:1 */
+  --danger: #dc2626; /* fills/bars: 4.8:1 with #fff text */
+  --danger-text: #f87171; /* 6.4:1 on --surface-1 — headings and inline copy */
+  --warning: #fbbf24; /* 10.6:1 */
+  --info: #7ba7f0;
+
+  /* Severity accents for the three PRD labels. Hue is never the only channel these
+     are encoded in — each also carries a text label and an ordinal rank. */
+  --sev-critical: #dc2626;
+  --sev-high: #f97316;
+  --sev-medium: #fbbf24;
+
+  /* ---------------------------------------------------------------- spacing */
+  /* 4px base. The old sheet mixed 6/8/10/12/14/16/20/60 with no system, so proximity
+     carried no grouping information — a tile's metadata sat as close to the video as
+     the video sat to its own frame. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* ---------------------------------------------------------------- type */
+  /* rem-based so browser zoom and OS text scaling work at all (1.4.4 Resize Text).
+     The previous sheet was 100% px, including `font: 14px/1.5` on body, which also
+     put every input under the 16px iOS auto-zoom threshold. */
+  --fs-2xs: 0.6875rem; /* 11px — uppercase micro-labels only, never sentences */
+  --fs-xs: 0.75rem; /* 12px */
+  --fs-sm: 0.875rem; /* 14px */
+  --fs-md: 1rem; /* 16px — body */
+  --fs-lg: 1.125rem; /* 18px */
+  --fs-xl: 1.375rem; /* 22px */
+  --fs-2xl: 1.75rem; /* 28px */
+  --fs-3xl: 2.25rem; /* 36px */
+
+  --lh-tight: 1.2;
+  --lh-body: 1.55;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --track-wide: 0.06em; /* pairs with --fs-2xs; small caps are unreadable without it */
+
+  /* ---------------------------------------------------------------- geometry */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-full: 999px;
+
+  /* 2.5.5 Target Size (Enhanced) is 44px; 2.5.8 (AA) is 24px. Primary controls take
+     44, dense toolbar controls take 32 — still comfortably over the AA floor. The
+     old `button.link` used for *destructive* camera removal was ~18px, under both. */
+  --tap-min: 44px;
+  --tap-compact: 32px;
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-modal: 0 24px 64px -12px rgb(0 0 0 / 0.75);
+
+  --sidebar-w: 340px;
+  --header-h: 60px;
+  /* Caps column count on ultrawide displays. Without it auto-fit keeps subdividing and
+     a 3440px wall monitor renders ten 320px thumbnails nobody can read faces in. */
+  --grid-max: 1680px;
+}

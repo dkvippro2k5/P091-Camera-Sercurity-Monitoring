@@ -19,17 +19,7 @@ max_frames = int(sys.argv[2]) if len(sys.argv) > 2 else 600
 
 pipeline = VisionPipeline()
 
-# The detector falls back to a scripted mock scenario when weights are missing, and that
-# mock fires all three rules on any input — including a blank frame. Without this guard a
-# mock run is indistinguishable from a real one, so a missing checkpoint reads as a pass.
-if pipeline.detector.is_mock:
-    raise SystemExit(
-        f"Detector is in MOCK mode (weights not found at "
-        f"'{pipeline.detector.model_path}'), so any events below would be scripted, "
-        f"not detected. Download a checkpoint to that path before trusting this run."
-    )
-
-print(f"detector: real weights at '{pipeline.detector.model_path}'")
+print(f"detector: weights at '{pipeline.detector.model_path}'")
 print(f"zones loaded: {pipeline.rule_engine.zone_manager.zone_count}")
 
 summary = pipeline.process_video(

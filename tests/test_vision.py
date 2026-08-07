@@ -1,5 +1,7 @@
+import glob
 import os
 
+import cv2
 import numpy as np
 import pytest
 
@@ -33,18 +35,26 @@ def test_vision_schemas():
     assert detection.confidence == 0.95
     assert detection.camera_id == "cam_hallway_01"
 
-    frame_result = FrameAnalysisResult(frame_id=1, camera_id="cam_hallway_01", detections=[detection], processing_time_ms=12.5)
+    frame_result = FrameAnalysisResult(
+        frame_id=1, camera_id="cam_hallway_01", detections=[detection], processing_time_ms=12.5
+    )
     assert frame_result.frame_id == 1
     assert len(frame_result.detections) == 1
 
 
-def test_detector_initialization():
-    detector = IncidentDetector(model_path=None)
-    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    detections = detector.detect(dummy_frame)
+def test_detector_with_no_model_returns_nothing():
+    """model_path=None is the null detector: it must report nothing, never invent it.
 
-    assert isinstance(detections, list)
-    assert len(detections) == 0
+    Tests that only exercise the rule layer construct the detector this way. Returning
+    fabricated detections here would make a surveillance system report incidents that
+    have nothing to do with the camera feed.
+    """
+    detector = IncidentDetector(model_path=None)
+    assert detector.model is None
+
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    assert detector.detect(dummy_frame) == []
 
 
 def test_anonymizer_blur():
@@ -82,14 +92,37 @@ def test_anonymizer_pixelate_face_clipped_at_frame_edge():
 
 
 def test_camera_id_propagates_into_detections():
-    """camera_id must reach every detection and result."""
-    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
-    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    """camera_id must reach every detection, not just the frame result.
 
-    _, result = pipeline.process_frame(dummy_frame, frame_id=5, camera_id="cam_lobby_07")
+    Run against real footage rather than a blank frame: the detector stamps camera_id in
+    the YOLO path, so a frame with nothing in it exercises none of that plumbing. `data/`
+    is gitignored, so this skips in CI rather than failing on absent clips.
+    """
+    clips = sorted(glob.glob(os.path.join("data", "vision", "test", "*.mp4")))
+    if not clips:
+        pytest.skip("no test footage under data/vision/test/")
 
+    cap = cv2.VideoCapture(clips[0])
+    try:
+        pipeline = VisionPipeline()
+        result = None
+        # People are not necessarily in the very first frame; give it a short budget
+        # rather than a single shot, and keep it small so this stays fast.
+        for frame_id in range(15):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            _, result = pipeline.process_frame(frame, frame_id=frame_id, camera_id="cam_lobby_07")
+            if result.detections:
+                break
+    finally:
+        cap.release()
+
+    assert result is not None, f"could not read a single frame from '{clips[0]}'"
     assert result.camera_id == "cam_lobby_07"
     assert result.timestamp is not None
+    assert result.detections, f"no detections in the first 15 frames of '{clips[0]}'"
+    assert all(d.camera_id == "cam_lobby_07" for d in result.detections)
 
 
 def test_torch_thread_tuning_is_idempotent():
@@ -117,9 +150,20 @@ def test_torch_thread_tuning_is_idempotent():
         pass
 
 
-def test_manager_warns_when_cameras_exceed_cpu_capacity(caplog):
+def test_manager_warns_when_cameras_exceed_cpu_capacity(caplog, monkeypatch):
     """Oversubscription must be surfaced: frames go stale silently otherwise."""
     import logging as _logging
+
+    # The warning is deliberately CPU-only — _warn_if_oversubscribed returns early on a
+    # GPU host because that capacity curve is different and the CPU budget would be a
+    # wrong guess. This test is about the CPU path, so the host's actual GPU is pinned
+    # out; without this it passes in CI (no GPU) and fails on any dev box that has one.
+    try:
+        import torch
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    except ImportError:
+        pass
 
     manager = MultiStreamManager(tune_torch_threads=False)
     budget = max(2, (os.cpu_count() or 4) // 2)
@@ -163,11 +207,15 @@ def test_process_video_still_raises_on_missing_file(tmp_path):
         pipeline.process_video(str(tmp_path / "nope.mp4"))
 
 
-def test_detector_raises_on_missing_weights(tmp_path):
-    """Passing an explicit non-existent file path raises FileNotFoundError."""
+def test_detector_raises_when_weights_are_missing(tmp_path):
+    """Missing weights must fail loudly at construction, not degrade silently.
+
+    A detector that quietly loads nothing reports an all-clear on every frame, which on a
+    surveillance system is indistinguishable from a camera watching an empty corridor.
+    """
     missing = str(tmp_path / "absent_weights.pt")
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="Model weights not found"):
         IncidentDetector(model_path=missing)
 
 

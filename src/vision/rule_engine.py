@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from src.vision.fall_classifier import classify_pose
 from src.vision.schemas import BoundingBox, IncidentDetection
 from src.vision.zone_config import ZoneManager
 
@@ -24,6 +25,12 @@ CARRIABLE_CLASSES = {"backpack", "handbag", "suitcase", "bag", "luggage"}
 LABEL_INTRUSION = "intrusion"
 LABEL_FALL = "fall_detection"
 LABEL_ABANDONED = "abandoned_object"
+
+# Span of bbox-position history retained per track, and therefore the baseline the fall rule
+# measures downward velocity against. One constant so the pruning window and the window the
+# velocity is computed over cannot drift apart: `_check_falls` reads `pos_history[0]`, which
+# is only the window edge as long as pruning uses this same value.
+_VELOCITY_WINDOW_SEC = 2.0
 
 
 @dataclass
@@ -43,6 +50,10 @@ class TrackState:
     stationary_since: float | None = None
     anchor: tuple[float, float] | None = None
     abandoned_fired: bool = False
+    owner_track_id: str | None = None
+    # Track Stitching & Motion Velocity
+    pos_history: list[tuple[float, float, float, float]] = field(default_factory=list)
+    aliased_from: str | None = None
     # Intrusion: zones already alerted on, so one entry is not re-fired every frame.
     alerted_zones: set[str] = field(default_factory=set)
 
@@ -53,43 +64,80 @@ class RuleEngine:
     Args:
         zone_manager: Polygon zones used by the intrusion rule.
         fall_dwell_sec: Seconds a person must stay collapsed before a fall fires (PRD: 3s).
-        fall_aspect_ratio: Width/height above which a bbox counts as collapsed.
+        fall_aspect_ratio: Width/height above which a bbox counts as collapsed. Used as the
+            fall signal only when pose keypoints are unavailable.
+        fall_pose_gate_ratio: Width/height above which a person becomes a *candidate* worth
+            spending pose inference on. Deliberately looser than fall_aspect_ratio — the
+            cascade can afford false candidates because pose rejects them, and a looser gate
+            catches falls toward the camera whose bbox stays tall.
         abandon_sec: Seconds an object must sit unattended before it is abandoned.
         owner_radius_ratio: Owner search radius as a fraction of frame width (PRD's radius R).
         stationary_tolerance_ratio: Movement below this fraction of frame width counts as still.
         track_ttl_sec: Drop track state this long after a track disappears.
+        track_stitch_window_sec: Grace window to stitch a new track to a recently lost track across brief occlusions.
+        track_stitch_radius_ratio: How far a reappearing track may have moved, as a fraction
+            of frame width. Normalized for the same reason owner_radius_ratio is: a fixed
+            pixel radius means something different at 720p than at 4K, so the stitch would
+            silently tighten or loosen with the camera's resolution.
+        alert_cooldown_sec: Minimum gap between events of the same label on one camera.
+            0 disables. Guards against one flickering track flooding the operator.
     """
 
     def __init__(
         self,
         zone_manager: ZoneManager | None = None,
-        fall_dwell_sec: float = 3.0,
+        fall_dwell_sec: float = 0.0,
         fall_aspect_ratio: float = 1.2,
+        fall_pose_gate_ratio: float = 0.8,
         abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
         track_ttl_sec: float = 5.0,
+        track_stitch_window_sec: float = 2.0,
+        # 0.12 reproduces the 150px this replaced at the 720p the capacity table was
+        # measured on, so behaviour there is unchanged and every other resolution now
+        # scales with it instead of drifting.
+        track_stitch_radius_ratio: float = 0.12,
+        alert_cooldown_sec: float = 0.0,
     ):
         self.zone_manager = zone_manager or ZoneManager()
         self.fall_dwell_sec = fall_dwell_sec
         self.fall_aspect_ratio = fall_aspect_ratio
+        self.fall_pose_gate_ratio = fall_pose_gate_ratio
         self.abandon_sec = abandon_sec
         self.owner_radius_ratio = owner_radius_ratio
         self.stationary_tolerance_ratio = stationary_tolerance_ratio
         self.track_ttl_sec = track_ttl_sec
+        self.track_stitch_window_sec = track_stitch_window_sec
+        self.track_stitch_radius_ratio = track_stitch_radius_ratio
+        self.alert_cooldown_sec = alert_cooldown_sec
 
         # Keyed by (camera_id, track_id) to prevent cross-camera collisions.
         # Two independent YOLO trackers can emit the same track_id (e.g. "track_1");
         # without the camera prefix their temporal states would corrupt each other.
         self._tracks: dict[tuple[str | None, str], TrackState] = {}
+        self._expired_tracks: dict[tuple[str | None, str], TrackState] = {}
+        # Last emission time per (camera_id, label), for alert_cooldown_sec.
+        self._last_alert: dict[tuple[str | None, str], float] = {}
 
     def reset(self) -> None:
         """Clear all track state, e.g. between videos."""
         self._tracks.clear()
+        self._expired_tracks.clear()
+        self._last_alert.clear()
 
     @property
     def active_tracks(self) -> int:
         return len(self._tracks)
+
+    def has_active_tracks(self, camera_id: str | None = None) -> bool:
+        """Whether any track state is live for this camera.
+
+        The motion gate consults this before skipping a frame. Skipping while a track is
+        alive would freeze its dwell timer mid-count and starve the YOLO tracker, so a
+        fall in progress could never reach the 3s threshold.
+        """
+        return any(key[0] == camera_id for key in self._tracks)
 
     @staticmethod
     def _track_key(camera_id: str | None, track_id: str) -> tuple[str | None, str]:
@@ -124,19 +172,45 @@ class RuleEngine:
         persons = [d for d in detections if d.label in PERSON_CLASSES]
         objects = [d for d in detections if d.label in CARRIABLE_CLASSES]
 
-        self._update_tracks(detections, timestamp, camera_id)
+        self._update_tracks(detections, timestamp, camera_id, frame_width)
 
         events: list[IncidentDetection] = []
-        events.extend(
-            self._check_intrusion(persons, frame_width, frame_height, timestamp, now, camera_id)
-        )
+        events.extend(self._check_intrusion(persons, frame_width, frame_height, timestamp, now, camera_id))
         events.extend(self._check_falls(persons, timestamp, camera_id))
-        events.extend(
-            self._check_abandoned(objects, persons, frame_width, timestamp, camera_id)
-        )
+        events.extend(self._check_abandoned(objects, persons, frame_width, timestamp, camera_id))
 
         self._evict_stale(timestamp)
-        return events
+        return self._apply_cooldown(events, timestamp, camera_id)
+
+    def _apply_cooldown(
+        self, events: list[IncidentDetection], timestamp: float, camera_id: str | None
+    ) -> list[IncidentDetection]:
+        """Drop events of a label that already fired on this camera too recently.
+
+        Each rule already re-arms per track, but nothing stopped a flickering track — or
+        several tracks of the same kind — from emitting a burst an operator cannot triage.
+        DeepCamera rate-limits for the same reason (a 200ms frame lock plus a 30-minute
+        per-person notification cooldown); this serves the PRD's "giảm báo động giả" goal.
+
+        Applied at the single exit point of evaluate() so no rule can bypass it.
+        """
+        if self.alert_cooldown_sec <= 0:
+            return events
+
+        kept: list[IncidentDetection] = []
+        for event in events:
+            key = (camera_id, event.label)
+            last = self._last_alert.get(key)
+            if last is not None and (timestamp - last) < self.alert_cooldown_sec:
+                logger.debug(
+                    f"Suppressed {event.label} on {camera_id}: "
+                    f"{timestamp - last:.1f}s since last, cooldown {self.alert_cooldown_sec}s"
+                )
+                continue
+            self._last_alert[key] = timestamp
+            kept.append(event)
+
+        return kept
 
     def get_active_incidents(
         self,
@@ -195,31 +269,111 @@ class RuleEngine:
         return active
 
     def _update_tracks(
-        self, detections: list[IncidentDetection], timestamp: float, camera_id: str | None = None
+        self,
+        detections: list[IncidentDetection],
+        timestamp: float,
+        camera_id: str | None,
+        frame_width: int,
     ) -> None:
         for det in detections:
             if not det.track_id:
                 continue
             key = self._track_key(camera_id, det.track_id)
             state = self._tracks.get(key)
+            cx = (det.bbox.xmin + det.bbox.xmax) / 2.0
+            cy = (det.bbox.ymin + det.bbox.ymax) / 2.0
+            ymax = float(det.bbox.ymax)
+
             if state is None:
-                self._tracks[key] = TrackState(
-                    track_id=det.track_id,
-                    label=det.label,
-                    first_seen=timestamp,
-                    last_seen=timestamp,
-                    last_bbox=det.bbox,
-                )
+                state = self._stitch_or_create(det, key, camera_id, timestamp, cx, cy, frame_width)
             else:
                 state.last_seen = timestamp
                 state.last_bbox = det.bbox
 
+            # Rolling window feeding the fall rule's downward-velocity estimate. Pruned to
+            # the same span used to compute it, so the oldest sample is the window edge.
+            state.pos_history.append((timestamp, cx, cy, ymax))
+            state.pos_history = [p for p in state.pos_history if timestamp - p[0] <= _VELOCITY_WINDOW_SEC]
+
+    def _stitch_or_create(
+        self,
+        det: IncidentDetection,
+        key: tuple[str | None, str],
+        camera_id: str | None,
+        timestamp: float,
+        cx: float,
+        cy: float,
+        frame_width: int,
+    ) -> TrackState:
+        """Resume a recently-lost track's state, or start fresh when nothing matches.
+
+        YOLO issues a brand-new track_id whenever a person is briefly occluded — walking
+        behind a pillar restarts numbering, which restarts every dwell timer keyed on it.
+        Stitching carries the timer across so a 3-second fall behind a chair leg still fires.
+
+        Matching is nearest-first rather than first-found: two objects of the same class can
+        both be inside the radius, and picking by dict order would make the outcome depend
+        on eviction sequence rather than on geometry.
+        """
+        # frame_width is guaranteed positive — evaluate() returns early on a degenerate frame.
+        radius = frame_width * self.track_stitch_radius_ratio
+
+        best_key: tuple[str | None, str] | None = None
+        best_dist = radius
+        for exp_key, exp_state in self._expired_tracks.items():
+            if exp_key[0] != camera_id or exp_state.label != det.label:
+                continue
+            if (timestamp - exp_state.last_seen) > self.track_stitch_window_sec:
+                continue
+            old_cx = (exp_state.last_bbox.xmin + exp_state.last_bbox.xmax) / 2.0
+            old_cy = (exp_state.last_bbox.ymin + exp_state.last_bbox.ymax) / 2.0
+            dist = math.hypot(cx - old_cx, cy - old_cy)
+            if dist < best_dist:
+                best_key, best_dist = exp_key, dist
+
+        if best_key is None:
+            state = TrackState(
+                track_id=det.track_id,
+                label=det.label,
+                first_seen=timestamp,
+                last_seen=timestamp,
+                last_bbox=det.bbox,
+            )
+            self._tracks[key] = state
+            return state
+
+        stitched = self._expired_tracks.pop(best_key)
+        stitched.aliased_from = stitched.track_id
+        stitched.track_id = det.track_id
+        stitched.last_seen = timestamp
+        stitched.last_bbox = det.bbox
+        # The dwell timers are the whole point of stitching, so fallen_since / stationary_since
+        # / last_owner_seen ride along. The *fired* flags and position history deliberately do
+        # not: keeping `abandoned_fired` would let a bag that already alerted stay silent
+        # forever through one occlusion, and stale pos_history would read as a large jump in
+        # zero time and fake a downward velocity spike on the first frame after the stitch.
+        stitched.fall_fired = False
+        stitched.abandoned_fired = False
+        stitched.pos_history = []
+        self._tracks[key] = stitched
+        logger.debug(
+            f"Stitched {det.label} {stitched.aliased_from} -> {det.track_id} on {camera_id} "
+            f"({best_dist:.0f}px, radius {radius:.0f}px)"
+        )
+        return stitched
+
     def _evict_stale(self, timestamp: float) -> None:
-        expired = [
-            key for key, s in self._tracks.items() if timestamp - s.last_seen > self.track_ttl_sec
+        expired_keys = [key for key, s in self._tracks.items() if timestamp - s.last_seen > self.track_ttl_sec]
+        for key in expired_keys:
+            self._expired_tracks[key] = self._tracks.pop(key)
+
+        # Purge _expired_tracks beyond track_ttl_sec + track_stitch_window_sec
+        purge_keys = [
+            key for key, s in self._expired_tracks.items()
+            if timestamp - s.last_seen > (self.track_ttl_sec + self.track_stitch_window_sec)
         ]
-        for key in expired:
-            del self._tracks[key]
+        for key in purge_keys:
+            del self._expired_tracks[key]
 
     def _check_intrusion(
         self,
@@ -245,9 +399,7 @@ class RuleEngine:
             foot_x = (person.bbox.xmin + person.bbox.xmax) / 2.0
             foot_y = float(person.bbox.ymax)
 
-            hits = self.zone_manager.zones_containing(
-                camera_id, foot_x, foot_y, frame_width, frame_height, now
-            )
+            hits = self.zone_manager.zones_containing(camera_id, foot_x, foot_y, frame_width, frame_height, now)
             current = {z.name for z in hits}
 
             for zone in hits:
@@ -264,10 +416,7 @@ class RuleEngine:
                         camera_id=camera_id,
                         bbox=person.bbox,
                         zone_name=zone.name,
-                        reason=(
-                            f"{person.track_id} entered restricted zone "
-                            f"'{zone.name}' during {window}"
-                        ),
+                        reason=(f"{person.track_id} entered restricted zone '{zone.name}' during {window}"),
                     )
                 )
 
@@ -276,12 +425,46 @@ class RuleEngine:
 
         return events
 
+    def is_fall_candidate(self, person: IncidentDetection) -> bool:
+        """Cheap pre-filter deciding whether a person is worth running pose on.
+
+        This is the first stage of the fall cascade. It exists to keep pose inference off
+        the hot path: in the common case nobody is near-horizontal, so pose never runs and
+        the added cost is zero. The threshold is looser than fall_aspect_ratio on purpose —
+        rejecting candidates is pose's job, and being generous here recovers falls that a
+        pure aspect-ratio rule misses.
+        """
+        width = person.bbox.xmax - person.bbox.xmin
+        height = max(1, person.bbox.ymax - person.bbox.ymin)
+        return (width / height) >= self.fall_pose_gate_ratio
+
+    def _is_collapsed(self, person: IncidentDetection, downward_velocity: float | None = None) -> tuple[bool, str]:
+        """Second cascade stage: decide if this person is on the ground, and say why.
+
+        Prefers pose when keypoints are present and confident. Falls back to the original
+        bounding-box aspect ratio otherwise — pose weights are optional, and the module has
+        to keep detecting falls with a plain detection model.
+        """
+        verdict = classify_pose(person.keypoints, downward_velocity=downward_velocity)
+        if verdict is not None:
+            return verdict.is_prone, verdict.reason
+
+        width = person.bbox.xmax - person.bbox.xmin
+        height = max(1, person.bbox.ymax - person.bbox.ymin)
+        ratio = width / height
+        vel_suffix = f" (downward vel {downward_velocity:.1f}px/s)" if downward_velocity is not None else ""
+        return (
+            ratio >= self.fall_aspect_ratio,
+            f"bbox aspect ratio {ratio:.2f} (threshold {self.fall_aspect_ratio}, no pose available){vel_suffix}",
+        )
+
     def _check_falls(
         self, persons: list[IncidentDetection], timestamp: float, camera_id: str | None
     ) -> list[IncidentDetection]:
-        """Fire when a person's bbox stays wide-and-flat past the dwell threshold.
+        """Fire when a person stays on the ground past the dwell threshold.
 
-        The dwell is what separates a fall from bending over to pick something up.
+        The dwell is what separates a fall from bending over to pick something up, and the
+        PRD fixes it at 3 seconds. Pose changes *what counts as collapsed*, never the timer.
         """
         events = []
         for person in persons:
@@ -291,9 +474,16 @@ class RuleEngine:
             if state is None:
                 continue
 
-            width = person.bbox.xmax - person.bbox.xmin
-            height = max(1, person.bbox.ymax - person.bbox.ymin)
-            collapsed = (width / height) >= self.fall_aspect_ratio
+            # Calculate downward velocity from position history (Improvement 1)
+            downward_velocity = None
+            if state and len(state.pos_history) >= 2:
+                first_p = state.pos_history[0]
+                dt = timestamp - first_p[0]
+                if dt >= 0.1:
+                    dy = float(person.bbox.ymax) - first_p[3]
+                    downward_velocity = max(0.0, dy / dt)
+
+            collapsed, why = self._is_collapsed(person, downward_velocity=downward_velocity)
 
             if not collapsed:
                 state.fallen_since = None
@@ -302,7 +492,8 @@ class RuleEngine:
 
             if state.fallen_since is None:
                 state.fallen_since = timestamp
-                continue
+                if self.fall_dwell_sec > 0:
+                    continue
 
             elapsed = timestamp - state.fallen_since
             if elapsed >= self.fall_dwell_sec and not state.fall_fired:
@@ -315,9 +506,10 @@ class RuleEngine:
                         timestamp=timestamp,
                         camera_id=camera_id,
                         bbox=person.bbox,
+                        keypoints=person.keypoints,
                         reason=(
                             f"{person.track_id} stayed collapsed for {elapsed:.1f}s "
-                            f"(threshold {self.fall_dwell_sec}s)"
+                            f"(threshold {self.fall_dwell_sec}s) — {why}"
                         ),
                     )
                 )
@@ -349,14 +541,42 @@ class RuleEngine:
             if state.stationary_since is None:
                 state.stationary_since = timestamp
 
-            owner_near = any(
-                math.dist(
-                    ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
-                    (cx, cy),
+            # Original Owner Tracking (Improvement 3): Bind owner_track_id if not set
+            if state.owner_track_id is None and persons:
+                close_owners = [
+                    p
+                    for p in persons
+                    if p.track_id
+                    and math.dist(
+                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
+                        (cx, cy),
+                    )
+                    <= radius
+                ]
+                if close_owners:
+                    state.owner_track_id = close_owners[0].track_id
+
+            if state.owner_track_id:
+                # Check if the specific original owner is present and near
+                owner_near = any(
+                    p.track_id == state.owner_track_id
+                    and math.dist(
+                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
+                        (cx, cy),
+                    )
+                    <= radius
+                    for p in persons
                 )
-                <= radius
-                for p in persons
-            )
+            else:
+                owner_near = any(
+                    math.dist(
+                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
+                        (cx, cy),
+                    )
+                    <= radius
+                    for p in persons
+                )
+
             if owner_near:
                 state.last_owner_seen = timestamp
                 state.abandoned_fired = False

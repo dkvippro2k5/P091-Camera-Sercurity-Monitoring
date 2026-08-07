@@ -1,9 +1,9 @@
-
 from pydantic import BaseModel, Field, field_validator
 
 
 class BoundingBox(BaseModel):
     """Coordinates of a bounding box normalized or pixel-based [xmin, ymin, xmax, ymax]."""
+
     xmin: int = Field(..., description="Top-left X coordinate")
     ymin: int = Field(..., description="Top-left Y coordinate")
     xmax: int = Field(..., description="Bottom-right X coordinate")
@@ -12,6 +12,7 @@ class BoundingBox(BaseModel):
 
 class IncidentDetection(BaseModel):
     """Detection result for a single incident event label."""
+
     label: str = Field(..., description="Event label (e.g. intrusion, fall_detection, abandoned_object)")
     track_id: str | None = Field(None, description="Unique tracking identifier across frames (e.g. person_105)")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score")
@@ -20,6 +21,14 @@ class IncidentDetection(BaseModel):
     camera_id: str | None = Field(None, description="Identifier of camera stream (e.g. cam_hallway_01)")
     zone_name: str | None = Field(None, description="Zone that triggered the event, for intrusion")
     reason: str | None = Field(None, description="Human-readable explanation of which rule fired")
+    keypoints: list[tuple[float, float, float]] | None = Field(
+        None,
+        description=(
+            "COCO 17-point pose as (x, y, confidence) in frame pixels. Only populated for "
+            "person detections that the fall pre-filter flagged as candidates, so it is None "
+            "on the overwhelming majority of detections."
+        ),
+    )
 
 
 class Zone(BaseModel):
@@ -28,10 +37,9 @@ class Zone(BaseModel):
     Normalized coordinates keep a zone valid across resolution changes, so the same
     config works for a 720p live stream and a 1080p recording of the same camera.
     """
+
     name: str = Field(..., description="Zone identifier, e.g. restricted_stairwell")
-    polygon: list[tuple[float, float]] = Field(
-        ..., min_length=3, description="Normalized (x, y) vertices in [0, 1]"
-    )
+    polygon: list[tuple[float, float]] = Field(..., min_length=3, description="Normalized (x, y) vertices in [0, 1]")
     active_hours: str | None = Field(
         None, description="Forbidden window 'HH:MM-HH:MM' (may wrap midnight); None means always active"
     )
@@ -51,12 +59,14 @@ class Zone(BaseModel):
 
 class CameraZoneConfig(BaseModel):
     """Zones configured for a single camera."""
+
     camera_id: str = Field(..., description="Camera identifier these zones belong to")
     zones: list[Zone] = Field(default_factory=list, description="Virtual boundaries on this camera")
 
 
 class FrameAnalysisResult(BaseModel):
     """Output metadata for a single processed video frame."""
+
     frame_id: int = Field(..., ge=0, description="Frame index")
     timestamp: str | None = Field(None, description="ISO timestamp of frame")
     camera_id: str | None = Field(None, description="Camera stream identifier")
@@ -72,6 +82,7 @@ class FrameAnalysisResult(BaseModel):
 
 class VideoAnalysisSummary(BaseModel):
     """Overall summary of video processing handover."""
+
     video_path: str = Field(..., description="Source video path or stream ID")
     camera_id: str | None = Field("cam_01", description="Camera identifier")
     total_frames: int = Field(default=0, description="Total number of frames in video")

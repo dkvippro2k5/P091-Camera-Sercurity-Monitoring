@@ -2,16 +2,13 @@
 
 from datetime import datetime
 
-import numpy as np
 import pytest
 
 from src.vision import (
     BoundingBox,
     CameraZoneConfig,
     IncidentDetection,
-    IncidentDetector,
     RuleEngine,
-    VisionPipeline,
     Zone,
     ZoneManager,
     is_zone_active,
@@ -198,8 +195,14 @@ def test_point_in_polygon():
 
     # Concave U-shape: the notch is outside even though its bounding box is inside.
     concave = [
-        (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.6, 1.0),
-        (0.6, 0.4), (0.4, 0.4), (0.4, 1.0), (0.0, 1.0),
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (1.0, 1.0),
+        (0.6, 1.0),
+        (0.6, 0.4),
+        (0.4, 0.4),
+        (0.4, 1.0),
+        (0.0, 1.0),
     ]
     assert not point_in_polygon(0.5, 0.7, concave)
     assert point_in_polygon(0.5, 0.2, concave)
@@ -220,9 +223,7 @@ def test_active_hours_and_midnight_wrap():
 
 
 def test_zone_manager_wildcard_fallback_and_file_loading(tmp_path):
-    config = CameraZoneConfig(
-        camera_id="*", zones=[Zone(name="wild", polygon=[(0, 0), (1, 0), (1, 1)])]
-    )
+    config = CameraZoneConfig(camera_id="*", zones=[Zone(name="wild", polygon=[(0, 0), (1, 0), (1, 1)])])
     manager = ZoneManager([config])
     assert manager.zone_count == 1
     # Unconfigured camera falls back to the wildcard entry.
@@ -249,9 +250,6 @@ def test_zone_manager_wildcard_fallback_and_file_loading(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-
-
-
 def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
     """An owner last seen at t=0.0 must still start the unattended clock.
 
@@ -264,9 +262,12 @@ def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
 
     # t=0.0: bag and its owner together, so last_owner_seen is set to exactly 0.0.
     engine.evaluate(
-        [make_det("backpack", "bag_1", 0.2, 0.3, 0.06, 0.08),
-         make_det("person", "owner_1", 0.21, 0.32, 0.08, 0.35)],
-        WIDTH, HEIGHT, 0.0, now, "cam_test",
+        [make_det("backpack", "bag_1", 0.2, 0.3, 0.06, 0.08), make_det("person", "owner_1", 0.21, 0.32, 0.08, 0.35)],
+        WIDTH,
+        HEIGHT,
+        0.0,
+        now,
+        "cam_test",
     )
     state = engine._tracks[("cam_test", "bag_1")]
     assert state.last_owner_seen == 0.0
@@ -275,7 +276,11 @@ def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
     # which is the value the buggy fallback used instead of the owner timestamp.
     engine.evaluate(
         [make_det("backpack", "bag_1", 0.6, 0.3, 0.06, 0.08)],
-        WIDTH, HEIGHT, 5.0, now, "cam_test",
+        WIDTH,
+        HEIGHT,
+        5.0,
+        now,
+        "cam_test",
     )
 
     fired_at = None
@@ -283,7 +288,11 @@ def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
         t = step * 0.5
         events = engine.evaluate(
             [make_det("backpack", "bag_1", 0.6, 0.3, 0.06, 0.08)],
-            WIDTH, HEIGHT, t, now, "cam_test",
+            WIDTH,
+            HEIGHT,
+            t,
+            now,
+            "cam_test",
         )
         if events:
             fired_at = t
@@ -292,3 +301,61 @@ def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
     # Owner last seen at 0.0 + 10s window => ~10s, not 15s (5.0 anchor + 10s).
     assert fired_at is not None, "abandoned_object never fired"
     assert fired_at == pytest.approx(10.0, abs=0.6), f"fired at t={fired_at}, expected ~10.0"
+
+
+def test_track_stitching_across_occlusion():
+    engine = make_engine(track_ttl_sec=1.0, track_stitch_window_sec=2.0)
+    now = datetime.now()
+
+    person_v1 = make_det("person", "person_10", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    person_v2 = make_det("person", "person_20", cx=0.51, cy=0.51, bw=0.08, bh=0.35)
+
+    # First track seen
+    engine.evaluate([person_v1], WIDTH, HEIGHT, timestamp=1.0, now=now, camera_id="cam_test")
+    assert ("cam_test", "person_10") in engine._tracks
+
+    # Evict track after ttl (1.0s)
+    engine.evaluate([], WIDTH, HEIGHT, timestamp=2.5, now=now, camera_id="cam_test")
+    assert ("cam_test", "person_10") not in engine._tracks
+    assert ("cam_test", "person_10") in engine._expired_tracks
+
+    # New track appears near old position within stitch window (2.0s) -> stitched
+    engine.evaluate([person_v2], WIDTH, HEIGHT, timestamp=3.0, now=now, camera_id="cam_test")
+    assert ("cam_test", "person_20") in engine._tracks
+    state = engine._tracks[("cam_test", "person_20")]
+    assert state.aliased_from == "person_10"
+
+
+def test_fall_velocity_recorded():
+    engine = make_engine(fall_dwell_sec=3.0)
+    now = datetime.now()
+
+    standing = make_det("person", "person_fall", cx=0.5, cy=0.2, bw=0.08, bh=0.35)
+    collapsed = make_det("person", "person_fall", cx=0.5, cy=0.8, bw=0.30, bh=0.09)
+
+    engine.evaluate([standing], WIDTH, HEIGHT, timestamp=1.0, now=now)
+    # Rapid drop downward
+    engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=1.5, now=now)
+    state = engine._tracks[(None, "person_fall")]
+    assert len(state.pos_history) >= 2
+
+
+def test_abandoned_original_owner_tracking():
+    engine = make_engine(abandon_sec=5.0)
+    now = datetime.now()
+
+    bag = make_det("backpack", "bag_owner_test", cx=0.3, cy=0.3, bw=0.06, bh=0.08)
+    owner = make_det("person", "owner_orig", cx=0.31, cy=0.31, bw=0.08, bh=0.35)
+    bystander = make_det("person", "bystander_stranger", cx=0.32, cy=0.32, bw=0.08, bh=0.35)
+
+    # Initial frame: owner near bag -> owner_track_id set to owner_orig
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, timestamp=1.0, now=now)
+    state = engine._tracks[(None, "bag_owner_test")]
+    assert state.owner_track_id == "owner_orig"
+
+    # Owner leaves, but stranger stands near bag
+    engine.evaluate([bag, bystander], WIDTH, HEIGHT, timestamp=2.0, now=now)
+    # Because original owner left, timer accumulates despite bystander
+    events = engine.evaluate([bag, bystander], WIDTH, HEIGHT, timestamp=7.0, now=now)
+    assert len(events) == 1
+    assert events[0].label == "abandoned_object"

@@ -12,7 +12,12 @@ logger = logging.getLogger(__name__)
 # of the directory the process was launched from.
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DEFAULT_WEIGHTS_PATH = "D:\\Vin\\Build Phase\\P-091\\src\\vision\\weights\\yolo26n.pt"
+# Repo-relative on purpose. An absolute path here would short-circuit _resolve_weights
+# (it returns early for absolute paths) and break on every machine but the author's,
+# including CI and Docker. The default is the medium YOLO11 — the small checkpoint the
+# capacity table in stream_manager.py was measured against still works if passed
+# explicitly, but the medium model is the one the team runs with.
+DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo11m.pt")
 
 
 class IncidentDetector:
@@ -22,11 +27,14 @@ class IncidentDetector:
     It emits raw classes (person, backpack, ...) with stable track IDs; deciding whether
     they add up to intrusion / fall / abandoned_object is the RuleEngine's job, because
     those labels need history that a single frame cannot supply.
+
+    A model_path of None means no model is loaded and detect() always returns [] —
+    useful for tests that only exercise the rule layer.
     """
 
     def __init__(
         self,
-        model_path: str = DEFAULT_WEIGHTS_PATH,
+        model_path: str | None = DEFAULT_WEIGHTS_PATH,
         conf_threshold: float = 0.5,
         target_labels: list[str] | None = None,
         use_tracking: bool = True,
@@ -41,7 +49,7 @@ class IncidentDetector:
         self._initialize_model()
 
     def _initialize_model(self) -> None:
-        if not self.model_path:
+        if self.model_path is None:
             return
 
         resolved = self._resolve_weights(self.model_path)
@@ -50,7 +58,6 @@ class IncidentDetector:
                 f"Model weights not found at '{self.model_path}' "
                 f"(searched relative to CWD '{os.getcwd()}' and the project root)."
             )
-
         self.model_path = resolved
         from ultralytics import YOLO  # type: ignore
 
@@ -71,9 +78,9 @@ class IncidentDetector:
     def detect(
         self,
         frame: np.ndarray,
-        frame_id: int = 0,
+        frame_id: int = 0,      # kept for API compatibility — unused, was mock-only
         camera_id: str | None = None,
-        timestamp: float | None = None,
+        timestamp: float | None = None,  # kept for API compatibility — unused, was mock-only
     ) -> list[IncidentDetection]:
         """Detect tracked objects in a single BGR frame.
 
@@ -81,21 +88,26 @@ class IncidentDetector:
             frame: Image array (H, W, C) in BGR format.
             frame_id: Frame index number.
             camera_id: Identifier of the source camera, stamped onto each detection.
-            timestamp: Seconds into the stream (unused, kept for API compatibility).
+            timestamp: Wall-clock timestamp for the detection (not used internally).
 
         Returns:
             List of IncidentDetection carrying raw object classes and track IDs.
         """
-        if frame is None or frame.size == 0 or self.model is None:
+        if frame is None or frame.size == 0:
             return []
 
+        if self.model is None:
+            return []
+
+        return self._detect_real(frame, camera_id=camera_id)
+
+    def _detect_real(self, frame: np.ndarray, camera_id: str | None = None) -> list[IncidentDetection]:
+        """Run YOLO inference, preferring tracking so track IDs stay stable across frames."""
         if self.use_tracking:
             # persist=True carries the tracker's state between calls, which is what makes
             # box.id stable. Without it every frame restarts numbering and the temporal
             # rules can never accumulate history.
-            results = self.model.track(
-                frame, conf=self.conf_threshold, persist=True, verbose=False
-            )
+            results = self.model.track(frame, conf=self.conf_threshold, persist=True, verbose=False)
         else:
             results = self.model(frame, conf=self.conf_threshold, verbose=False)
 
@@ -109,11 +121,7 @@ class IncidentDetector:
                 conf = float(box.conf[0].cpu().numpy())
                 cls_id = int(box.cls[0].cpu().numpy())
 
-                label_name = (
-                    r.names[cls_id]
-                    if hasattr(r, "names") and cls_id in r.names
-                    else f"class_{cls_id}"
-                )
+                label_name = r.names[cls_id] if hasattr(r, "names") and cls_id in r.names else f"class_{cls_id}"
                 if self.target_labels and label_name not in self.target_labels:
                     continue
 
