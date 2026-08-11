@@ -66,6 +66,36 @@ def parse_active_hours(active_hours: str | None) -> tuple[time, time] | None:
         return None
 
 
+def validate_active_hours(value: str) -> str:
+    """Strict counterpart to `parse_active_hours`, for the API edge. Raises on bad input.
+
+    Two parsers on purpose. `parse_active_hours` runs per zone per frame and must never
+    take a stream down over a typo, so it warns and degrades to always-active. But
+    degrading silently at *configuration* time is the wrong trade: an operator who typed
+    `22-05` would be told nothing and would get a zone that alerts around the clock —
+    exactly the alert flood the PRD is trying to reduce. Here the error can still reach
+    the person typing it, so it is raised.
+    """
+    text = value.strip()
+    try:
+        start_str, end_str = text.split("-")
+        start_h, start_m = (int(part) for part in start_str.strip().split(":"))
+        end_h, end_m = (int(part) for part in end_str.strip().split(":"))
+        start, end = time(start_h, start_m), time(end_h, end_m)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Active hours must look like '22:00-05:00', got '{value}'.") from exc
+
+    # Rejected rather than normalized: read literally this window covers a single minute,
+    # so the zone would appear configured while alerting essentially never. Whichever the
+    # operator meant — always on, or a real window — they need to say which.
+    if start == end:
+        raise ValueError(
+            f"Active hours start and end are the same time ('{value}'), which would leave the zone "
+            "almost never active. Use a different end time, or leave the window off for always-on."
+        )
+    return f"{start.strftime('%H:%M')}-{end.strftime('%H:%M')}"
+
+
 def is_zone_active(zone: Zone, now: datetime) -> bool:
     """Whether a zone's forbidden window covers `now`. Windows may wrap past midnight."""
     window = parse_active_hours(zone.active_hours)

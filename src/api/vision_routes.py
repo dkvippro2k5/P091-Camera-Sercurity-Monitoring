@@ -17,13 +17,22 @@ import os
 import uuid
 
 import cv2
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
-from src.models.camera_schemas import Alert, CameraCreate, CameraInfo, DemoVideo, SystemStatus
+from src.api.deps import current_user, require_guard, require_manager, session_is_live
+from src.models.camera_schemas import Alert, AlertVerdict, CameraCreate, CameraInfo, DemoVideo, SystemStatus
+from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
 
-router = APIRouter(tags=["monitoring"])
+# Every route here requires a signed-in operator, manager or guard. The dependency is on the
+# router rather than per route, so an endpoint added later is protected because of where it
+# was put, not because its author remembered to decorate it.
+router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_guard)])
+
+# The statistics report is the one manager-only surface. Separate router, and the two never
+# share a path, so FastAPI cannot resolve a request against the wrong gate.
+manager_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_manager)])
 
 _ALLOWED_UPLOAD_EXT = {".mp4", ".avi", ".mov", ".mkv"}
 # Uploads are read into memory by the frame-probe below, and this is a demo box.
@@ -51,6 +60,15 @@ def get_service(request: Request) -> MonitoringService:
 
 
 # ---------------------------------------------------------------- sources
+# All three exist only to build a camera, so they sit on the same gate as `POST /cameras`
+# itself — which is the guard's, since the guard is the one who configures cameras.
+#
+# Worth naming rather than leaving implicit: these are the interesting half of this app's
+# attack surface. `/uploads` writes an operator-supplied file to disk and `/preview-frame`
+# opens an arbitrary RTSP URL from the server. That risk did not disappear when the routes
+# moved; it is accepted, because the role that builds cameras cannot build them without it.
+# Splitting them off from `POST /cameras` would only produce the worse arrangement: the
+# probing and uploading reachable by someone who cannot create the camera it is all for.
 @router.get("/demo-videos", response_model=list[DemoVideo])
 async def list_demo_videos() -> list[DemoVideo]:
     """Sample clips bundled with the repo, for the 'Prepared Demo' source option."""
@@ -130,6 +148,7 @@ async def create_camera(payload: CameraCreate, request: Request) -> CameraInfo:
 
 @router.delete("/cameras/{camera_id}", status_code=204)
 async def delete_camera(camera_id: str, request: Request) -> Response:
+    """Remove a camera and its zone configuration."""
     service = get_service(request)
     if not await asyncio.to_thread(service.remove_camera, camera_id):
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
@@ -150,7 +169,7 @@ async def camera_snapshot(camera_id: str, request: Request) -> Response:
 
 @router.get("/cameras/{camera_id}/stream")
 async def camera_stream(camera_id: str, request: Request, fps: float = Query(default=10.0, gt=0, le=30)) -> Response:
-    """MJPEG stream of the anonymized, annotated frames for one camera."""
+    """MJPEG stream of the annotated frames for one camera."""
     service = get_service(request)
     if service.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
@@ -172,8 +191,9 @@ async def camera_stream(camera_id: str, request: Request, fps: float = Query(def
             if frame is not last_sent:
                 last_sent = frame
                 yield (
-                    f"--{boundary}\r\nContent-Type: image/jpeg\r\n"
-                    f"Content-Length: {len(frame)}\r\n\r\n".encode() + frame + b"\r\n"
+                    f"--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n".encode()
+                    + frame
+                    + b"\r\n"
                 )
             await asyncio.sleep(interval)
 
@@ -192,18 +212,48 @@ async def list_alerts(request: Request, unacknowledged_only: bool = False) -> li
 
 @router.post("/alerts/{alert_id}/acknowledge", status_code=204)
 async def acknowledge_alert(alert_id: str, request: Request) -> Response:
+    """Dismiss an alert without judging it.
+
+    Deliberately writes no history row: an unlabelled row would sit in the dataset the
+    false-alarm rate is computed from, counted as neither a hit nor a miss. Use
+    `/verdict` for the HITL path.
+    """
     if not get_service(request).acknowledge(alert_id):
+        raise HTTPException(status_code=404, detail=f"No alert '{alert_id}'")
+    return Response(status_code=204)
+
+
+@router.post("/alerts/{alert_id}/verdict", status_code=204)
+async def submit_verdict(alert_id: str, payload: AlertVerdict, request: Request) -> Response:
+    """The guard's HITL judgement (PRD §3.2), which also becomes training context.
+
+    This is the only path that appends to the labelled history, so it is both the
+    operator's answer and the system's feedback loop. The judgement is attributed to the
+    signed-in operator: a labelled dataset whose labels have no author cannot be audited
+    when two guards disagree about what a false alarm looks like.
+    """
+    judged_by = current_user(request).username
+    if not get_service(request).record_operator_verdict(alert_id, payload.verdict, judged_by=judged_by):
         raise HTTPException(status_code=404, detail=f"No alert '{alert_id}'")
     return Response(status_code=204)
 
 
 @router.get("/events")
 async def event_stream(request: Request) -> StreamingResponse:
-    """Server-sent events: alert created / caption ready / acknowledged.
+    """Server-sent events: alert created / triage verdict ready / acknowledged / auth revoked.
 
     This is what makes the modal interruptive without the frontend polling for it.
+    `alert.created` fires within one frame time of the detection; `alert.verdict` follows
+    seconds later when the VLM has ruled, so the operator is never made to wait on an API
+    call to learn there has been a fall.
+
+    Auth is checked by the router's dependency *before* this runs, so a dead session is a
+    plain 401 and no stream is ever opened for it — which matters more here than elsewhere,
+    because `EventSource` reconnects on its own and an unauthenticated stream that opened
+    and then failed would become an endless reconnect loop.
     """
     service = get_service(request)
+    username = current_user(request).username
     queue = service.subscribe()
 
     async def generate():
@@ -211,6 +261,14 @@ async def event_stream(request: Request) -> StreamingResponse:
             while True:
                 if await request.is_disconnected():
                     break
+
+                # Re-checked on every wake, not just at connect. This response can stay open
+                # for hours, so without it logging out would leave the alert stream running
+                # until the browser felt like closing it — "logout ends the session" has to
+                # be something the server enforces, not something the client cooperates with.
+                if not session_is_live(request):
+                    break
+
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=15.0)
                 except TimeoutError:
@@ -218,6 +276,16 @@ async def event_stream(request: Request) -> StreamingResponse:
                     # stream as dead and tearing it down.
                     yield ": keepalive\n\n"
                     continue
+
+                # The fan-out has no per-user index, so a revocation reaches every stream and
+                # is filtered here. Without the check, one guard logging out would sign out
+                # everyone else watching.
+                if message["type"] == "auth.revoked":
+                    if message["data"].get("username") != username:
+                        continue
+                    yield f"event: auth.revoked\ndata: {json.dumps(message['data'])}\n\n"
+                    break
+
                 yield f"event: {message['type']}\ndata: {json.dumps(message['data'])}\n\n"
         finally:
             service.unsubscribe(queue)
@@ -233,3 +301,35 @@ async def event_stream(request: Request) -> StreamingResponse:
 @router.get("/monitoring/status", response_model=SystemStatus)
 async def monitoring_status(request: Request) -> SystemStatus:
     return get_service(request).status()
+
+
+# ---------------------------------------------------------------- manager reports
+@manager_router.get("/statistics")
+async def statistics(request: Request) -> dict:
+    """Both halves of the manager's numbers, in one response.
+
+    - `report` — the PRD §4 evaluation report (`EvalReport`): precision, the rules-alone vs
+      rules+VLM comparison, and the caveats. Built by the same code the CLI uses, so the
+      dashboard and `scripts/report_eval.py` can never disagree.
+    - `operational` — live activity: how many alerts each camera raised, how many are still
+      unreviewed, and how long judgements take. The evaluation report deliberately knows
+      nothing about this — it is computed from *reviewed* rows only (see its module
+      docstring), so totals and timeliness have to come from the incident log instead.
+    """
+    service = get_service(request)
+
+    # build_report does blocking file I/O; off the event loop, like every other such call.
+    report = await asyncio.to_thread(build_report)
+    operational = await asyncio.to_thread(service.operational_stats)
+
+    body = report.model_dump()
+    # Nulls are kept deliberately — no `exclude_none`. `precision` is `None` when nothing has
+    # been reviewed yet, which `_precision` goes out of its way to distinguish from `0.0`
+    # ("every alert was wrong"). Dropping the key would erase that distinction at the very
+    # last step and leave the dashboard unable to tell the two apart.
+    #
+    # `recall_note` is a `@property`, which Pydantic excludes from `model_dump()`. It carries
+    # the report's central decision — *why* there is no recall number — so it is re-attached
+    # explicitly or the most important statement in the report silently vanishes from the API.
+    body["recall_note"] = report.recall_note
+    return {"report": body, "operational": operational}

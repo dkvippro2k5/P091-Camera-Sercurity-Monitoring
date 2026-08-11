@@ -7,12 +7,10 @@ from datetime import UTC, datetime
 import cv2
 import numpy as np
 
-from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
 from src.vision.motion import MotionGate
-from src.vision.overlay import draw_events, draw_pose, draw_tracks, draw_zones
-from src.vision.pose import PoseEstimator
-from src.vision.rule_engine import PERSON_CLASSES, RuleEngine
+from src.vision.overlay import draw_events, draw_tracks, draw_zones
+from src.vision.rule_engine import RuleEngine
 from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
 from src.vision.zone_config import ZoneManager
 
@@ -25,35 +23,34 @@ DEFAULT_ZONES_PATH = os.path.join(_PROJECT_ROOT, "data", "vision", "zones.json")
 
 
 class VisionPipeline:
-    """End-to-End Vision Pipeline for Incident Detection and Face Anonymization.
-    Outputs anonymized frames/videos and generates structured JSON handover metadata.
+    """End-to-end vision pipeline for incident detection.
+
+    Outputs annotated frames/videos and generates structured JSON handover metadata.
+
+    NOTE: face anonymization was removed on 2026-08-10 at the team's request. PRD §3.3
+    asks for it, so outgoing frames — the MJPEG grid, alert thumbnails, and the clip sent
+    to the VLM when triage is on — now carry identifiable faces. Reinstating it means
+    restoring `FaceAnonymizer` and the `blur_faces` call that used to sit between
+    detection and the overlay pass; detection deliberately ran on the original frame, so
+    the blur never affected accuracy and can go back in the same place.
     """
 
     def __init__(
         self,
         detector: IncidentDetector | None = None,
-        anonymizer: FaceAnonymizer | None = None,
         rule_engine: RuleEngine | None = None,
         zones_path: str | None = DEFAULT_ZONES_PATH,
         draw_overlays: bool = True,
         inference_size: tuple[int, int] | None = None,
-        pose_estimator: PoseEstimator | None = None,
         motion_gate: MotionGate | None = None,
     ):
         self.detector = detector or IncidentDetector()
-        self.anonymizer = anonymizer or FaceAnonymizer()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
         self.draw_overlays = draw_overlays
         # When set (e.g. (640, 480)), frames are resized before detection for faster
         # inference, and bounding boxes are scaled back to the original resolution.
         self.inference_size = inference_size
-        # Both are stateful and must not be shared between streams: the gate holds the
-        # previous frame, and the pose model holds its own inference state.
-        # Default-constructed rather than left None so pose confirmation switches on by
-        # itself once the checkpoint is present. With no weights, PoseEstimator reports
-        # available=False and _check_falls keeps using the bbox heuristic, so this costs
-        # nothing on a machine that has none (no download — auto_download defaults False).
-        self.pose_estimator = pose_estimator or PoseEstimator()
+        # Stateful — it holds the previous frame — so it must not be shared between streams.
         self.motion_gate = motion_gate or MotionGate(enabled=False)
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
@@ -67,14 +64,11 @@ class VisionPipeline:
         timestamp: float | None = None,
         now: datetime | None = None,
     ) -> tuple[np.ndarray, FrameAnalysisResult]:
-        """Detect objects, evaluate incident rules, then anonymize and annotate the frame.
+        """Detect objects, evaluate incident rules, then annotate the frame.
 
-        Detection runs on the original frame; blurring is applied only to the frame
-        that gets written out, so anonymization never degrades detection accuracy.
-
-        `frame` is never modified. The returned array may still *alias* `frame` when
-        there was nothing to blur and overlays are disabled, so treat it as read-only
-        unless you copy it first.
+        `frame` is never modified. The returned array *aliases* `frame` whenever overlays
+        are disabled, so treat it as read-only unless you copy it first — in the live path
+        that array is the reader thread's shared single-slot buffer.
 
         Args:
             frame: Input BGR image numpy array.
@@ -87,7 +81,7 @@ class VisionPipeline:
             now: Wall-clock time for zone active-hour checks. Defaults to local now.
 
         Returns:
-            Tuple of (anonymized_frame_numpy, FrameAnalysisResult_schema).
+            Tuple of (output_frame_numpy, FrameAnalysisResult_schema).
         """
         start_time = time.perf_counter()
         stream_time = timestamp if timestamp is not None else time.monotonic()
@@ -127,10 +121,6 @@ class VisionPipeline:
                     ymax=int(det.bbox.ymax * scale_y),
                 )
 
-        # 2b. Second cascade stage: attach pose only to persons the cheap pre-filter
-        # flagged. On a normal frame nobody qualifies and no pose inference happens.
-        self._attach_pose(frame, detections)
-
         # 3. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
@@ -141,27 +131,20 @@ class VisionPipeline:
             camera_id=camera_id,
         )
 
-        # 4. Blur faces for privacy on the outgoing frame
-        anonymized_frame = self.anonymizer.blur_faces(frame)
-
-        # 5. Annotate zones and incidents for the operator view
+        # 4. Annotate zones and incidents for the operator view
+        output_frame = frame
         if self.draw_overlays:
-            # blur_faces hands back the input array untouched when it found no faces, and
-            # the draw_* helpers composite in place. Without this copy the overlays land on
-            # the caller's frame — in the live path that is the reader thread's shared
+            # The draw_* helpers composite in place, so this copy is unconditional now
+            # that nothing upstream ever copies. Without it the overlays land on the
+            # caller's frame — in the live path that is the reader thread's shared
             # single-slot buffer, so the "original" frame would no longer exist anywhere.
-            if anonymized_frame is frame:
-                anonymized_frame = frame.copy()
+            output_frame = frame.copy()
 
             zones = self.rule_engine.zone_manager.zones_for(camera_id)
             active_incidents = self.rule_engine.get_active_incidents(detections, camera_id=camera_id)
-            anonymized_frame = draw_zones(anonymized_frame, zones, wall_time)
-            anonymized_frame = draw_tracks(anonymized_frame, detections, active_incidents)
-            # Between tracks and events on purpose: the skeleton should sit above the thin
-            # track box but below an incident's bold label, which must stay readable.
-            # Only fall candidates carry keypoints, so this is a no-op on a normal frame.
-            anonymized_frame = draw_pose(anonymized_frame, detections)
-            anonymized_frame = draw_events(anonymized_frame, active_incidents)
+            output_frame = draw_zones(output_frame, zones, wall_time)
+            output_frame = draw_tracks(output_frame, detections, active_incidents)
+            output_frame = draw_events(output_frame, active_incidents)
 
         processing_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -176,24 +159,7 @@ class VisionPipeline:
             processing_time_ms=processing_time_ms,
         )
 
-        return anonymized_frame, result
-
-    def _attach_pose(self, frame: np.ndarray, detections: list) -> None:
-        """Populate `keypoints` on person detections that look like fall candidates.
-
-        Mutates the detections in place. Runs pose only on the gated subset, which is what
-        keeps the accuracy win from costing throughput: on a frame of upright people the
-        pre-filter rejects everyone and the pose model is never invoked.
-        """
-        if self.pose_estimator is None or not self.pose_estimator.available:
-            return
-
-        for det in detections:
-            if det.label not in PERSON_CLASSES:
-                continue
-            if not self.rule_engine.is_fall_candidate(det):
-                continue
-            det.keypoints = self.pose_estimator.estimate(frame, det.bbox)
+        return output_frame, result
 
     def _skipped_result(
         self,
@@ -205,22 +171,20 @@ class VisionPipeline:
     ) -> tuple[np.ndarray, FrameAnalysisResult]:
         """Build the result for a frame the motion gate skipped.
 
-        Faces are still blurred: the frame is handed to previews and recorders regardless
-        of whether inference ran, and PRD section 3.3 requires every face blurred on every
-        outgoing frame. Skipping detection is a throughput decision, not a privacy one.
+        The frame is handed to previews and recorders regardless of whether inference ran,
+        so this path still produces an output frame — it just carries no fresh detections.
         """
-        anonymized_frame = self.anonymizer.blur_faces(frame)
+        output_frame = frame
 
         if self.draw_overlays:
-            if anonymized_frame is frame:
-                anonymized_frame = frame.copy()
+            output_frame = frame.copy()
             zones = self.rule_engine.zone_manager.zones_for(camera_id)
-            anonymized_frame = draw_zones(anonymized_frame, zones, wall_time)
+            output_frame = draw_zones(output_frame, zones, wall_time)
             # Carry the last known detections so the operator view does not flicker empty
             # between inferences on an idle scene.
-            anonymized_frame = draw_tracks(anonymized_frame, self._last_detections, [])
+            output_frame = draw_tracks(output_frame, self._last_detections, [])
 
-        return anonymized_frame, FrameAnalysisResult(
+        return output_frame, FrameAnalysisResult(
             frame_id=frame_id,
             camera_id=camera_id,
             timestamp=datetime.now(UTC).isoformat(),
@@ -237,7 +201,7 @@ class VisionPipeline:
         max_frames: int | None = None,
         camera_id: str | None = None,
     ) -> VideoAnalysisSummary:
-        """Process a video file, generate anonymized video output and save handover JSON metadata.
+        """Process a video file, generate annotated video output and save handover JSON metadata.
 
         Args:
             video_path: Path to input mp4 video.
@@ -308,14 +272,14 @@ class VisionPipeline:
 
                 # Video-relative time, so a 3s dwell means 3s of footage no matter how fast
                 # the file decodes.
-                anonymized_frame, frame_res = self.process_frame(
+                output_frame, frame_res = self.process_frame(
                     frame, frame_id=frame_idx, camera_id=camera_id, timestamp=frame_idx / fps
                 )
                 frame_results.append(frame_res)
                 total_events += len(frame_res.events)
 
                 if writer:
-                    writer.write(anonymized_frame)
+                    writer.write(output_frame)
 
                 frame_idx += 1
         finally:

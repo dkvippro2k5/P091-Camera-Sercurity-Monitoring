@@ -7,7 +7,6 @@ import pytest
 
 from src.vision import (
     BoundingBox,
-    FaceAnonymizer,
     FrameAnalysisResult,
     IncidentDetection,
     IncidentDetector,
@@ -57,38 +56,31 @@ def test_detector_with_no_model_returns_nothing():
     assert detector.detect(dummy_frame) == []
 
 
-def test_anonymizer_blur():
-    anonymizer = FaceAnonymizer()
-    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-
-    # Test blur with manually specified face box (x, y, w, h)
-    faces = [(100, 100, 50, 50)]
-    anonymized = anonymizer.blur_faces(dummy_frame, faces=faces, method="gaussian")
-
-    assert anonymized.shape == dummy_frame.shape
-    assert isinstance(anonymized, np.ndarray)
-
-
 def test_vision_pipeline_frame_process():
     pipeline = VisionPipeline()
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    anonymized_frame, result = pipeline.process_frame(dummy_frame, frame_id=42)
+    output_frame, result = pipeline.process_frame(dummy_frame, frame_id=42)
 
-    assert anonymized_frame.shape == dummy_frame.shape
+    assert output_frame.shape == dummy_frame.shape
     assert result.frame_id == 42
     assert result.processing_time_ms >= 0.0
 
 
-def test_anonymizer_pixelate_face_clipped_at_frame_edge():
-    """A face box running past the frame edge must not crash the pixelate path."""
-    anonymizer = FaceAnonymizer()
-    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+def test_the_pipeline_never_modifies_the_caller_s_frame():
+    """The live path hands in the reader thread's shared single-slot buffer.
 
-    # Box starts at x=600 with w=80 -> clipped to 40px wide against the 640px frame
-    anonymized = anonymizer.blur_faces(dummy_frame, faces=[(600, 100, 80, 80)], method="pixelate")
+    Overlays composite in place, so the pipeline copies before drawing. Without that copy
+    the annotations land on the caller's array and the unannotated original stops existing
+    anywhere — every later consumer of that buffer sees boxes burned into it.
+    """
+    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    before = frame.copy()
 
-    assert anonymized.shape == dummy_frame.shape
+    pipeline.process_frame(frame, frame_id=1)
+
+    assert np.array_equal(frame, before), "process_frame drew on the caller's frame"
 
 
 def test_camera_id_propagates_into_detections():

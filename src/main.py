@@ -5,10 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.auth_routes import router as auth_router
 from src.api.routes import router
+from src.api.vision_routes import manager_router
 from src.api.vision_routes import router as monitoring_router
 from src.config import get_settings
 from src.services.monitoring import MonitoringService
+from src.services.sessions import SessionStore
+from src.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,18 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+
+    # Accounts and sessions, both process singletons like the monitoring service below.
+    # Built before it, and cheaply, so that if the roster is missing the log says so before
+    # anything spends seconds loading YOLO weights.
+    app.state.users = UserStore()
+    app.state.sessions = SessionStore(
+        ttl_hours=settings.session_ttl_hours,
+        idle_minutes=settings.session_idle_minutes,
+        max_sessions=settings.session_max_sessions,
+    )
+    if not app.state.users.list_users():
+        print("! No accounts exist yet — run: python scripts/seed_users.py")
 
     # One MonitoringService per process — it owns camera threads and YOLO weights, so it
     # cannot be built per request. Constructing it loads the detector, which takes a few
@@ -54,9 +70,15 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+# Public: login is what everything else is gated behind.
+app.include_router(auth_router, prefix="/api/v1")
+# Guard surface, then the manager-only routes. The two never share a path, so a request can
+# only ever resolve against the gate it belongs to.
 app.include_router(monitoring_router, prefix="/api/v1")
+app.include_router(manager_router, prefix="/api/v1")
 
 
 @app.get("/health")
 async def health():
+    """Deliberately public — it is the Docker healthcheck, which carries no cookie."""
     return {"status": "ok", "env": settings.app_env}

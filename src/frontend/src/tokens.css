@@ -13,52 +13,47 @@
 
 :root {
   /* ---------------------------------------------------------------- surfaces */
-  /* A four-step elevation ramp. The previous palette used #14161a / #1a1d22 / #1b1e23,
-     three shades within 1.2:1 of each other — so "raised" read as flat and the tile
-     border was doing all the work of separating a camera from the page. */
-  --bg: #0d0f12;
-  --surface-1: #15181d; /* camera tiles, modal, rail cards */
-  --surface-2: #1c2027; /* inputs, secondary buttons */
-  --surface-3: #262b34; /* hover */
+  --bg: #090c15;
+  --bg-gradient: radial-gradient(ellipse at top, #111827 0%, #080b12 100%);
+  --surface-1: rgba(21, 27, 38, 0.85); /* camera tiles, modal, rail cards with glassmorphism */
+  --surface-2: rgba(30, 39, 56, 0.75); /* inputs, secondary buttons */
+  --surface-3: rgba(45, 56, 78, 0.85); /* hover */
 
-  /* Decorative dividers are exempt from 1.4.11, so this stays low-contrast on purpose. */
-  --border-subtle: #2a2f38;
-  /* Control boundaries are NOT exempt. 3.29:1 on --surface-1 (the old #3a3f47 was
-     1.55:1, so every button and input outline failed 1.4.11 by roughly half). */
-  --border-strong: #616b7a;
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+  --glass-backdrop: blur(12px) saturate(180%);
+
+  /* Decorative dividers */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: #475569;
 
   /* ---------------------------------------------------------------- text */
-  --text-primary: #f1f5f9; /* 17.6:1 on --bg */
-  --text-secondary: #94a3b8; /* 7.5:1 on --bg, 6.9:1 on --surface-1 */
-  /* 5.5:1 on --bg. Deliberately lighter than a conventional "tertiary" slate-500,
-     which lands at 4.03:1 and fails body text — there is no size in this UI where
-     that would have been safe. */
-  --text-tertiary: #7c8aa0;
+  --text-primary: #f8fafc; /* 17.6:1 on --bg */
+  --text-secondary: #94a3b8; /* 7.5:1 on --bg */
+  --text-tertiary: #64748b;
 
   /* ---------------------------------------------------------------- accent */
-  /* 5.2:1 with #fff text and 3.7:1 as a shape against --bg, so the fill satisfies
-     1.4.3 and the button's own silhouette satisfies 1.4.11. The old #2f6fdb gave
-     3.9:1 with its #e6e8eb label — the primary CTA, including "Acknowledge", failed. */
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-text: #ffffff;
-  /* Focus ring: 7.9:1 on --bg. Must clear the accent fill too, since a focused
-     primary button rings against its own background. */
-  --focus-ring: #7ba7f0;
+  --accent-glow: rgba(37, 99, 235, 0.35);
+  --focus-ring: #60a5fa;
 
   /* ---------------------------------------------------------------- semantic */
-  --live: #34d399; /* 9.2:1 on --surface-1 — safe as text, not just as a dot */
-  --offline: #94a3b8; /* 6.9:1 */
-  --danger: #dc2626; /* fills/bars: 4.8:1 with #fff text */
-  --danger-text: #f87171; /* 6.4:1 on --surface-1 — headings and inline copy */
-  --warning: #fbbf24; /* 10.6:1 */
-  --info: #7ba7f0;
+  --live: #10b981;
+  --live-glow: rgba(16, 185, 129, 0.35);
+  --offline: #64748b;
+  --danger: #ef4444;
+  --danger-text: #f87171;
+  --danger-glow: rgba(239, 68, 68, 0.35);
+  --warning: #f59e0b;
+  --warning-glow: rgba(245, 158, 11, 0.3);
+  --info: #3b82f6;
 
-  /* Severity accents for the three PRD labels. Hue is never the only channel these
-     are encoded in — each also carries a text label and an ordinal rank. */
-  --sev-critical: #dc2626;
+  /* Severity accents */
+  --sev-critical: #ef4444;
   --sev-high: #f97316;
-  --sev-medium: #fbbf24;
+  --sev-medium: #f59e0b;
 
   /* ---------------------------------------------------------------- spacing */
   /* 4px base. The old sheet mixed 6/8/10/12/14/16/20/60 with no system, so proximity

@@ -28,7 +28,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data (never commit large data)
+# Data & Weights (never commit large binary weights or private session data)
 data/
 *.db
 *.sqlite3
@@ -64,4 +64,13 @@ out/
 src/frontend/node_modules/
 src/frontend/dist/
 
-.claude 
+.claude
+
+# Impeccable
+.impeccable/
+**/skills/impeccable/
+.cursor/agents/impeccable*
+.github/hooks/impeccable.json
+PRODUCT.md
+DESIGN.md
+github/agents/

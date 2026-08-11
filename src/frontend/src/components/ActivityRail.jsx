@@ -55,8 +55,7 @@ function RailItem({ alert, onInspect, activeId, unacked = false }) {
         onClick={() => onInspect(alert.id)}
         aria-current={alert.id === activeId ? 'true' : undefined}
       >
-        {/* The thumbnail is the same anonymized data URL the modal shows (PRD §3.3);
-            no second request, and no raw frame anywhere in the client. */}
+        {/* The thumbnail is the same data URL the modal shows — no second request. */}
         <img className="rail-thumb" src={alert.image_data_url} alt="" />
         <span className="rail-text">
           <span className="rail-title">

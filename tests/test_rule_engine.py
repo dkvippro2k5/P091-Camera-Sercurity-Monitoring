@@ -98,29 +98,41 @@ def test_intrusion_ignores_idle_zones_outside_active_hours():
 
 
 def test_fall_fires_after_dwell_and_resets_when_upright():
+    """Frames are fed ~0.2s apart because a fall is now a *transition*, not a shape.
+
+    All three indicators measure change across a 0.5s window, so stepping the clock by
+    whole seconds between frames leaves one sample per window and measures nothing. A live
+    camera delivers ~5 fps per 720p stream on this hardware, so the test does too.
+    """
     engine = make_engine(fall_dwell_sec=3.0)
     now = datetime.now()
 
     standing = make_det("person", "person_2", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
     collapsed = make_det("person", "person_2", cx=0.5, cy=0.75, bw=0.30, bh=0.09)
 
-    # Upright -> no fall state.
-    assert engine.evaluate([standing], WIDTH, HEIGHT, timestamp=1.0, now=now) == []
+    def step(t: float, det: IncidentDetection) -> list[IncidentDetection]:
+        return engine.evaluate([det], WIDTH, HEIGHT, timestamp=t, now=now)
 
-    # Collapsed, but not past the 3s dwell.
-    assert engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=1.5, now=now) == []
+    # Upright -> nothing suspected.
+    assert step(1.0, standing) == []
+    # Drops inside one window: suspicion armed, but the 3s dwell is nowhere near met.
+    assert step(1.2, collapsed) == []
 
-    # Past the dwell -> fires exactly once.
-    events = engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=5.0, now=now)
-    assert len(events) == 1
+    events = []
+    for i in range(1, 17):  # t = 1.4 .. 4.4
+        events.extend(step(1.2 + i * 0.2, collapsed))
+    assert len(events) == 1, "fall should fire exactly once, 3s after the collapse"
     assert events[0].label == "fall_detection"
     assert events[0].track_id == "person_2"
-    assert engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=5.1, now=now) == []
 
-    # Stands back up -> timer clears; a later collapse fires again.
-    assert engine.evaluate([standing], WIDTH, HEIGHT, timestamp=6.0, now=now) == []
-    assert engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=9.0, now=now) == []
-    events = engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=12.5, now=now)
+    # Stands back up -> suspicion cleared; a later collapse arms and fires on its own.
+    assert step(5.0, standing) == []
+    assert step(5.2, standing) == []
+    assert step(5.4, collapsed) == []
+
+    events = []
+    for i in range(1, 17):  # t = 5.6 .. 8.6
+        events.extend(step(5.4 + i * 0.2, collapsed))
     assert len(events) == 1
 
 
@@ -131,13 +143,22 @@ def test_fall_ignores_brief_bends():
     standing = make_det("person", "person_2", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
     collapsed = make_det("person", "person_2", cx=0.5, cy=0.75, bw=0.30, bh=0.09)
 
-    assert engine.evaluate([standing], WIDTH, HEIGHT, timestamp=1.0, now=now) == []
-    # Bends down, gets back up inside the dwell window.
-    assert engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=1.5, now=now) == []
-    assert engine.evaluate([standing], WIDTH, HEIGHT, timestamp=3.0, now=now) == []
-    # A second bend later starts a fresh timer instead of resuming the old one.
-    assert engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=4.0, now=now) == []
-    events = engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=7.5, now=now)
+    def step(t: float, det: IncidentDetection) -> list[IncidentDetection]:
+        return engine.evaluate([det], WIDTH, HEIGHT, timestamp=t, now=now)
+
+    assert step(1.0, standing) == []
+    assert step(1.2, collapsed) == []  # suspicion armed
+    # Back on their feet well inside the dwell, and staying up long past the 3s mark:
+    # the suspicion is dropped rather than quietly ripening into an alert.
+    for i in range(1, 20):
+        assert step(1.2 + i * 0.2, standing) == []
+
+    # A genuine collapse later still arms and fires on its own merits.
+    assert step(6.0, standing) == []
+    assert step(6.2, collapsed) == []
+    events = []
+    for i in range(1, 17):
+        events.extend(step(6.2 + i * 0.2, collapsed))
     assert len(events) == 1
 
 
@@ -326,7 +347,12 @@ def test_track_stitching_across_occlusion():
     assert state.aliased_from == "person_10"
 
 
-def test_fall_velocity_recorded():
+def test_pos_history_records_top_edge_and_height():
+    """The fall indicators read (timestamp, y_top, height) — not a centroid.
+
+    Storing the wrong triple here fails silently: every indicator still computes, just off
+    the wrong numbers, so the layout is worth pinning.
+    """
     engine = make_engine(fall_dwell_sec=3.0)
     now = datetime.now()
 
@@ -334,10 +360,15 @@ def test_fall_velocity_recorded():
     collapsed = make_det("person", "person_fall", cx=0.5, cy=0.8, bw=0.30, bh=0.09)
 
     engine.evaluate([standing], WIDTH, HEIGHT, timestamp=1.0, now=now)
-    # Rapid drop downward
+    # Rapid drop downward, inside the 0.5s window so both samples survive pruning.
     engine.evaluate([collapsed], WIDTH, HEIGHT, timestamp=1.5, now=now)
-    state = engine._tracks[(None, "person_fall")]
-    assert len(state.pos_history) >= 2
+
+    history = engine._tracks[(None, "person_fall")].pos_history
+    assert len(history) == 2
+    for (timestamp, y_top, height), det in zip(history, (standing, collapsed), strict=True):
+        assert y_top == float(det.bbox.ymin)
+        assert height == float(det.bbox.ymax - det.bbox.ymin)
+    assert [t for t, _, _ in history] == [1.0, 1.5]
 
 
 def test_abandoned_original_owner_tracking():
