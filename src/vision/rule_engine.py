@@ -11,7 +11,6 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from src.vision.fall_classifier import classify_pose
 from src.vision.schemas import BoundingBox, IncidentDetection
 from src.vision.zone_config import ZoneManager
 
@@ -42,8 +41,12 @@ class TrackState:
     first_seen: float
     last_seen: float
     last_bbox: BoundingBox
-    # Fall: when the bbox first went wide-and-flat, reset whenever it stands back up.
+    # Fall: when the suspicion armed (>= fall_min_indicators tripped), reset when the AR
+    # drops to fall_upright_aspect_ratio or below. armed_reason is a snapshot of the
+    # indicator breakdown at arm time — the only moment the transition was still
+    # measurable, since post-impact frames read near-zero on velocity and height-drop.
     fallen_since: float | None = None
+    armed_reason: str | None = None
     fall_fired: bool = False
     # Abandoned: when the object was last near a person, and where it settled.
     last_owner_seen: float | None = None
@@ -52,7 +55,8 @@ class TrackState:
     abandoned_fired: bool = False
     owner_track_id: str | None = None
     # Track Stitching & Motion Velocity
-    pos_history: list[tuple[float, float, float, float]] = field(default_factory=list)
+    # (timestamp, y_top, height) feeding the fall rule's V_y and dH indicators.
+    pos_history: list[tuple[float, float, float]] = field(default_factory=list)
     aliased_from: str | None = None
     # Intrusion: zones already alerted on, so one entry is not re-fired every frame.
     alerted_zones: set[str] = field(default_factory=set)
@@ -63,13 +67,22 @@ class RuleEngine:
 
     Args:
         zone_manager: Polygon zones used by the intrusion rule.
-        fall_dwell_sec: Seconds a person must stay collapsed before a fall fires (PRD: 3s).
-        fall_aspect_ratio: Width/height above which a bbox counts as collapsed. Used as the
-            fall signal only when pose keypoints are unavailable.
-        fall_pose_gate_ratio: Width/height above which a person becomes a *candidate* worth
-            spending pose inference on. Deliberately looser than fall_aspect_ratio — the
-            cascade can afford false candidates because pose rejects them, and a looser gate
-            catches falls toward the camera whose bbox stays tall.
+        fall_dwell_sec: Seconds a person must stay collapsed before a fall fires (PRD §3.1: 3s).
+        fall_aspect_ratio: Width/height a bbox must reach or exceed to trip the AR indicator.
+        fall_upright_aspect_ratio: Width/height a bbox must drop to or below to count as
+            "back on their feet" once a suspicion has armed — the ambiguous band between this
+            and fall_aspect_ratio holds the dwell timer instead of resetting it, since a
+            fallen person's box drifts through that range as limbs move and the tracker jitters.
+        fall_velocity_ratio: Downward velocity indicator threshold, in body-heights per second
+            (velocity divided by the person's own box height, so the same fall reads the same
+            whether it is close to the camera or down the far end of a corridor).
+        fall_height_drop_ratio: Fractional loss of box height within the velocity window
+            required to trip the height-drop indicator (a standing box going flat loses most
+            of its height; a crouch or a slow sit does not).
+        fall_min_indicators: How many of the three indicators (aspect ratio, downward
+            velocity, height drop) must trip in the same window to arm a fall suspicion.
+            2 of 3 by default — 3 silently drops falls straight toward or away from the
+            camera, where the box never goes flat.
         abandon_sec: Seconds an object must sit unattended before it is abandoned.
         owner_radius_ratio: Owner search radius as a fraction of frame width (PRD's radius R).
         stationary_tolerance_ratio: Movement below this fraction of frame width counts as still.
@@ -86,9 +99,12 @@ class RuleEngine:
     def __init__(
         self,
         zone_manager: ZoneManager | None = None,
-        fall_dwell_sec: float = 0.0,
+        fall_dwell_sec: float = 3.0,
         fall_aspect_ratio: float = 1.2,
-        fall_pose_gate_ratio: float = 0.8,
+        fall_upright_aspect_ratio: float = 0.7,
+        fall_velocity_ratio: float = 1.5,
+        fall_height_drop_ratio: float = 0.3,
+        fall_min_indicators: int = 2,
         abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
@@ -103,7 +119,10 @@ class RuleEngine:
         self.zone_manager = zone_manager or ZoneManager()
         self.fall_dwell_sec = fall_dwell_sec
         self.fall_aspect_ratio = fall_aspect_ratio
-        self.fall_pose_gate_ratio = fall_pose_gate_ratio
+        self.fall_upright_aspect_ratio = fall_upright_aspect_ratio
+        self.fall_velocity_ratio = fall_velocity_ratio
+        self.fall_height_drop_ratio = fall_height_drop_ratio
+        self.fall_min_indicators = fall_min_indicators
         self.abandon_sec = abandon_sec
         self.owner_radius_ratio = owner_radius_ratio
         self.stationary_tolerance_ratio = stationary_tolerance_ratio
@@ -282,7 +301,8 @@ class RuleEngine:
             state = self._tracks.get(key)
             cx = (det.bbox.xmin + det.bbox.xmax) / 2.0
             cy = (det.bbox.ymin + det.bbox.ymax) / 2.0
-            ymax = float(det.bbox.ymax)
+            ymin = float(det.bbox.ymin)
+            box_height = float(max(1, det.bbox.ymax - det.bbox.ymin))
 
             if state is None:
                 state = self._stitch_or_create(det, key, camera_id, timestamp, cx, cy, frame_width)
@@ -290,9 +310,13 @@ class RuleEngine:
                 state.last_seen = timestamp
                 state.last_bbox = det.bbox
 
-            # Rolling window feeding the fall rule's downward-velocity estimate. Pruned to
-            # the same span used to compute it, so the oldest sample is the window edge.
-            state.pos_history.append((timestamp, cx, cy, ymax))
+            # Rolling window feeding the fall rule's downward-velocity and height-drop
+            # indicators. Pruned to the same span used to compute them, so the oldest sample
+            # is the window edge. Tracks the top edge (ymin), not the bottom: a real fall is
+            # the head travelling a body height while the feet barely move, so ymax stays
+            # nearly flat throughout and would read close to zero velocity on exactly the
+            # case this must catch.
+            state.pos_history.append((timestamp, ymin, box_height))
             state.pos_history = [p for p in state.pos_history if timestamp - p[0] <= _VELOCITY_WINDOW_SEC]
 
     def _stitch_or_create(
@@ -425,38 +449,60 @@ class RuleEngine:
 
         return events
 
-    def is_fall_candidate(self, person: IncidentDetection) -> bool:
-        """Cheap pre-filter deciding whether a person is worth running pose on.
+    def _fall_indicators(
+        self, person: IncidentDetection, state: TrackState, dt_guard: float = 0.1
+    ) -> tuple[int, str]:
+        """Score how many of the three fall indicators trip on this frame, and report why.
 
-        This is the first stage of the fall cascade. It exists to keep pose inference off
-        the hot path: in the common case nobody is near-horizontal, so pose never runs and
-        the added cost is zero. The threshold is looser than fall_aspect_ratio on purpose —
-        rejecting candidates is pose's job, and being generous here recovers falls that a
-        pure aspect-ratio rule misses.
+        Each indicator answers a different question a real fall — not a crouch, not a slow
+        sit — answers yes to:
+          - AR:  is the box wide-and-flat right now?
+          - V_y: did the box's bottom edge move down fast, scaled by the box's own height so
+                 the same fall reads the same close to the camera or down a corridor?
+          - dH:  did the box lose a large fraction of its height within the window?
+
+        Velocity and height-drop both read the oldest sample still inside pos_history's
+        _VELOCITY_WINDOW_SEC, so a gradual descent spreads its motion across many windows and
+        never trips either — only a genuinely sudden change does. AR alone needs no history,
+        so it is available even on a track's first frame.
+
+        Returns (score, breakdown) where breakdown lists all three with a +/- for whether
+        each crossed and the measured value, e.g. "2/3 indicators (+V_y=3.1, +AR=1.40,
+        -dH=0.08)" — the PRD routes this to an LLM for false-positive filtering, and a bare
+        verdict gives that layer nothing to weigh.
         """
         width = person.bbox.xmax - person.bbox.xmin
         height = max(1, person.bbox.ymax - person.bbox.ymin)
-        return (width / height) >= self.fall_pose_gate_ratio
+        ar = width / height
+        ar_hit = ar >= self.fall_aspect_ratio
 
-    def _is_collapsed(self, person: IncidentDetection, downward_velocity: float | None = None) -> tuple[bool, str]:
-        """Second cascade stage: decide if this person is on the ground, and say why.
+        v_y_str = "V_y=n/a"
+        v_y_hit = False
+        dh_str = "dH=n/a"
+        dh_hit = False
 
-        Prefers pose when keypoints are present and confident. Falls back to the original
-        bounding-box aspect ratio otherwise — pose weights are optional, and the module has
-        to keep detecting falls with a plain detection model.
-        """
-        verdict = classify_pose(person.keypoints, downward_velocity=downward_velocity)
-        if verdict is not None:
-            return verdict.is_prone, verdict.reason
+        if len(state.pos_history) >= 2:
+            first_p = state.pos_history[0]
+            dt = state.pos_history[-1][0] - first_p[0]
+            if dt > dt_guard:
+                dy = float(person.bbox.ymin) - first_p[1]
+                v_y = max(0.0, dy / dt) / height
+                v_y_hit = v_y >= self.fall_velocity_ratio
+                v_y_str = f"V_y={v_y:.1f}"
 
-        width = person.bbox.xmax - person.bbox.xmin
-        height = max(1, person.bbox.ymax - person.bbox.ymin)
-        ratio = width / height
-        vel_suffix = f" (downward vel {downward_velocity:.1f}px/s)" if downward_velocity is not None else ""
-        return (
-            ratio >= self.fall_aspect_ratio,
-            f"bbox aspect ratio {ratio:.2f} (threshold {self.fall_aspect_ratio}, no pose available){vel_suffix}",
+                first_height = max(1.0, first_p[2])
+                drop = max(0.0, (first_height - height) / first_height)
+                dh_hit = drop >= self.fall_height_drop_ratio
+                dh_str = f"dH={drop:.2f}"
+
+        score = int(ar_hit) + int(v_y_hit) + int(dh_hit)
+        breakdown = (
+            f"{score}/3 indicators "
+            f"({'+' if v_y_hit else '-'}{v_y_str}, "
+            f"{'+' if ar_hit else '-'}AR={ar:.2f}, "
+            f"{'+' if dh_hit else '-'}{dh_str})"
         )
+        return score, breakdown
 
     def _check_falls(
         self, persons: list[IncidentDetection], timestamp: float, camera_id: str | None
@@ -464,7 +510,10 @@ class RuleEngine:
         """Fire when a person stays on the ground past the dwell threshold.
 
         The dwell is what separates a fall from bending over to pick something up, and the
-        PRD fixes it at 3 seconds. Pose changes *what counts as collapsed*, never the timer.
+        PRD fixes it at 3 seconds (§3.1). The suspicion latches on arming instead of
+        re-scoring every frame: within one velocity window of landing, V_y and dH have
+        already decayed to zero, so demanding the score hold for the whole dwell would make
+        any dwell longer than the window mathematically unreachable.
         """
         events = []
         for person in persons:
@@ -474,24 +523,30 @@ class RuleEngine:
             if state is None:
                 continue
 
-            # Calculate downward velocity from position history (Improvement 1)
-            downward_velocity = None
-            if state and len(state.pos_history) >= 2:
-                first_p = state.pos_history[0]
-                dt = timestamp - first_p[0]
-                if dt >= 0.1:
-                    dy = float(person.bbox.ymax) - first_p[3]
-                    downward_velocity = max(0.0, dy / dt)
+            width = person.bbox.xmax - person.bbox.xmin
+            height = max(1, person.bbox.ymax - person.bbox.ymin)
+            ar = width / height
 
-            collapsed, why = self._is_collapsed(person, downward_velocity=downward_velocity)
-
-            if not collapsed:
+            if state.fallen_since is not None and ar <= self.fall_upright_aspect_ratio:
+                # Clearly back on their feet — the ambiguous band above this is deliberately
+                # NOT treated as "stood up", since a fallen person's box drifts through it as
+                # limbs move and the tracker jitters, and resetting on that noise would drop
+                # dwells that should have fired.
                 state.fallen_since = None
+                state.armed_reason = None
                 state.fall_fired = False
+                # A second fall must re-arm on its own transition, not on samples the prior
+                # collapse left inside the velocity window — otherwise the indicators measure
+                # zero change against still-collapsed history and never trip again.
+                state.pos_history = []
                 continue
 
             if state.fallen_since is None:
+                score, breakdown = self._fall_indicators(person, state)
+                if score < self.fall_min_indicators:
+                    continue
                 state.fallen_since = timestamp
+                state.armed_reason = breakdown
                 if self.fall_dwell_sec > 0:
                     continue
 
@@ -506,10 +561,9 @@ class RuleEngine:
                         timestamp=timestamp,
                         camera_id=camera_id,
                         bbox=person.bbox,
-                        keypoints=person.keypoints,
                         reason=(
                             f"{person.track_id} stayed collapsed for {elapsed:.1f}s "
-                            f"(threshold {self.fall_dwell_sec}s) — {why}"
+                            f"(threshold {self.fall_dwell_sec}s) — {state.armed_reason}"
                         ),
                     )
                 )
