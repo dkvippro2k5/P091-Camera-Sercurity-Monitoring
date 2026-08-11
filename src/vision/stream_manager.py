@@ -5,7 +5,6 @@ from collections.abc import Callable
 
 import numpy as np
 
-from src.vision.anonymizer import FaceAnonymizer
 from src.vision.detector import IncidentDetector
 from src.vision.motion import MotionGate
 from src.vision.pipeline import VisionPipeline
@@ -189,17 +188,16 @@ class MultiStreamManager:
                     target_labels=detector.target_labels,
                     use_tracking=detector.use_tracking,
                 ),
-                anonymizer=FaceAnonymizer(
-                    blur_kernel_size=template.anonymizer.blur_kernel_size,
-                    min_face_size=template.anonymizer.min_face_size,
-                ),
                 rule_engine=RuleEngine(
                     # Zones are immutable config and carry no per-stream state, so the
                     # manager instance is safe to share across workers.
                     zone_manager=engine.zone_manager,
                     fall_dwell_sec=engine.fall_dwell_sec,
                     fall_aspect_ratio=engine.fall_aspect_ratio,
-                    fall_pose_gate_ratio=engine.fall_pose_gate_ratio,
+                    fall_upright_aspect_ratio=engine.fall_upright_aspect_ratio,
+                    fall_velocity_ratio=engine.fall_velocity_ratio,
+                    fall_height_drop_ratio=engine.fall_height_drop_ratio,
+                    fall_min_indicators=engine.fall_min_indicators,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,
@@ -210,9 +208,6 @@ class MultiStreamManager:
                 ),
                 draw_overlays=template.draw_overlays,
                 inference_size=template.inference_size,
-                # The pose model is stateless between calls and loading a second copy per
-                # camera would multiply memory for no benefit, so the instance is shared.
-                pose_estimator=template.pose_estimator,
                 # The gate is NOT shared: it holds the previous frame, so one instance
                 # across cameras would diff camera A against camera B and see motion
                 # everywhere — silently disabling the gate it was added to provide.

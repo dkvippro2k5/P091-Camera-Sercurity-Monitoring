@@ -16,12 +16,18 @@ html {
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: var(--fs-md);
   line-height: var(--lh-body);
-  background: var(--bg);
+  background: var(--bg-gradient);
+  background-attachment: fixed;
   color: var(--text-primary);
+  min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+
+code, pre, kbd, .mono-font {
+  font-family: 'JetBrains Mono', monospace;
 }
 
 h1,
@@ -714,6 +720,51 @@ input[type='file'] {
   color: var(--text-primary);
 }
 
+/* ---- AI assessment (second-stage VLM triage) ----
+   Visually quieter than .reason and set apart by a left rule, because it is advisory: the
+   rule engine's evidence is a measurement, this is an opinion. The tone colour lives on
+   that 3px edge only — it never touches the modal's severity styling, or a wrong verdict
+   would visually downgrade a real emergency. Colour is also never the only channel: each
+   tone ships a text verdict ("Looks like a false alarm") that carries the same meaning. */
+.triage {
+  display: flex;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--offline);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.triage-text strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.triage-confidence,
+.triage-rationale {
+  color: var(--text-secondary);
+}
+
+.triage-real {
+  border-left-color: var(--danger-text);
+}
+
+.triage-false {
+  border-left-color: var(--live);
+}
+
+.triage-uncertain,
+.triage-pending {
+  border-left-color: var(--offline);
+}
+
+.triage-pending .triage-text {
+  font-style: italic;
+}
+
 .modal-foot {
   display: flex;
   align-items: center;
@@ -729,9 +780,22 @@ input[type='file'] {
   color: var(--warning);
 }
 
-.modal-foot .primary {
+/* The auto margin sits on the first button, not on `.primary`.
+   The footer used to hold one button, so anchoring it to `.primary` was the same thing.
+   Now that it holds the two-verdict choice (PRD §3.2), anchoring there splits the pair and
+   the space between them grows with the modal — 300px apart they read as two unrelated
+   actions rather than one either/or. `:first-of-type` also covers the history footer,
+   whose single Close button carries neither class. */
+.modal-foot button:first-of-type {
   margin-left: auto;
-  min-width: 200px;
+}
+
+/* Equal width, deliberately. Whichever button is larger is the easier target, and these
+   two clicks *are* the labelled dataset the false-alarm rate is computed from — biasing
+   the geometry biases the data. Colour and border carry the distinction instead. */
+.modal-foot .danger,
+.modal-foot .primary {
+  min-width: 168px;
 }
 /* ---------------------------------------------------------------- setup form */
 .setup {
@@ -868,6 +932,43 @@ legend {
   color: var(--warning);
 }
 
+/* ---------------------------------------------------------------- zone hours */
+/* Indented and rule-marked so it reads as belonging to the polygon above it rather than
+   as a third top-level setting — the window arms that zone and nothing else. */
+.zone-hours {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding-left: var(--sp-4);
+  border-left: 2px solid var(--border-subtle);
+}
+
+.time-range {
+  display: flex;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.compact-field {
+  flex: 0 0 auto;
+}
+
+/* Native time inputs render a light-scheme picker on a dark surface otherwise, which puts
+   near-white glyphs on near-white chrome. */
+.time-range input[type='time'] {
+  color-scheme: dark;
+  min-width: 140px;
+}
+
+/* Struck through, not greyed out alone: a dormant tag has to survive being read at wall
+   distance and by an operator who cannot rely on the colour shift. */
+.tag-dormant {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  opacity: 0.75;
+}
+
 /* Errors sit next to the control that produced them and carry role="alert", so a
    screen-reader user hears the failure instead of finding a dead submit button. */
 .err {
@@ -928,6 +1029,261 @@ legend {
   margin-left: auto;
 }
 
+/* ---------------------------------------------------------------- login */
+/* Full viewport, not a modal over the grid: there is nothing behind it to return to, and a
+   dimmed live feed under a login box would show an unauthenticated viewer exactly the
+   footage the login exists to protect. */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+}
+
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: 100%;
+  max-width: 400px;
+  padding: var(--sp-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-modal);
+}
+
+.login-brand {
+  justify-content: center;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  text-align: center;
+}
+
+.login-card code {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------------- account chip */
+.account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: var(--lh-tight);
+  padding-left: var(--sp-4);
+  border-left: 1px solid var(--border-subtle);
+}
+
+.account-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+/* The role is spelled out rather than colour-coded. Which permissions the session carries
+   is not something to infer from a hue. */
+.account-role {
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------- camera list */
+.camera-list {
+  margin-bottom: var(--sp-6);
+  padding-bottom: var(--sp-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.camera-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.camera-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+}
+
+.camera-row-name {
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pushes the source type and the delete button to the right edge, so the destructive
+   control sits well away from the camera name it would remove. */
+.camera-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- statistics */
+.stats {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.stats-block h3 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-lg);
+}
+
+/* Caveats sit above the numbers, in warning colour, because a figure whose caveat is
+   below the fold gets quoted without it. */
+.stats-warnings {
+  padding: var(--sp-4);
+  border: 1px solid var(--warning);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+.stats-warnings h3 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
+
+.stats-warnings ul {
+  margin: 0;
+  padding-left: var(--sp-5);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-3);
+}
+
+.stat-tiles .vital {
+  align-items: flex-start;
+  padding: var(--sp-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+.stats-note {
+  margin: var(--sp-4) 0 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  max-width: 78ch;
+}
+
+.stats-table {
+  width: 100%;
+  margin-top: var(--sp-4);
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  /* Figures are compared down a column, so digits must line up. */
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-table th,
+.stats-table td {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stats-table thead th,
+.stats-table th[scope='row'] {
+  text-align: left;
+  color: var(--text-secondary);
+  font-weight: var(--fw-medium);
+}
+
+.stats-table th[scope='row'] {
+  color: var(--text-primary);
+}
+
+/* Not colour alone: the cell also carries the words "would have been missed". */
+.stat-bad {
+  color: var(--danger-text);
+  font-weight: var(--fw-semibold);
+}
+
+.stats-meta {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) 1fr;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.stats-meta dt {
+  color: var(--text-tertiary);
+}
+
+.stats-meta dd {
+  margin: 0;
+}
+
+/* Bars, not a chart library. Each carries its count in text beside it, so the width is
+   redundant reinforcement rather than the only way to read the value. */
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.bars li {
+  display: grid;
+  grid-template-columns: 100px 1fr 48px;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-label {
+  color: var(--text-secondary);
+}
+
+.bar-track {
+  height: 10px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.bar-value {
+  text-align: right;
+}
+
 /* ---------------------------------------------------------------- narrow screens */
 @media (max-width: 700px) {
   :root {
@@ -963,12 +1319,70 @@ legend {
     border-top: 1px solid var(--border-subtle);
   }
 
+  /* Stacked, so the buttons are already full width. The auto margin has to go: on a column
+     flex container it acts on the cross axis and would pin the first button to the right
+     edge instead of stretching it. */
   .modal-foot {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .modal-foot .primary {
+  .modal-foot button:first-of-type {
     margin-left: 0;
   }
+}
+
+/* ---------------------------------------------------------------- Impeccable UI Polish */
+.hotkey-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-2xs);
+  padding: 2px 6px;
+  margin-left: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  letter-spacing: 0.05em;
+}
+
+.modal {
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  box-shadow: var(--glass-shadow), 0 0 40px rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--glass-border);
+}
+
+.masthead {
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.camera-tile {
+  backdrop-filter: var(--glass-backdrop);
+  border: 1px solid var(--glass-border);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.camera-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--glass-shadow);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background-color: var(--live);
+  border-radius: 50%;
+  margin-right: 6px;
+  box-shadow: 0 0 10px var(--live);
+  animation: live-pulse 1.8s infinite;
+}
+
+@keyframes live-pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }

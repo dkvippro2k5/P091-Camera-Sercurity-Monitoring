@@ -9,21 +9,21 @@ import os
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
 
 from src.models.camera_schemas import CameraCreate
 from src.services import monitoring as monitoring_module
 from src.services.monitoring import MonitoringService
-from src.vision.detector import IncidentDetector
 from src.vision.schemas import Zone
 from src.vision.zone_config import WILDCARD_CAMERA, ZoneManager
 
 
 @pytest.fixture
-def service(monkeypatch, tmp_path):
-    """A MonitoringService with a null detector and an isolated registry file."""
-    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda: IncidentDetector(model_path=None))
-    monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
+def service(isolated_data):
+    """A MonitoringService with a null detector and every file it writes under `tmp_path`.
+
+    `isolated_data` (conftest) is what keeps `_emit_alert` from appending to the real
+    `data/incidents.jsonl` — `test_alert_ring_buffer_is_bounded` below fires 210 alerts.
+    """
     instance = MonitoringService()
     yield instance
     instance.shutdown()
@@ -160,39 +160,36 @@ def test_frame_is_downscaled_before_upload():
 
 
 # ------------------------------------------------------------------ routes
-@pytest.fixture
-def client(monkeypatch, tmp_path):
-    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda: IncidentDetector(model_path=None))
-    monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
-    from src.main import app
+# Every route below is behind auth now, so these use the signed-in fixtures from
+# `conftest.py` rather than a bare TestClient. Which fixture a test takes is itself an
+# assertion: every route in this file is the guard's — the live grid, the alerts, and camera
+# setup — so `guard_client` throughout, and `manager_client` appearing here would mean the
+# split had drifted. The manager's only surface is `/statistics`, tested in `test_auth.py`
+# alongside the 401/403 boundary itself.
+def test_health_and_demo_videos(guard_client):
+    # /health stays public — it is the Docker healthcheck, which carries no cookie.
+    assert guard_client.get("/health").json()["status"] == "ok"
 
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-def test_health_and_demo_videos(client):
-    assert client.get("/health").json()["status"] == "ok"
-
-    videos = client.get("/api/v1/demo-videos").json()
+    videos = guard_client.get("/api/v1/demo-videos").json()
     assert all("id" in v and "name" in v for v in videos)
 
 
-def test_unknown_camera_is_404(client):
-    assert client.get("/api/v1/cameras/nope/stream").status_code == 404
-    assert client.delete("/api/v1/cameras/nope").status_code == 404
+def test_unknown_camera_is_404(guard_client):
+    assert guard_client.get("/api/v1/cameras/nope/stream").status_code == 404
+    assert guard_client.delete("/api/v1/cameras/nope").status_code == 404
 
 
-def test_snapshot_returns_a_placeholder_before_the_first_frame(client):
+def test_snapshot_returns_a_placeholder_before_the_first_frame(guard_client):
     """An empty body renders a broken-image icon, which reads as a crash."""
-    response = client.get("/api/v1/cameras/nope/snapshot")
+    response = guard_client.get("/api/v1/cameras/nope/snapshot")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"
     assert response.content.startswith(b"\xff\xd8")  # JPEG SOI
 
 
-def test_creating_a_camera_with_a_missing_file_is_a_400(client):
-    response = client.post(
+def test_creating_a_camera_with_a_missing_file_is_a_400(guard_client):
+    response = guard_client.post(
         "/api/v1/cameras",
         json={"name": "Ghost", "source_type": "demo", "source": "does_not_exist.mp4"},
     )
@@ -200,6 +197,6 @@ def test_creating_a_camera_with_a_missing_file_is_a_400(client):
     assert "not found" in response.json()["detail"].lower()
 
 
-def test_upload_rejects_a_non_video(client):
-    response = client.post("/api/v1/uploads", files={"file": ("evil.sh", b"#!/bin/sh", "text/plain")})
+def test_upload_rejects_a_non_video(guard_client):
+    response = guard_client.post("/api/v1/uploads", files={"file": ("evil.sh", b"#!/bin/sh", "text/plain")})
     assert response.status_code == 400

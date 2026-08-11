@@ -14,10 +14,11 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 # Repo-relative on purpose. An absolute path here would short-circuit _resolve_weights
 # (it returns early for absolute paths) and break on every machine but the author's,
-# including CI and Docker. The default is the medium YOLO11 — the small checkpoint the
+# including CI and Docker. The default is the large YOLO26 — the yolo11n checkpoint the
 # capacity table in stream_manager.py was measured against still works if passed
-# explicitly, but the medium model is the one the team runs with.
-DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo11m.pt")
+# explicitly, but yolo26l is the one the team runs with. It is ~10x the size of yolo11n,
+# so that table's fps numbers do NOT hold for this default; re-measure before quoting them.
+DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo26l.pt")
 
 
 class IncidentDetector:

@@ -38,7 +38,7 @@ EXPOSE 8000
 
 # Model weights are gitignored, so a fresh clone builds an image without them and the
 # detector raises FileNotFoundError at startup rather than pretending to see. Mount or
-# COPY src/vision/weights/yolo11n.pt into the image.
+# COPY src/vision/weights/yolo26l.pt into the image.
 HEALTHCHECK --start-period=90s --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 

@@ -1,14 +1,31 @@
 import { useState, useEffect } from 'react'
 import PolygonCanvas from './PolygonCanvas'
 import { api } from '../api'
+import { describeWindow, toWindowString } from '../activeHours'
+import { incidentMeta } from '../incidents'
 
-export default function CameraSetup({ onAdd, onCancel }) {
+/**
+ * The guard's camera screen: what exists, plus the form to add another.
+ *
+ * The existing-camera list here is now convenience rather than the only route to a delete —
+ * the guard owns both this screen and the live grid, whose tiles carry their own delete
+ * button. It is kept because this is where someone comes to *change* the setup, and being
+ * shown the current roster next to the form is how you notice a camera is already configured
+ * before adding it twice.
+ */
+export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete }) {
   const [name, setName] = useState('')
   const [sourceType, setSourceType] = useState('demo')
   const [source, setSource] = useState('')
   const [demos, setDemos] = useState([])
   const [intrusionEnabled, setIntrusionEnabled] = useState(false)
   const [polygon, setPolygon] = useState([])
+  // Always-armed is the default. The PRD's example window is 22:00-05:00, but defaulting to
+  // it would mean a camera added at 14:00 silently watches nothing for eight hours — the
+  // failure has to be opted into, not inherited.
+  const [hoursEnabled, setHoursEnabled] = useState(false)
+  const [startTime, setStartTime] = useState('22:00')
+  const [endTime, setEndTime] = useState('05:00')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -56,6 +73,10 @@ export default function CameraSetup({ onAdd, onCancel }) {
       setError('Draw at least 3 points on the preview to define the restricted zone.')
       return
     }
+    if (intrusionEnabled && hoursEnabled && startTime === endTime) {
+      setError('Zone hours start and end are the same time. Pick a different end time, or switch to always armed.')
+      return
+    }
 
     setBusy(true)
     try {
@@ -65,6 +86,9 @@ export default function CameraSetup({ onAdd, onCancel }) {
         source,
         intrusion_enabled: intrusionEnabled,
         zone_polygon: intrusionEnabled ? polygon : null,
+        // Only meaningful alongside a zone, so it rides with the polygon rather than
+        // being sent for a camera that has intrusion switched off.
+        zone_active_hours: intrusionEnabled ? toWindowString(hoursEnabled, startTime, endTime) : null,
       })
     } catch (err) {
       setError(err.message)
@@ -74,9 +98,14 @@ export default function CameraSetup({ onAdd, onCancel }) {
   }
 
   const SOURCE_LABELS = { demo: 'Prepared demo', upload: 'Upload video', rtsp: 'RTSP stream' }
+  // Recomputed on render rather than memoized: it reads the current clock, and the whole
+  // point is that it reflects the moment the operator is looking at it.
+  const windowNote = describeWindow(startTime, endTime)
 
   return (
     <div className="setup">
+      <CameraList cameras={cameras} onDelete={onDelete} />
+
       <div className="setup-head">
         <h2>Add camera</h2>
         <p>
@@ -174,7 +203,60 @@ export default function CameraSetup({ onAdd, onCancel }) {
 
           {intrusionEnabled &&
             (previewUrl ? (
-              <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} />
+              <>
+                <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} />
+
+                {/* PRD §3.1: intrusion alerts "trong khung giờ cấm (VD: 22h - 05h)". The
+                    window is per-zone and evaluated against wall-clock time, so it belongs
+                    next to the polygon it arms rather than in a global setting. */}
+                <div className="zone-hours">
+                  <span className="fact-label">Zone hours</span>
+
+                  <div className="choices">
+                    <label className="choice">
+                      <input
+                        type="radio"
+                        name="zone_hours"
+                        checked={!hoursEnabled}
+                        onChange={() => setHoursEnabled(false)}
+                      />
+                      Always armed
+                    </label>
+                    <label className="choice">
+                      <input
+                        type="radio"
+                        name="zone_hours"
+                        checked={hoursEnabled}
+                        onChange={() => setHoursEnabled(true)}
+                      />
+                      Only between set hours
+                    </label>
+                  </div>
+
+                  {hoursEnabled && (
+                    <>
+                      <div className="time-range">
+                        <label className="field compact-field">
+                          <span>From</span>
+                          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
+                        </label>
+                        <label className="field compact-field">
+                          <span>To</span>
+                          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
+                        </label>
+                      </div>
+
+                      {/* The consequence, not just the state. An operator who sets a night
+                          window at midday would otherwise leave this screen believing the
+                          zone is live and conclude the feature is broken. aria-live so the
+                          note is announced when the times change, not just painted. */}
+                      <small className={windowNote.armed ? 'ok' : 'warn'} aria-live="polite">
+                        {windowNote.text}
+                      </small>
+                    </>
+                  )}
+                </div>
+              </>
             ) : (
               <small className="warn">Pick a video source first to draw the zone on its preview.</small>
             ))}
@@ -201,5 +283,66 @@ export default function CameraSetup({ onAdd, onCancel }) {
         </div>
       </form>
     </div>
+  )
+}
+
+/**
+ * Configured cameras, with a delete alongside the one on the grid tile.
+ *
+ * Deliberately not a second live grid — no MJPEG here. Rendering every stream on the
+ * configuration screen would double each camera's decode cost for someone who came to check
+ * settings, and the setup screen's job is what is *configured*, not what is on screen right
+ * now — that is one nav click away on the grid.
+ */
+function CameraList({ cameras, onDelete }) {
+  if (!cameras.length) return null
+
+  return (
+    <section className="camera-list">
+      <div className="setup-head">
+        <h2>Configured cameras</h2>
+        <p>
+          {cameras.length} camera{cameras.length === 1 ? '' : 's'}, {cameras.filter((c) => c.running).length} currently
+          streaming. These are the feeds on your live grid.
+        </p>
+      </div>
+
+      <ul>
+        {cameras.map((camera) => (
+          <li key={camera.id} className="camera-row">
+            <span className={camera.running ? 'status-chip live' : 'status-chip offline'}>
+              <span className="dot" aria-hidden="true" />
+              {camera.running ? 'Live' : 'Offline'}
+            </span>
+
+            <span className="camera-row-name" title={camera.name}>
+              {camera.name}
+            </span>
+
+            <span className="camera-row-tags">
+              {camera.active_labels.map((label) => (
+                <span key={label} className="tag">
+                  {incidentMeta(label).short}
+                </span>
+              ))}
+              {/* The window is shown here even though the grid also shows it: this is where
+                  it was configured, so it is where you come to check what you set. */}
+              {camera.zone_active_hours && <span className="tag">{camera.zone_active_hours}</span>}
+            </span>
+
+            <span className="telemetry">{camera.source_type}</span>
+
+            <button
+              className="icon compact danger"
+              onClick={() => onDelete(camera.id)}
+              aria-label={`Remove camera ${camera.name}`}
+              title={`Remove ${camera.name}`}
+            >
+              <span aria-hidden="true">✕</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

@@ -58,6 +58,24 @@ export function triageOrder(alerts) {
 }
 
 /**
+ * How the second-stage AI assessment reads on screen.
+ *
+ * Deliberately plain wording. "Looks like a false alarm" is a hedge because that is what
+ * the verdict is — advisory input to the guard's decision, not the decision. `tone` drives
+ * a subtle border colour only; it must never restyle the modal's severity, or a wrong
+ * verdict would visually downgrade a real emergency.
+ */
+const TRIAGE = {
+  real: { text: 'Appears to be a real incident', tone: 'triage-real' },
+  false_positive: { text: 'Looks like a false alarm', tone: 'triage-false' },
+  uncertain: { text: 'Inconclusive', tone: 'triage-uncertain' },
+}
+
+export function triageMeta(verdict) {
+  return TRIAGE[verdict] ?? TRIAGE.uncertain
+}
+
+/**
  * "just now" / "4m ago" — a wall-mounted display is read at a glance, and an absolute
  * "02:14:07" carries no date, so across a shift boundary it cannot be placed in time.
  * The absolute timestamp is still rendered alongside, as a <time> element.

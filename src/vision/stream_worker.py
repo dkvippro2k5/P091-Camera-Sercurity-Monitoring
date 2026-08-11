@@ -21,8 +21,7 @@ _RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp"
 
 class CameraStreamWorker:
     """Individual Camera Worker that reads from an RTSP stream (or simulated video source),
-    runs the Vision Pipeline (face anonymization + incident detection), and dispatches
-    handover JSON metadata.
+    runs the Vision Pipeline (incident detection), and dispatches handover JSON metadata.
 
     Features:
       - Dedicated reader thread: decouples RTSP I/O jitter from inference latency
@@ -361,7 +360,7 @@ class CameraStreamWorker:
             # Process frame with Vision Pipeline
             process_start = time.perf_counter()
             try:
-                anonymized_frame, result = self.pipeline.process_frame(
+                output_frame, result = self.pipeline.process_frame(
                     frame, frame_id=frame_id, camera_id=self.camera_id
                 )
 
@@ -373,7 +372,7 @@ class CameraStreamWorker:
 
                 # Trigger callback if registered
                 if self.on_result_callback:
-                    self.on_result_callback(self.camera_id, result, anonymized_frame)
+                    self.on_result_callback(self.camera_id, result, output_frame)
 
             except Exception as e:
                 logger.error(f"[{self.camera_id}] Error in vision pipeline processing: {e}")

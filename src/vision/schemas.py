@@ -21,14 +21,6 @@ class IncidentDetection(BaseModel):
     camera_id: str | None = Field(None, description="Identifier of camera stream (e.g. cam_hallway_01)")
     zone_name: str | None = Field(None, description="Zone that triggered the event, for intrusion")
     reason: str | None = Field(None, description="Human-readable explanation of which rule fired")
-    keypoints: list[tuple[float, float, float]] | None = Field(
-        None,
-        description=(
-            "COCO 17-point pose as (x, y, confidence) in frame pixels. Only populated for "
-            "person detections that the fall pre-filter flagged as candidates, so it is None "
-            "on the overwhelming majority of detections."
-        ),
-    )
 
 
 class Zone(BaseModel):
@@ -76,7 +68,7 @@ class FrameAnalysisResult(BaseModel):
     events: list[IncidentDetection] = Field(
         default_factory=list, description="Incidents triggered on this frame by the rule engine"
     )
-    anonymized_image_path: str | None = Field(None, description="Path to anonymized frame output if saved")
+    output_image_path: str | None = Field(None, description="Path to the annotated frame output if saved")
     processing_time_ms: float = Field(default=0.0, description="Time taken to process frame in milliseconds")
 
 

@@ -25,7 +25,7 @@ print(f"zones loaded: {pipeline.rule_engine.zone_manager.zone_count}")
 summary = pipeline.process_video(
     video_path=video,
     output_json_path="data/vision/test/handover.json",
-    output_video_path="data/vision/test/output_anonymized.mp4",
+    output_video_path="data/vision/test/output_annotated.mp4",
     max_frames=max_frames,
     camera_id="cam_hallway_01",
 )

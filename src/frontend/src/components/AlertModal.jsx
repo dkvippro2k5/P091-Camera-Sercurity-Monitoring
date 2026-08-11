@@ -1,7 +1,7 @@
 import { useFocusTrap } from '../useFocusTrap'
-import { incidentMeta, relativeTime, formatClock } from '../incidents'
+import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incidents'
 
-export default function AlertModal({ alert, queued = 0, isHistory = false, onAcknowledge, onClose }) {
+export default function AlertModal({ alert, queued = 0, isHistory = false, onVerdict, onClose }) {
   const meta = incidentMeta(alert.label)
   // Moves focus in on open, wraps Tab, and restores focus on close. The dialog declared
   // role="alertdialog" + aria-modal before but never took focus, so a keyboard operator
@@ -42,7 +42,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onAck
 
         <div className="modal-body">
           {/*
-            The captured frame, exactly as the rule engine saw it — already anonymized.
+            The captured frame, exactly as the rule engine saw it.
             width/height are declared so the browser reserves the box before the JPEG
             decodes; without them the modal grew as the image landed and the Acknowledge
             button slid under an already-moving cursor.
@@ -55,21 +55,32 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onAck
             alt={`${meta.headline} on ${alert.camera_name}`}
           />
 
-          {/* The rule engine's own evidence — which rule fired and on what. This is the
-              whole explanation an alert carries; there is no generated caption behind it. */}
+          {/* The rule engine's own evidence — which rule fired and on what. */}
           {alert.reason && (
             <p className="reason">
               <span className="fact-label">Rule</span>
               <code>{alert.reason}</code>
             </p>
           )}
+
+          {/* The second-stage assessment. Advisory only — it never suppressed this alert,
+              and it must not restyle the modal's severity, or a wrong verdict would
+              visually downgrade a real emergency. */}
+          <TriagePanel alert={alert} />
         </div>
 
         <div className="modal-foot">
           {isHistory ? (
-            <button data-autofocus onClick={onClose}>
-              Close
-            </button>
+            <>
+              {alert.operator_verdict && (
+                <span className="queued">
+                  Recorded as {alert.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
+                </span>
+              )}
+              <button data-autofocus onClick={onClose}>
+                Close <kbd className="hotkey-badge">Esc</kbd>
+              </button>
+            </>
           ) : (
             <>
               {queued > 0 && (
@@ -77,16 +88,55 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onAck
                   {queued} more {queued === 1 ? 'incident' : 'incidents'} waiting
                 </span>
               )}
-              {/* data-autofocus, so Enter resolves the alert the instant it appears —
-                  the operator never has to find the button with the mouse first. */}
-              <button className="primary" data-autofocus onClick={() => onAcknowledge(alert.id)}>
-                Acknowledge
+              <button className="danger" onClick={() => onVerdict(alert.id, 'false')}>
+                False alarm <kbd className="hotkey-badge">F</kbd>
+              </button>
+              <button className="primary" data-autofocus onClick={() => onVerdict(alert.id, 'real')}>
+                Confirm real <kbd className="hotkey-badge">↵ Enter</kbd>
               </button>
             </>
           )}
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * "AI assessment" — the VLM's reading of the rule engine's evidence plus a short clip.
+ *
+ * Rendered as a labelled aside rather than anything resembling a decision, because it is
+ * advisory: every alert reaches the operator regardless of what this says. `skipped` is
+ * shown as nothing at all — an assessment that never ran is not an inconclusive one, and
+ * an empty panel is more honest than "unknown".
+ */
+function TriagePanel({ alert }) {
+  if (!alert.triage_status || alert.triage_status === 'skipped') return null
+
+  if (alert.triage_status === 'pending') {
+    return (
+      <p className="triage triage-pending" aria-live="polite">
+        <span className="fact-label">AI assessment</span>
+        <span className="triage-text">Assessing…</span>
+      </p>
+    )
+  }
+
+  const meta = triageMeta(alert.triage_verdict)
+  return (
+    <p className={`triage ${meta.tone}`} aria-live="polite">
+      <span className="fact-label">AI assessment</span>
+      <span className="triage-text">
+        <strong>{meta.text}</strong>
+        {typeof alert.triage_confidence === 'number' && alert.triage_verdict !== 'uncertain' && (
+          <span className="triage-confidence"> ({(alert.triage_confidence * 100).toFixed(0)}% confident)</span>
+        )}
+        {alert.triage_rationale && <span className="triage-rationale"> — {alert.triage_rationale}</span>}
+        {!alert.triage_rationale && alert.triage_error && (
+          <span className="triage-rationale"> — assessment unavailable</span>
+        )}
+      </span>
+    </p>
   )
 }
 
