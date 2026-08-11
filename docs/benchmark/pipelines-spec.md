@@ -49,6 +49,48 @@ flowchart TB
 
 ---
 
+## Đầu vào thật — khớp `src/vision/schemas.py` (nhánh `develop`)
+
+Team Vision đã merge module thật. Đặc tả dưới đây bám theo code đó, không phải giả định.
+
+```python
+class BoundingBox(BaseModel):
+    xmin: int
+    ymin: int
+    xmax: int
+    ymax: int
+
+class IncidentDetection(BaseModel):
+    label: str                    # "person" | "backpack" | ... | "intrusion" | "fall_detection" | "abandoned_object"
+    track_id: str | None
+    confidence: float              # [0.0, 1.0]
+    timestamp: float | None        # Unix timestamp giây
+    bbox: BoundingBox
+    camera_id: str | None
+    zone_name: str | None          # chỉ có giá trị thật khi label == "intrusion"
+    reason: str | None             # RuleEngine tự sinh, VD:
+                                    # "person_105 entered restricted zone 'stairwell' during 22:00-05:00"
+
+class FrameAnalysisResult(BaseModel):
+    frame_id: int
+    timestamp: str | None
+    camera_id: str | None
+    detections: list[IncidentDetection]    # mọi vật thể thô thấy được trong frame
+    events: list[IncidentDetection]        # chỉ những gì RuleEngine đã bắn thành sự cố
+    output_image_path: str | None          # ⚠️ ảnh ĐÃ VẼ overlay/bbox — không dùng cho benchmark
+    processing_time_ms: float
+```
+
+**Ba khác biệt so với bản nháp ban đầu của tài liệu này:**
+
+| | Bản nháp cũ | Thật (giờ dùng cái này) |
+|---|---|---|
+| Trường giải thích | Không có | **`reason`** — RuleEngine tự sinh, đưa thẳng vào prompt gần như miễn phí |
+| Gộp `detections` | `nearby_objects: list[str]` (tự đặt ra) | Không có sẵn field này — **phải tự viết hàm gộp** ở bước rút gọn |
+| Ảnh dùng cho P2/P3 | Không nói rõ nguồn | **Không được lấy từ `output_image_path`** — ảnh đó đã vẽ bbox/nhãn lên, cho VLM nhìn thấy coi như lộ đáp án trước. Bộ ảnh test (AI-100.2) phải là frame gốc chưa annotate |
+
+---
+
 ## P1 — Vision to Text LLM (JSON-Based Reasoning)
 
 **Người thực hiện:** Kỹ sư AI / Backend 1
@@ -81,16 +123,25 @@ Không đưa nguyên `FrameAnalysisResult` vào prompt. Nhiều trường không
       "label": "fall_detection",
       "track_id": "track_42",
       "confidence": 0.87,
-      "bbox": [388, 210, 533, 430]
+      "bbox": [388, 210, 533, 430],
+      "reason": "track_42 collapsed"
     }
   ],
   "nearby_objects": ["person x2", "backpack x1"]
 }
 ```
 
-**Bỏ đi:** `frame_id`, timestamp dạng float, toạ độ chi tiết của mọi detection không liên quan tới sự cố.
+**Bỏ đi:** `frame_id`, `output_image_path`, `processing_time_ms`, timestamp dạng Unix float (đổi sang giờ đọc được), toạ độ chi tiết của mọi detection không liên quan tới sự cố.
 
-**Lý do gộp `detections` thành `nearby_objects`:** model cần biết "có 2 người khác gần đó" chứ không cần toạ độ chính xác của từng người. Gộp lại tiết kiệm đáng kể token mà không mất thông tin quyết định.
+**Giữ `reason`:** RuleEngine đã tự sinh giải thích ngắn gọn cho từng sự cố (xem `src/vision/rule_engine.py`). Đưa thẳng field này vào prompt — cho model thêm ngữ cảnh mà không tốn thêm lời gọi nào.
+
+**`nearby_objects` phải tự viết, không có sẵn trong `FrameAnalysisResult`.** Gộp từ `detections` (danh sách vật thể thô, đầy đủ toạ độ) thành dạng đếm gọn: model cần biết "có 2 người khác gần đó" chứ không cần toạ độ chính xác của từng người.
+
+```python
+def summarize_nearby(detections: list[IncidentDetection]) -> list[str]:
+    counts = Counter(d.label for d in detections)
+    return [f"{label} x{n}" for label, n in counts.items()]
+```
 
 ### Bước 2 — System Prompt
 
