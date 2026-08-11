@@ -5,7 +5,21 @@
 
 Tài liệu này định nghĩa 4 khối kiến trúc và **hợp đồng dữ liệu (data contract)** giữa chúng. Mỗi khối chỉ cần tôn trọng contract ở ranh giới của mình — không cần biết nội bộ khối khác chạy ra sao.
 
-Nguồn tham chiếu: `docs/gate1/prd.md`, `docs/database/schema.sql`, `docs/database/pipeline.md`.
+---
+
+## Nguồn gốc của tài liệu này
+
+Để cả team biết phần nào là ràng buộc bắt buộc, phần nào là thiết kế có thể bàn lại:
+
+| Phần | Nguồn | Có thể thay đổi? |
+|---|---|---|
+| 4 khối, 3 nhãn sự cố, ràng buộc HITL + làm mờ mặt + không ra ngoài local | `docs/gate1/prd.md`, `docs/reports/2026-08-01.md` | **Không** — ràng buộc từ PRD |
+| Kỹ thuật CV: YOLOv8/v11, MediaPipe Pose, DeepSORT, Polygon ROI, Background Subtraction | `docs/reports/2026-08-01.md` (bảng phân tích 3 sự kiện cốt lõi) | Có, nếu Vision Engineer có phương án tốt hơn |
+| 6 bảng, tên cột, JSONB, pgvector 1536 chiều | `docs/database/schema.sql` | Có, nhưng phải sửa schema.sql trước rồi commit |
+| Frame skipping 3-5 fps, Message Queue, Object Storage | Đặc tả nhóm thống nhất ngày 04/08 | Có |
+| **5 contract JSON (tên trường, tên stream, mã lỗi, loại message)** | **Thiết kế trong dự án, không sao chép từ nguồn ngoài** | **Có — nhưng phải báo người sở hữu contract** |
+
+Dòng cuối là điểm cần nói rõ: tên trường như `snapshot_raw_path`, giá trị `REQUIRE_HITL`, tên stream `vision.events` là do nhóm tự đặt cho dự án này. Chúng không phải chuẩn công nghiệp nào — nhưng **cách tổ chức** đằng sau chúng thì có căn cứ, giải thích ở mục dưới.
 
 ---
 
@@ -16,6 +30,35 @@ Nguồn tham chiếu: `docs/gate1/prd.md`, `docs/database/schema.sql`, `docs/dat
 | ORM | **SQLAlchemy 2.0 + Alembic** | Drizzle ORM chỉ chạy TypeScript/Node, không tương thích FastAPI (Python). SQLAlchemy hỗ trợ JSONB + pgvector tốt, Alembic quản lý migration. |
 | Message Queue | **Redis Streams** | Nhẹ, có consumer group + replay khi Agent restart. Đủ cho ~100 camera xoay vòng, không nặng như Kafka. |
 | Object Storage | **MinIO** (S3-compatible, self-host) | Đúng ràng buộc PRD "dữ liệu không truyền ra ngoài local server", API S3 nên dễ đổi sang cloud sau. |
+
+### Vì sao Redis Streams chứ không phải Kafka
+
+Hướng dẫn thực dụng phổ biến: nếu đã chạy Redis và lượng message dưới vài trăm nghìn/ngày, bắt đầu với Redis Streams, chỉ chuyển sang Kafka khi chạm giới hạn.
+
+Ước lượng cho dự án này: 100 camera, mỗi camera phát sinh sự cố vài lần/giờ → khoảng vài nghìn message/ngày. Thấp hơn ngưỡng đó nhiều lần.
+
+Kafka đáng dùng khi cần lưu trữ message hàng tháng/năm cho audit, throughput hàng triệu message/giây, hoặc hàng chục consumer group độc lập cùng đọc một topic. Dự án này không có nhu cầu nào trong số đó — nhưng vẫn cần consumer group và replay khi Agent restart, và Redis Streams có sẵn cả hai.
+
+Đổi lại, Redis Streams bị giới hạn bởi RAM và không lưu trữ dài hạn được. Chấp nhận được vì lịch sử sự cố đã nằm trong Postgres, stream chỉ là kênh truyền tạm.
+
+### Vì sao tách `events` và `incidents` thành hai bảng
+
+Đây là biến thể đơn giản của mẫu **Event Sourcing**: bảng ghi sự kiện thô là nguồn sự thật bất biến, bảng kết quả xử lý là "projection" có thể dựng lại từ sự kiện gốc.
+
+Áp dụng vào dự án:
+
+| Bảng | Vai trò | Khi logic Agent thay đổi |
+|---|---|---|
+| `events` | Vision thấy gì — bất biến, không sửa | Giữ nguyên |
+| `incidents` | Agent kết luận gì — có thể dựng lại | Chạy lại Agent trên `events` cũ để so sánh |
+
+Lợi ích cụ thể: khi nhóm đổi prompt hoặc đổi model, có thể chạy lại toàn bộ `events` lịch sử để đo xem phiên bản mới có giảm báo động giả thật không — mà không mất dữ liệu phát hiện gốc. Nếu gộp hai thứ vào một bảng, mỗi lần sửa logic là mất khả năng so sánh.
+
+### Vì sao `detection_data` dùng JSONB thay vì cột cứng
+
+Ba nhãn sự cố có cấu trúc dữ liệu khác hẳn nhau: `fall` cần mảng keypoints, `abandoned_object` cần `owner_track_id` và bán kính, `intrusion` cần số frame liên tiếp. Dùng cột cứng thì bảng `events` sẽ có hàng chục cột mà mỗi hàng chỉ điền được một phần ba.
+
+JSONB cho phép Vision Engineer đổi cấu trúc output (thêm trường mới khi tinh chỉnh model) mà không cần migration DB. Đánh đổi: mất ràng buộc kiểu ở tầng DB — nên phải bù bằng validation ở tầng Pydantic, và mục "Các khoá bắt buộc" bên dưới chính là hợp đồng thay thế.
 
 ---
 

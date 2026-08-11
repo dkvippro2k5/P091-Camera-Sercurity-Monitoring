@@ -92,10 +92,8 @@ docker exec -it p-091-db-1 psql -U postgres -d p091
 
 | File | Nội dung |
 |---|---|
-| `docs/database/architecture.md` | 4 khối + 5 contract dữ liệu chi tiết — **file quan trọng nhất** |
+| `docs/database/architecture.md` | 4 khối + 5 contract dữ liệu chi tiết, kèm sơ đồ mermaid — **file quan trọng nhất** |
 | `docs/database/schema.sql` | Schema Postgres, chạy tự động khi container db khởi tạo |
-| `docs/database/pipeline.md` | Pipeline 5 giai đoạn Ingestion → Serving |
-| `docs/database/diagrams.md` | 3 sơ đồ mermaid: kiến trúc, data flow, sequence HITL |
 | `docs/gate1/prd.md` | PRD gốc — nguồn của mọi ràng buộc |
 | `docs/reports/2026-08-01.md` | Phân tích chống báo động giả theo từng nhãn |
 
