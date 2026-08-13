@@ -21,16 +21,19 @@ class Settings(BaseSettings):
     # this API with an opaque CORS error that looks like the backend is down.
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
-    # LLM
-    openai_api_key: str = ""
-    model_name: str = "gpt-4o-mini"
+    # General LLM agent. Qwen Model Studio's OpenAI-compatible endpoint is the default,
+    # but these names are provider-neutral so a deployment can point elsewhere if needed.
+    llm_api_key: str = ""
+    llm_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    model_name: str = "qwen3.7-flash"
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
-    # VLM triage (PRD §1.2: LLM context reasoning to filter false alarms)
-    # Off by default, and an empty openai_api_key forces the null client regardless, so a
-    # fresh clone and CI both behave exactly as they did before this layer existed.
+    # VLM triage (PRD §1.2: LLM context reasoning to filter false alarms).
+    # Uses an OpenAI-compatible protocol, so the monitoring pipeline is not tied to OpenAI.
     vlm_enabled: bool = False
-    vlm_model: str = "gpt-4o-mini"
+    vlm_api_key: str = ""
+    vlm_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    vlm_model: str = "qwen3.7-flash"
     # Pre-roll must reach back past RuleEngine.fall_dwell_sec (3.0) plus the 0.5s velocity
     # window. Anything shorter and the "before" frames show a person already on the ground,
     # so the model sees no fall and correctly calls a real fall a false positive.

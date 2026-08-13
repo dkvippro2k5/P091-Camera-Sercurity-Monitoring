@@ -23,7 +23,7 @@ from src.models.camera_schemas import Alert
 from src.services import monitoring as monitoring_module
 from src.services.alert_history import AlertHistory
 from src.services.monitoring import MonitoringService, _evenly_spaced
-from src.services.vlm import NullVLMTriage, OpenAIVLMTriage, TriageRequest, TriageVerdict, build_triage_client
+from src.services.vlm import CompatibleVLMTriage, NullVLMTriage, TriageRequest, TriageVerdict, build_triage_client
 
 
 class FakeTriage:
@@ -354,13 +354,13 @@ def test_history_reaches_the_triage_prompt(make_service):
 
 # ------------------------------------------------------------------ client selection
 def test_build_triage_client_is_null_when_disabled():
-    settings = type("S", (), {"vlm_enabled": False, "openai_api_key": "sk-real"})()
+    settings = type("S", (), {"vlm_enabled": False, "vlm_api_key": "sk-real"})()
     assert isinstance(build_triage_client(settings), NullVLMTriage)
 
 
 def test_build_triage_client_is_null_without_a_key():
     """Enabled but unkeyed must degrade, not refuse to start — this layer is optional."""
-    settings = type("S", (), {"vlm_enabled": True, "openai_api_key": ""})()
+    settings = type("S", (), {"vlm_enabled": True, "vlm_api_key": ""})()
     assert isinstance(build_triage_client(settings), NullVLMTriage)
 
 
@@ -370,19 +370,20 @@ def test_build_triage_client_builds_the_real_one_when_configured():
         (),
         {
             "vlm_enabled": True,
-            "openai_api_key": "sk-test-not-used",
-            "vlm_model": "gpt-4o-mini",
+            "vlm_api_key": "sk-test-not-used",
+            "vlm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "vlm_model": "qwen3.7-flash",
             "vlm_timeout_sec": 5.0,
         },
     )()
     # Construction only — no request is made, so no network call happens here.
-    assert isinstance(build_triage_client(settings), OpenAIVLMTriage)
+    assert isinstance(build_triage_client(settings), CompatibleVLMTriage)
 
 
 def test_prompt_carries_the_rule_evidence_verbatim():
     """The measured indicator values are the evidence; paraphrasing them loses the point."""
     reason = "2/3 indicators [+V_y=1.62H/s(>=1.2) -AR=0.83(>=1.2) +dH=65%(>=50%)]"
-    prompt = OpenAIVLMTriage._build_prompt(
+    prompt = CompatibleVLMTriage._build_prompt(
         TriageRequest(label="fall_detection", reason=reason, camera_name="Lobby", pre_count=4, frames=[b"x"] * 6)
     )
 

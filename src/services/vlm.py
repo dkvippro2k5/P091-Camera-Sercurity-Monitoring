@@ -17,7 +17,7 @@ numbers justify it — not before.
 Three implementations behind one protocol:
 
     VLMTriage        - the protocol MonitoringService depends on
-    OpenAIVLMTriage  - the real client
+    CompatibleVLMTriage - the real client, using an OpenAI-compatible API
     NullVLMTriage    - returns `unavailable` without a network call
 
 The null client is what runs when the feature is off or no API key is set, and it is what the
@@ -82,7 +82,7 @@ class TriageVerdict(BaseModel):
     """One model judgement on one alert.
 
     `error` is set on every failure path, and the verdict is `uncertain` whenever it is —
-    see `OpenAIVLMTriage.assess` for why this never raises.
+    see `CompatibleVLMTriage.assess` for why this never raises.
     """
 
     verdict: Verdict = "uncertain"
@@ -128,8 +128,8 @@ class NullVLMTriage:
         return TriageVerdict(verdict="uncertain", error=self._reason)
 
 
-class OpenAIVLMTriage:
-    """Vision-model triage over the OpenAI chat completions API.
+class CompatibleVLMTriage:
+    """Vision-model triage over an OpenAI-compatible chat completions API.
 
     Uses the OpenAI SDK directly rather than LangChain: this is one structured call with
     images, and the template's LangGraph scaffold belongs to a different product surface.
@@ -138,7 +138,8 @@ class OpenAIVLMTriage:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-mini",
+        base_url: str,
+        model: str = "qwen3.7-flash",
         timeout_sec: float = 20.0,
         max_retries: int = 1,
     ) -> None:
@@ -147,7 +148,7 @@ class OpenAIVLMTriage:
         self.model = model
         # The SDK's own retry handles the transient 429/5xx case; a hand-rolled loop around
         # a 20s timeout would multiply worst-case latency instead of bounding it.
-        self._client = OpenAI(api_key=api_key, timeout=timeout_sec, max_retries=max_retries)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec, max_retries=max_retries)
 
     def assess(self, request: TriageRequest) -> TriageVerdict:
         """Judge one alert. Never raises.
@@ -242,13 +243,14 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
     """
     if not getattr(settings, "vlm_enabled", False):
         return NullVLMTriage("VLM triage disabled (VLM_ENABLED=false)")
-    if not settings.openai_api_key:
-        logger.warning("VLM_ENABLED is true but OPENAI_API_KEY is empty; alerts will carry no assessment.")
-        return NullVLMTriage("No OPENAI_API_KEY configured")
+    if not settings.vlm_api_key:
+        logger.warning("VLM_ENABLED is true but VLM_API_KEY is empty; alerts will carry no assessment.")
+        return NullVLMTriage("No VLM_API_KEY configured")
 
     try:
-        return OpenAIVLMTriage(
-            api_key=settings.openai_api_key,
+        return CompatibleVLMTriage(
+            api_key=settings.vlm_api_key,
+            base_url=settings.vlm_base_url,
             model=settings.vlm_model,
             timeout_sec=settings.vlm_timeout_sec,
         )

@@ -200,7 +200,7 @@ def _collect_warnings(report: "EvalReport") -> list[str]:
     if report.triage_coverage == 0:
         warnings.append(
             "No alert carries a VLM verdict, so rules+VLM cannot be compared. The triage layer is "
-            "off by default — set VLM_ENABLED=true with a valid OPENAI_API_KEY and collect again."
+            "off by default — set VLM_ENABLED=true with a valid VLM_API_KEY and collect again."
         )
     elif report.triage_coverage < report.reviewed_rows:
         warnings.append(
