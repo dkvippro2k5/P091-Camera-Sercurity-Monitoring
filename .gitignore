@@ -65,6 +65,10 @@ src/frontend/node_modules/
 src/frontend/dist/
 
 .claude
+.codex
+.cursor
+.gemini
+.github
 
 # Impeccable
 .impeccable/
@@ -74,3 +78,5 @@ src/frontend/dist/
 PRODUCT.md
 DESIGN.md
 github/agents/
+
+data/
