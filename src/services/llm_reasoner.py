@@ -157,6 +157,13 @@ class CompatibleLLMReasoner:
                 response_format=_RESPONSE_SCHEMA,
                 temperature=0.0,
                 max_tokens=200,
+                # Measured 2026-08-15: without this, qwen3.7-flash's default "thinking" mode
+                # burns several thousand hidden reasoning tokens per call (billed as output,
+                # not bounded by max_tokens above) and pushed latency to 8-25s for what should
+                # be a fast consistency check -- 3-7x the VLM stage's own latency. This is a
+                # classification/consistency-check task (same reasoning as the VLM's own
+                # temperature=0.0), not a task that benefits from an extended reasoning chain.
+                extra_body={"enable_thinking": False},
             )
             payload = json.loads(response.choices[0].message.content or "{}")
             return LLMVerdict(
