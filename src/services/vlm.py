@@ -14,24 +14,37 @@ visible is what makes a rules-alone vs rules-plus-VLM precision/recall compariso
 at all (PRD §4, "Tỷ lệ lọc nhờ LLM"). Suppression becomes a config flip once the measured
 numbers justify it — not before.
 
-Three implementations behind one protocol:
+Four implementations behind one protocol:
 
-    VLMTriage        - the protocol MonitoringService depends on
-    CompatibleVLMTriage - the real client, using an OpenAI-compatible API
-    NullVLMTriage    - returns `unavailable` without a network call
+    VLMTriage           - the protocol MonitoringService depends on
+    CompatibleVLMTriage - the real vision client, using an OpenAI-compatible API
+    NullVLMTriage       - returns `unavailable` without a network call
+    CascadingTriage     - VLM then a text-only LLM second opinion (see llm_reasoner.py)
 
 The null client is what runs when the feature is off or no API key is set, and it is what the
 test suite uses — the suite stays offline and fast, and a fresh clone behaves exactly as it
 did before this layer existed.
+
+`CascadingTriage` is the optional Vision -> VLM -> LLM extension: it wraps a VLMTriage and an
+`LLMReasoner` (src/services/llm_reasoner.py) behind this same protocol, so MonitoringService
+never has to know a second model is involved. See docs/plans/llm-reasoning-node.md for the
+full design (including two known risks accepted for the first cut: the VLM's `rationale` is
+deliberately one sentence, and `rule_evidence` is far richer for fall_detection than for
+intrusion/abandoned_object — both limit how much the LLM stage can add today).
 """
 
 import base64
 import json
 import logging
 import time
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    # Only for the type hint on CascadingTriage.__init__ — importing this at module level
+    # would be circular, since llm_reasoner.py imports TriageVerdict/TriageRequest from here.
+    from src.services.llm_reasoner import LLMReasoner
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +103,10 @@ class TriageVerdict(BaseModel):
     rationale: str = ""
     model: str = ""
     latency_ms: float = 0.0
+    # Prompt + completion tokens for this one call, read from the API response's own usage
+    # block rather than estimated — needed to compute cost_usd in the benchmark harness.
+    # 0 on any path that didn't make a billable call (Null client, or a failed request).
+    total_tokens: int = 0
     error: str | None = None
 
 
@@ -180,6 +197,9 @@ class CompatibleVLMTriage:
                 rationale=str(payload.get("rationale", "")).strip(),
                 model=self.model,
                 latency_ms=round((time.perf_counter() - started) * 1000, 1),
+                # usage can be None on some OpenAI-compatible gateways; 0 is the honest
+                # fallback rather than guessing from character counts.
+                total_tokens=getattr(response.usage, "total_tokens", 0) or 0,
             )
         except Exception as exc:  # noqa: BLE001 - see docstring; no failure may reach the alert
             logger.warning(f"VLM triage failed: {type(exc).__name__}: {exc}")
@@ -234,6 +254,48 @@ class CompatibleVLMTriage:
         return "\n".join(lines)
 
 
+class CascadingTriage:
+    """Vision -> VLM -> LLM: a text-only second opinion layered on top of the VLM verdict.
+
+    Implements the same `VLMTriage` protocol as `CompatibleVLMTriage`, so MonitoringService
+    needs no changes to use this instead — it is a drop-in replacement selected entirely by
+    `build_triage_client`, based on `llm_reasoning_enabled`.
+
+    The two stages run strictly in sequence (VLM first, its verdict feeds the LLM prompt),
+    and either stage failing degrades to the VLM's own verdict rather than losing the alert's
+    assessment entirely — the same "never worse than doing nothing extra" principle as
+    `CompatibleVLMTriage.assess`.
+    """
+
+    def __init__(self, vlm: "VLMTriage", reasoner: "LLMReasoner") -> None:
+        self.vlm = vlm
+        self.reasoner = reasoner
+
+    def assess(self, request: TriageRequest) -> TriageVerdict:
+        vlm_verdict = self.vlm.assess(request)
+        if vlm_verdict.error:
+            # The LLM stage reasons over the VLM's verdict — with no verdict to review,
+            # running it would mean judging the alert from rule_evidence alone, which is
+            # exactly what the VLM stage already exists to avoid. Skip it and surface the
+            # VLM's own (uncertain + error) result unchanged.
+            return vlm_verdict
+
+        llm_verdict = self.reasoner.assess(vlm_verdict, request)
+        if llm_verdict.error:
+            # LLM failed: fall back to the VLM's verdict rather than downgrading an alert
+            # that already had a usable assessment to "uncertain".
+            return vlm_verdict
+
+        return TriageVerdict(
+            verdict=llm_verdict.verdict,
+            confidence=llm_verdict.confidence,
+            rationale=llm_verdict.rationale,
+            model=f"{vlm_verdict.model}+{llm_verdict.model}",
+            latency_ms=vlm_verdict.latency_ms + llm_verdict.latency_ms,
+            total_tokens=vlm_verdict.total_tokens + llm_verdict.total_tokens,
+        )
+
+
 def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoided to dodge a config import cycle
     """Pick a triage client from settings, degrading to the null client rather than failing.
 
@@ -248,7 +310,7 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
         return NullVLMTriage("No VLM_API_KEY configured")
 
     try:
-        return CompatibleVLMTriage(
+        vlm_client = CompatibleVLMTriage(
             api_key=settings.vlm_api_key,
             base_url=settings.vlm_base_url,
             model=settings.vlm_model,
@@ -257,3 +319,27 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
     except Exception as exc:  # noqa: BLE001 - a missing openai package must not block startup
         logger.error(f"Could not build the VLM client, continuing without triage: {exc}")
         return NullVLMTriage(f"VLM client unavailable: {exc}")
+
+    if not getattr(settings, "llm_reasoning_enabled", False):
+        return vlm_client
+
+    llm_api_key = getattr(settings, "llm_api_key", "")
+    if not llm_api_key:
+        # Degrade to VLM-only rather than dropping triage entirely: the LLM stage is an
+        # optional add-on, its missing key must not take out the working VLM layer with it.
+        logger.warning("LLM_REASONING_ENABLED is true but LLM_API_KEY is empty; running VLM-only triage.")
+        return vlm_client
+
+    try:
+        from src.services.llm_reasoner import CompatibleLLMReasoner  # lazy: avoids the circular import
+
+        reasoner = CompatibleLLMReasoner(
+            api_key=llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.model_name,
+            timeout_sec=getattr(settings, "llm_reasoning_timeout_sec", 15.0),
+        )
+        return CascadingTriage(vlm=vlm_client, reasoner=reasoner)
+    except Exception as exc:  # noqa: BLE001 - same reasoning as the VLM client build above
+        logger.error(f"Could not build the LLM reasoner, continuing with VLM-only triage: {exc}")
+        return vlm_client

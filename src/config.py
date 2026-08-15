@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     vlm_timeout_sec: float = Field(default=20.0, gt=0.0)
     vlm_history_examples: int = Field(default=6, ge=0, le=32)
 
+    # LLM reasoning stage (Vision -> VLM -> LLM, docs/plans/llm-reasoning-node.md). Off by
+    # default and layered strictly on top of vlm_enabled: with vlm_enabled=false this flag
+    # does nothing, since CascadingTriage always needs a working VLM verdict to reason over.
+    # Reuses llm_api_key/llm_base_url/model_name above rather than adding a third key.
+    llm_reasoning_enabled: bool = False
+    # Text-only call, so it should be faster than the VLM's own vlm_timeout_sec.
+    llm_reasoning_timeout_sec: float = Field(default=15.0, gt=0.0)
+
     # Monitoring
     # Per (camera, label) floor between alerts. One flickering track would otherwise
     # open a modal on every frame it flickers.
