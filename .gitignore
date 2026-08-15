@@ -29,7 +29,7 @@ env/
 Thumbs.db
 
 # Data & Weights (never commit large binary weights or private session data)
-# data/
+data/
 *.db
 *.sqlite3
 *.pt
