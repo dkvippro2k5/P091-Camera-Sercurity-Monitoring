@@ -1,4 +1,4 @@
-# Gate 2 - P-091 Security Monitor
+# Gate 2
 
 Hệ thống hỗ trợ nhân viên an ninh theo dõi nhiều camera cùng lúc. Camera có thể lấy
 từ video mẫu, video tải lên hoặc luồng RTSP. Backend đọc từng luồng, chạy YOLO để bám theo
@@ -193,28 +193,6 @@ $camera = @{
 
 Invoke-RestMethod http://localhost:8000/api/v1/cameras `
   -Method Post -WebSession $session -ContentType 'application/json' -Body $camera
-```
-
-## Chạy bằng Docker Compose
-
-Điền `MODEL_WEIGHTS_HOST_PATH` và các biến production trong `.env`, sau đó chạy:
-
-```powershell
-docker compose up -d --build
-docker compose logs -f backend
-```
-
-Frontend được mở tại `http://localhost`. Nginx chuyển request `/api/` sang backend. Thư mục
-`data` được mount ra ngoài container nên camera, video tải lên và lịch sử vẫn còn sau khi restart.
-
-## Kiểm tra trước khi nộp
-
-```powershell
-.\.venv\Scripts\python.exe -m ruff check src tests
-.\.venv\Scripts\python.exe -m pytest -q
-Set-Location src\frontend
-npm ci
-npm run build
 ```
 
 Các tài liệu Gate 2:
