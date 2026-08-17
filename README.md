@@ -48,6 +48,23 @@ cp .env.example .env
 # (giá trị trong .env.example chỉ là placeholder)
 ```
 
+**Tải YOLO weight cho Vision Pipeline** — `src/vision/weights/*.pt` bị `.gitignore` (binary
+~53MB, không commit vào git), nên clone xong sẽ **chưa có** file model. Thiếu file này,
+`IncidentDetector` sẽ raise `FileNotFoundError` ngay lúc khởi tạo thay vì âm thầm bỏ qua (chủ
+ý, để tránh hệ giám sát chạy mà không thực sự nạp model). Tải checkpoint gốc `yolo26l.pt` từ
+Ultralytics bằng chính thư viện `ultralytics` (đảm bảo đúng bản khớp với `ultralytics` đã cài,
+xem `requirements.txt`):
+
+```bash
+mkdir -p src/vision/weights
+python -c "from ultralytics import YOLO; YOLO('yolo26l.pt')"
+mv yolo26l.pt src/vision/weights/yolo26l.pt
+```
+
+CI (`.github/workflows/ci.yml`) làm y hệt bước này (có cache) trên runner self-hosted của BTC
+trước khi chạy test — không cần làm gì thêm cho CI, chỉ cần làm bước này trên máy local của
+từng thành viên.
+
 ### Bước 3: Cài AI Logging Hooks
 
 ```bash
