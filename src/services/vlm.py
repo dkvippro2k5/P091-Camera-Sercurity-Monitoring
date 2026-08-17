@@ -37,18 +37,12 @@ import base64
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import Protocol
 
-from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    # Only for the type hint on CascadingTriage.__init__ — importing this at module level
-    # would be circular, since llm_reasoner.py imports TriageVerdict/TriageRequest from here.
-    from src.services.llm_reasoner import LLMReasoner
+from src.services.llm_reasoner import CompatibleLLMReasoner, LLMReasoner
+from src.services.schemas import TriageRequest, TriageVerdict
 
 logger = logging.getLogger(__name__)
-
-Verdict = Literal["real", "false_positive", "uncertain"]
 
 # Ordered oldest-first and labelled in the prompt, because "did they fall or stand up" is
 # answerable only from the sequence. A single frame cannot separate a fall from lying down.
@@ -89,44 +83,6 @@ _RESPONSE_SCHEMA = {
         },
     },
 }
-
-
-class TriageVerdict(BaseModel):
-    """One model judgement on one alert.
-
-    `error` is set on every failure path, and the verdict is `uncertain` whenever it is —
-    see `CompatibleVLMTriage.assess` for why this never raises.
-    """
-
-    verdict: Verdict = "uncertain"
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    rationale: str = ""
-    model: str = ""
-    latency_ms: float = 0.0
-    # Prompt + completion tokens for this one call, read from the API response's own usage
-    # block rather than estimated — needed to compute cost_usd in the benchmark harness.
-    # 0 on any path that didn't make a billable call (Null client, or a failed request).
-    total_tokens: int = 0
-    error: str | None = None
-
-
-class TriageRequest(BaseModel):
-    """Everything the model is shown about one alert.
-
-    `reason` is the rule engine's own evidence string, passed verbatim — it carries the
-    measured indicator values, which is the whole point of routing it here.
-    """
-
-    label: str
-    reason: str | None = None
-    zone_name: str | None = None
-    camera_name: str = ""
-    # JPEG bytes, chronological. `pre_count` marks the split: the first `pre_count` frames
-    # precede the moment the rule fired, the rest follow it.
-    frames: list[bytes] = Field(default_factory=list)
-    pre_count: int = 0
-    # Rendered lines from past operator-labelled incidents on this camera (alert_history).
-    examples: list[str] = Field(default_factory=list)
 
 
 class VLMTriage(Protocol):
@@ -267,7 +223,7 @@ class CascadingTriage:
     `CompatibleVLMTriage.assess`.
     """
 
-    def __init__(self, vlm: "VLMTriage", reasoner: "LLMReasoner") -> None:
+    def __init__(self, vlm: VLMTriage, reasoner: LLMReasoner) -> None:
         self.vlm = vlm
         self.reasoner = reasoner
 
@@ -331,8 +287,6 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
         return vlm_client
 
     try:
-        from src.services.llm_reasoner import CompatibleLLMReasoner  # lazy: avoids the circular import
-
         reasoner = CompatibleLLMReasoner(
             api_key=llm_api_key,
             base_url=settings.llm_base_url,

@@ -32,7 +32,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from src.services.vlm import TriageRequest, TriageVerdict, Verdict
+from src.services.schemas import TriageRequest, TriageVerdict, Verdict
 
 logger = logging.getLogger(__name__)
 
@@ -86,16 +86,27 @@ _RESPONSE_SCHEMA = {
 }
 
 
-class LLMVerdict(BaseModel):
-    """One LLM judgement on one alert, given the VLM's own verdict as input.
+class LLMResponsePayload(BaseModel):
+    """Exactly the fields the model itself returns — mirrors `_RESPONSE_SCHEMA` above.
 
-    Same shape as `TriageVerdict` plus nothing extra — `CascadingTriage` (vlm.py) is what
-    merges this with the VLM's own latency/token counts into the final `TriageVerdict`.
+    Split out from `LLMVerdict` so the boundary is visible in the type system: everything
+    here comes from the API's JSON body, everything `LLMVerdict` adds is measured locally.
     """
 
     verdict: Verdict = "uncertain"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     rationale: str = ""
+
+
+class LLMVerdict(LLMResponsePayload):
+    """One LLM judgement on one alert, given the VLM's own verdict as input.
+
+    The model's own answer plus the call metadata this module measures itself — the API
+    never reports its own latency, and `model`/`error` are ours. `CascadingTriage` (vlm.py)
+    is what merges this with the VLM's own latency/token counts into the final
+    `TriageVerdict`.
+    """
+
     model: str = ""
     latency_ms: float = 0.0
     total_tokens: int = 0
