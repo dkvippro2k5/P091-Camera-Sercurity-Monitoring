@@ -33,59 +33,61 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div className="brand login-brand">
-          <span aria-hidden="true">◉</span>
-          <span>Camera Monitor</span>
+      <div className="login-shell">
+        <div className="login-visual" aria-hidden="true">
+          <div className="login-radar"><span /><span /><span /></div>
+          <div className="login-visual-label">P-091 · Vision operations</div>
         </div>
 
-        <h1>Sign in</h1>
-        <p className="hint">
-          Guards monitor the live grid, judge incidents, and configure the cameras. Managers review
-          statistics.
-        </p>
+        <form className="login-card" onSubmit={handleSubmit}>
+          <div className="brand login-brand">
+            <span className="brand-mark" aria-hidden="true">CM</span>
+            <span className="brand-copy"><strong>Camera Monitor</strong><small>Secure workspace</small></span>
+          </div>
 
-        <label className="field">
-          <span>Username</span>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="username"
-            autoFocus
-            required
-          />
-        </label>
+          <div className="login-heading">
+            <p className="eyebrow">Authorized access</p>
+            <h1>Sign in to continue</h1>
+          </div>
 
-        <label className="field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
+          <label className="field">
+            <span>Username</span>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoFocus
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
 
         {/* role="alert" so a screen reader announces the failure instead of leaving the
             operator pressing a button that appears to do nothing. */}
-        {error && (
-          <p className="err" role="alert">
-            <span aria-hidden="true">▲</span>
-            {error}
-          </p>
-        )}
+          {error && (
+            <p className="err" role="alert">
+              <span aria-hidden="true">▲</span>
+              {error}
+            </p>
+          )}
 
-        <div className="actions">
-          <button type="submit" className="primary" disabled={busy || !username.trim() || !password}>
-            {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </div>
-
-        {/* There is no signup route by design — accounts are seeded by an administrator. A
-            login screen with no way forward and no explanation reads as broken. */}
-        <p className="hint">Accounts are created by an administrator with <code>scripts/seed_users.py</code>.</p>
-      </form>
+          <div className="actions">
+            <button type="submit" className="primary" disabled={busy || !username.trim() || !password}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

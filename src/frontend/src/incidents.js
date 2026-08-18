@@ -94,3 +94,35 @@ export function relativeTime(iso, now = Date.now()) {
 export function formatClock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
+
+/**
+ * High-confidence false positives filtered by VLM.
+ * They do not open the big modal and do not count as active attention backlog.
+ */
+export function isAutoSuppressed(alert) {
+  return (
+    alert.triage_status === 'complete' &&
+    alert.triage_verdict === 'false_positive' &&
+    typeof alert.triage_confidence === 'number' &&
+    alert.triage_confidence >= 0.85
+  )
+}
+
+/**
+ * Alerts currently being verified by VLM.
+ * Shown as a small corner "AI verifying" card while pending.
+ */
+export function isPendingTriage(alert) {
+  return !alert.acknowledged && alert.triage_status === 'pending'
+}
+
+/**
+ * Alerts requiring guard attention in the big popup modal.
+ * Includes real, uncertain, skipped, failed, or low-confidence false positives.
+ */
+export function requiresGuardReview(alert) {
+  if (alert.acknowledged) return false
+  if (isPendingTriage(alert)) return false
+  if (isAutoSuppressed(alert)) return false
+  return true
+}

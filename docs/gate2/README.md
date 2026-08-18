@@ -37,7 +37,7 @@ Báo cáo 5 test case thủ công và ảnh chụp output nằm tại [evaluatio
 
 - Python 3.11
 - Node.js 20
-- File YOLO tại `src/vision/weights/yolo26l.pt`
+- File YOLO tại `src/vision/weights/yolo11n.pt`
 - OpenAI API key nếu muốn chạy VLM thật
 - MediaMTX và FFmpeg nếu muốn giả lập camera RTSP bằng video
 
@@ -100,11 +100,12 @@ Mở `http://localhost:5173`. Có thể kiểm tra backend tại `http://localho
 | `VLM_MAX_FRAMES`                | Số khung hình tối đa gửi cho VLM                        | `6`                                |
 | `VLM_TIMEOUT_SEC`               | Thời gian chờ một lần gọi VLM                           | `20.0`                             |
 | `VLM_HISTORY_EXAMPLES`          | Số kết quả cũ được đưa vào làm ví dụ                    | `6`                                |
-| `MODEL_WEIGHTS_PATH`            | Đường dẫn YOLO mà backend nhìn thấy                     | `src/vision/weights/yolo26l.pt`    |
-| `MODEL_WEIGHTS_HOST_PATH`       | Đường dẫn YOLO trên máy host khi chạy Docker            | `./src/vision/weights/yolo26l.pt`  |
+| `MODEL_WEIGHTS_PATH`            | Đường dẫn YOLO mà backend nhìn thấy                     | `src/vision/weights/yolo11n.pt`    |
+| `MODEL_WEIGHTS_HOST_PATH`       | Đường dẫn YOLO trên máy host khi chạy Docker            | `./src/vision/weights/yolo11n.pt`  |
 | `DETECTOR_TARGET_LABELS`        | Các nhãn YOLO được giữ lại                              | `person,backpack,handbag,suitcase` |
 | `DETECTOR_CONFIDENCE`           | Ngưỡng nhận diện chung của YOLO                         | `0.40`                             |
 | `CAMERA_TARGET_FPS`             | Số khung hình phân tích mỗi giây cho camera mới         | `5`                                |
+| `CAMERA_MAX_CONCURRENT_INFERENCES` | Giới hạn camera suy luận đồng thời; `0` tự chọn theo máy | `0`                             |
 | `ALERT_COOLDOWN_SEC`            | Khoảng nghỉ giữa hai cảnh báo cùng loại trên một camera | `30` giây                          |
 | `FALL_POSTURE_ENABLED`          | Bật model tư thế té ngã bổ sung                         | `true`                             |
 | `FALL_POSTURE_CONFIDENCE`       | Ngưỡng của model tư thế té ngã                          | `0.40`                             |

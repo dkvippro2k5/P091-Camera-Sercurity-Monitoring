@@ -21,6 +21,12 @@ torchvision>=0.28.0
 ultralytics>=8.4.115
 opencv-python>=5.0.0.93
 numpy>=2.4.6
+# Optional local VLM triage. Weights are downloaded only when VLM_PROVIDER=local is used.
+transformers>=4.49.0,<5.0.0
+accelerate>=1.2.0
+safetensors>=0.4.5
+Pillow>=10.0.0
+num2words>=0.5.14
 # ByteTrack's linear assignment. Ultralytics pip-installs this at runtime on the
 # first model.track() call if it is absent, which stalls or fails offline.
 lap>=0.5.12

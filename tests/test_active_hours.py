@@ -201,7 +201,7 @@ def test_the_window_survives_a_restart(service, monkeypatch, tmp_path):
         )
     )
 
-    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda: IncidentDetector(model_path=None))
+    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda **_: IncidentDetector(model_path=None))
     monkeypatch.setattr(monitoring_module.MultiStreamManager, "add_camera", lambda self, **kwargs: None)
     revived = MonitoringService()
     try:

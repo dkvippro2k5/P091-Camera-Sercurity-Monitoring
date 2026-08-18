@@ -63,7 +63,7 @@ def isolated_data(monkeypatch, tmp_path):
     from src.vision.detector import IncidentDetector
 
     history_path = str(tmp_path / "vlm_history.jsonl")
-    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda: IncidentDetector(model_path=None))
+    monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda **_: IncidentDetector(model_path=None))
     monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
     monkeypatch.setattr(monitoring_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     monkeypatch.setattr(monitoring_module, "IncidentLog", lambda: IncidentLog(path=str(tmp_path / "incidents.jsonl")))

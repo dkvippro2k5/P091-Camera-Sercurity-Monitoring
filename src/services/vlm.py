@@ -26,8 +26,11 @@ did before this layer existed.
 """
 
 import base64
+import io
 import json
 import logging
+import os
+import threading
 import time
 from typing import Literal, Protocol
 
@@ -36,6 +39,25 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 Verdict = Literal["real", "false_positive", "uncertain"]
+
+_CONTROLLED_ACTIVITY_TERMS = (
+    "push-up",
+    "push up",
+    "pushup",
+    "plank",
+    "burpee",
+    "workout",
+    "exercise",
+    "stretching",
+    "stretch",
+    "floor exercise",
+)
+
+
+def _mentions_controlled_activity(texts: list[str]) -> bool:
+    """Recognize explicit exercise cues without guessing from posture alone."""
+    combined = " ".join(texts).lower()
+    return any(term in combined for term in _CONTROLLED_ACTIVITY_TERMS)
 
 # Ordered oldest-first and labelled in the prompt, because "did they fall or stand up" is
 # answerable only from the sequence. A single frame cannot separate a fall from lying down.
@@ -47,7 +69,9 @@ positive the rule could not rule out on its own.
 
 The three incident types:
 - fall_detection: a person has fallen and may need medical help. Crouching, sitting down
-  deliberately, bending to pick something up, and lying down on purpose are NOT falls.
+  deliberately, bending to pick something up, lying down on purpose, push-ups, planks,
+  burpees, stretching, and other controlled floor exercises are NOT falls. A fall must show
+  an uncontrolled or unexpected collapse, followed by remaining down or unable to recover.
 - intrusion: a person entered a restricted zone. Someone merely passing nearby is not.
 - abandoned_object: a bag or item left unattended with no owner nearby. An item beside a
   seated or standing person is not abandoned.
@@ -57,7 +81,10 @@ fired) and AFTER. Judge the transition between them, not any single frame.
 
 Answer only with the JSON object described by the schema. Keep `rationale` to one sentence an
 on-duty guard can read at a glance. Use "uncertain" honestly when the frames do not settle it —
-an unsure verdict is more useful than a confident wrong one."""
+an unsure verdict is more useful than a confident wrong one.
+
+Provide `frame_observations` as one short visible-evidence note per frame in chronological
+order. Do not describe private chain-of-thought; report only what can be seen."""
 
 _RESPONSE_SCHEMA = {
     "type": "json_schema",
@@ -70,8 +97,12 @@ _RESPONSE_SCHEMA = {
                 "verdict": {"type": "string", "enum": ["real", "false_positive", "uncertain"]},
                 "confidence": {"type": "number"},
                 "rationale": {"type": "string"},
+                "frame_observations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
             },
-            "required": ["verdict", "confidence", "rationale"],
+            "required": ["verdict", "confidence", "rationale", "frame_observations"],
             "additionalProperties": False,
         },
     },
@@ -88,6 +119,7 @@ class TriageVerdict(BaseModel):
     verdict: Verdict = "uncertain"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     rationale: str = ""
+    frame_observations: list[str] = Field(default_factory=list)
     model: str = ""
     latency_ms: float = 0.0
     error: str | None = None
@@ -168,15 +200,32 @@ class OpenAIVLMTriage:
                 response_format=_RESPONSE_SCHEMA,
                 # Deterministic-ish: this is a classification, not a writing task.
                 temperature=0.0,
-                max_tokens=200,
+                max_tokens=600,
             )
             payload = json.loads(response.choices[0].message.content or "{}")
+            frame_observations = [
+                str(observation).strip()
+                for observation in payload.get("frame_observations", [])
+                if str(observation).strip()
+            ]
+            if len(frame_observations) != len(request.frames):
+                raise ValueError(
+                    f"expected {len(request.frames)} frame observations, got {len(frame_observations)}"
+                )
+            verdict = payload.get("verdict", "uncertain")
+            confidence = min(1.0, max(0.0, float(payload.get("confidence", 0.0))))
+            rationale = str(payload.get("rationale", "")).strip()
+            if verdict == "real" and _mentions_controlled_activity([rationale, *frame_observations]):
+                verdict = "false_positive"
+                confidence = min(confidence, 0.9)
+                rationale = "Visible exercise cues indicate controlled floor movement rather than an uncontrolled fall."
             return TriageVerdict(
-                verdict=payload.get("verdict", "uncertain"),
+                verdict=verdict,
                 # Clamped rather than trusted: a model returning 0-100 instead of 0-1 would
                 # otherwise fail Pydantic validation and lose an otherwise-good verdict.
-                confidence=min(1.0, max(0.0, float(payload.get("confidence", 0.0)))),
-                rationale=str(payload.get("rationale", "")).strip(),
+                confidence=confidence,
+                rationale=rationale,
+                frame_observations=frame_observations,
                 model=self.model,
                 latency_ms=round((time.perf_counter() - started) * 1000, 1),
             )
@@ -200,9 +249,9 @@ class OpenAIVLMTriage:
                     "type": "image_url",
                     "image_url": {
                         "url": "data:image/jpeg;base64," + base64.standard_b64encode(jpeg).decode("utf-8"),
-                        # Surveillance stills at tile resolution; "high" doubles the token
-                        # cost per image for detail this judgement does not turn on.
-                        "detail": "low",
+                        # Small objects and zone boundaries can determine the verdict, so
+                        # preserve spatial detail even though it costs more image tokens.
+                        "detail": "high",
                     },
                 }
             )
@@ -223,6 +272,13 @@ class OpenAIVLMTriage:
             f"Frames: {request.pre_count} before the trigger, "
             f"{max(0, len(request.frames) - request.pre_count)} after, in chronological order."
         )
+        if request.label == "fall_detection":
+            lines.append(
+                "Fall check: require an uncontrolled collapse and sustained inability to recover. "
+                "push-ups, planks, burpees, stretching, and other controlled floor exercises "
+                "are false positives, even when the person becomes prone."
+            )
+        lines.append(f"Return exactly {len(request.frames)} frame_observations, one for each labelled frame.")
 
         if request.examples:
             lines.append("")
@@ -233,6 +289,162 @@ class OpenAIVLMTriage:
         return "\n".join(lines)
 
 
+class LocalSmolVLMTriage:
+    """Local SmolVLM2 posture captioner with deterministic fall-transition reasoning."""
+
+    def __init__(
+        self,
+        model: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        device: str = "auto",
+        max_image_size: int = 512,
+        max_new_tokens: int = 64,
+    ) -> None:
+        self.model = model
+        self.device = device
+        self.max_image_size = max_image_size
+        self.max_new_tokens = max_new_tokens
+        self._processor = None
+        self._model = None
+        self._torch = None
+        # Monitoring can run two triage workers, but this workstation has one 4 GB GPU.
+        self._inference_lock = threading.Lock()
+
+    def assess(self, request: TriageRequest) -> TriageVerdict:
+        started = time.perf_counter()
+        try:
+            with self._inference_lock:
+                self._ensure_loaded()
+                images = self._decode_images(request.frames)
+                observations = [self._caption_image(image) for image in images]
+
+            verdict, confidence, rationale = self._infer_temporal_verdict(request, observations)
+            return TriageVerdict(
+                verdict=verdict,
+                confidence=confidence,
+                rationale=rationale,
+                frame_observations=observations,
+                model=self.model,
+                latency_ms=round((time.perf_counter() - started) * 1000, 1),
+            )
+        except Exception as exc:  # noqa: BLE001 - local inference must never suppress an alert
+            logger.warning(f"Local VLM triage failed: {type(exc).__name__}: {exc}")
+            return TriageVerdict(
+                verdict="uncertain",
+                model=self.model,
+                latency_ms=round((time.perf_counter() - started) * 1000, 1),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+
+        # Some processor components perform optional metadata probes even with
+        # local_files_only=True. The local provider must remain fully offline.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        import torch
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+
+        resolved_device = self.device
+        if resolved_device == "auto":
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if resolved_device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError(f"VLM device '{resolved_device}' requested but CUDA is unavailable")
+
+        dtype = torch.float16 if resolved_device.startswith("cuda") else torch.float32
+        logger.info(f"Loading local VLM {self.model} on {resolved_device} ({dtype})")
+        processor = AutoProcessor.from_pretrained(self.model, local_files_only=True)
+        processor.image_processor.size = {"longest_edge": self.max_image_size}
+        processor.image_processor.max_image_size = {"longest_edge": self.max_image_size}
+        processor.image_processor.do_image_splitting = False
+        model = AutoModelForImageTextToText.from_pretrained(
+            self.model,
+            dtype=dtype,
+            _attn_implementation="eager",
+            local_files_only=True,
+        )
+        model.to(resolved_device)
+        model.eval()
+
+        self.device = resolved_device
+        self._torch = torch
+        self._processor = processor
+        self._model = model
+
+    def _decode_images(self, frames: list[bytes]) -> list:
+        from PIL import Image
+
+        images = []
+        for jpeg in frames:
+            image = Image.open(io.BytesIO(jpeg)).convert("RGB")
+            image.thumbnail((self.max_image_size, self.max_image_size), Image.Resampling.LANCZOS)
+            images.append(image)
+        return images
+
+    def _caption_image(self, image) -> str:  # noqa: ANN001 - PIL is an optional local dependency
+        """Ask the small model one visual question it can answer reliably."""
+        content = [
+            {"type": "image"},
+            {"type": "text", "text": "Describe the person's posture in one short sentence."},
+        ]
+        messages = [{"role": "user", "content": content}]
+        prompt = self._processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = self._processor(text=prompt, images=[image], return_tensors="pt")
+        for key, value in inputs.items():
+            if self._torch.is_tensor(value):
+                inputs[key] = value.to(
+                    device=self.device,
+                    dtype=(
+                        self._torch.float16
+                        if value.is_floating_point() and self.device.startswith("cuda")
+                        else None
+                    ),
+                )
+
+        with self._torch.inference_mode():
+            generated_ids = self._model.generate(
+                **inputs,
+                do_sample=False,
+                max_new_tokens=min(self.max_new_tokens, 64),
+            )
+        prompt_tokens = inputs["input_ids"].shape[1]
+        caption = self._processor.batch_decode(
+            generated_ids[:, prompt_tokens:], skip_special_tokens=True
+        )[0].strip()
+        if not caption:
+            raise ValueError("model returned an empty posture caption")
+        return caption
+
+    @staticmethod
+    def _posture_state(observation: str) -> Literal["upright", "lying", "other", "unknown"]:
+        """Map conservative, visible posture vocabulary to a small state vocabulary."""
+        text = observation.lower()
+        if any(term in text for term in ("lying", "laying", "prone", "on the floor", "on floor")):
+            return "lying"
+        if any(term in text for term in ("standing", "upright", "walking", "running")):
+            return "upright"
+        if any(term in text for term in ("sitting", "seated", "kneeling", "crouching")):
+            return "other"
+        return "unknown"
+
+    @classmethod
+    def _infer_temporal_verdict(
+        cls, request: TriageRequest, observations: list[str]
+    ) -> tuple[Verdict, float, str]:
+        """Use the model as a captioner; keep incident reasoning deterministic and cautious."""
+        if request.label != "fall_detection":
+            return "uncertain", 0.0, "Local posture captions do not determine this alert type."
+
+        split = min(max(request.pre_count, 0), len(observations))
+        before = [cls._posture_state(text) for text in observations[:split]]
+        after = [cls._posture_state(text) for text in observations[split:]]
+        if _mentions_controlled_activity(observations):
+            return "false_positive", 0.85, "The visual descriptions contain controlled exercise cues rather than an uncontrolled fall."
+        if "upright" in before and "lying" in after:
+            return "real", 0.7, "Posture captions show an upright person before the alert and a person lying on the floor after it."
+        return "uncertain", 0.0, "Posture captions do not establish an upright-to-floor transition."
+
 def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoided to dodge a config import cycle
     """Pick a triage client from settings, degrading to the null client rather than failing.
 
@@ -242,6 +454,13 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
     """
     if not getattr(settings, "vlm_enabled", False):
         return NullVLMTriage("VLM triage disabled (VLM_ENABLED=false)")
+    if getattr(settings, "vlm_provider", "openai") == "local":
+        return LocalSmolVLMTriage(
+            model=getattr(settings, "vlm_local_model", "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"),
+            device=getattr(settings, "vlm_local_device", "auto"),
+            max_image_size=getattr(settings, "vlm_local_max_image_size", 512),
+            max_new_tokens=getattr(settings, "vlm_local_max_new_tokens", 64),
+        )
     if not settings.openai_api_key:
         logger.warning("VLM_ENABLED is true but OPENAI_API_KEY is empty; alerts will carry no assessment.")
         return NullVLMTriage("No OPENAI_API_KEY configured")

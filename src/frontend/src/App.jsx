@@ -6,19 +6,17 @@ import ActivityRail from './components/ActivityRail'
 import Masthead from './components/Masthead'
 import Login from './components/Login'
 import StatsView from './components/StatsView'
+import VerifyingCard from './components/VerifyingCard'
 import { api, setUnauthorizedHandler } from './api'
-import { triageOrder } from './incidents'
+import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview } from './incidents'
 
 const MAX_HISTORY = 60
 
 // Which screens each role may reach. The guard runs the room — live grid plus camera setup;
 // the manager reads statistics and is offered nothing else.
 //
-// For the manager this list *is* the enforcement, not a convenience mirror of a server rule.
-// The camera routes sit behind `require_guard`, which admits any signed-in operator, so a
-// manager who typed the API call by hand would still reach them. That is deliberate: the
-// alternative — a role check on the monitoring routes — would 401 the 3-second status poll
-// below and evict every manager from their own session. See `deps.require_guard`.
+// The API enforces the same boundary. Shared monitoring health is exposed separately so a
+// manager can keep the masthead current without receiving camera footage or incident data.
 const SCREENS = {
   guard: ['grid', 'setup'],
   manager: ['stats'],
@@ -38,11 +36,14 @@ export default function App() {
   // Set when the operator opens a past alert from the rail, so re-reading a resolved
   // incident does not require a new one to fire.
   const [inspectingId, setInspectingId] = useState(null)
+  // Whether the guard has collapsed the activity rail sidebar on the live grid page (defaults to true so grid is un-obscured).
+  const [railCollapsed, setRailCollapsed] = useState(true)
 
   // The alert half of the app — modal, rail, backlog badge, incident stream — is the guard's.
   const isGuard = user?.role === 'guard'
 
-  const unacked = useMemo(() => triageOrder(alerts.filter((a) => !a.acknowledged)), [alerts])
+  const unacked = useMemo(() => triageOrder(alerts.filter(requiresGuardReview)), [alerts])
+  const pendingAlerts = useMemo(() => alerts.filter(isPendingTriage), [alerts])
   const inspecting = useMemo(() => alerts.find((a) => a.id === inspectingId) ?? null, [alerts, inspectingId])
   // Only a guard gets interrupted. A manager reading statistics cannot action a fall — the
   // verdict route is the guard's — so a modal over their dashboard would be an interruption
@@ -198,10 +199,10 @@ export default function App() {
     await loadCameras()
   }
 
-  async function handleVerdict(id, verdict) {
+  async function handleVerdict(id, verdict, operatorNote = '', actualEventType = '') {
     let failure = null
     try {
-      await api.submitVerdict(id, verdict)
+      await api.submitVerdict(id, verdict, operatorNote, actualEventType)
     } catch (err) {
       // Surfaced rather than swallowed: a 403 means the judgement was not recorded, and the
       // guard needs to know that rather than believing the incident is dealt with.
@@ -210,7 +211,13 @@ export default function App() {
       // Mark rather than drop, so the incident stays in the rail as history. Runs even
       // if the POST failed: a failed judgement must not trap the operator behind a modal
       // they cannot dismiss.
-      setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, acknowledged: true, operator_verdict: verdict } : a)))
+      setAlerts((prev) => prev.map((a) => (a.id === id ? {
+        ...a,
+        acknowledged: true,
+        operator_verdict: verdict,
+        operator_note: operatorNote || null,
+        actual_event_type: actualEventType || null,
+      } : a)))
       setInspectingId(null)
       loadStatus()
     }
@@ -237,7 +244,7 @@ export default function App() {
   const current = allowed.includes(screen) ? screen : allowed[0]
 
   return (
-    <div className="app">
+    <div className={`app role-${user.role}`}>
       <Masthead
         screen={current}
         onNavigate={setScreen}
@@ -248,7 +255,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      <div className="workspace">
+      <div className={`workspace screen-${current} ${current === 'setup' ? 'no-rail' : ''} ${railCollapsed && current !== 'setup' ? 'rail-collapsed' : ''}`}>
         <main className="stage">
           <div className="stage-inner">
             {/* An explicit branch, not a ternary. It used to be `screen === 'grid' ? grid :
@@ -272,27 +279,30 @@ export default function App() {
                 onDelete={handleDeleteCamera}
               />
             )}
-            {current === 'stats' && <StatsView />}
+            {current === 'stats' && <StatsView status={status} />}
           </div>
         </main>
 
-        {/* The rail is the guard's incident history. A manager has the statistics screen for
-            the same information aggregated, and cannot act on an individual alert. */}
-        {isGuard && (
+        {/* The rail is the guard's incident history. Hidden on setup screen to maximize space. */}
+        {isGuard && current !== 'setup' && (
           <ActivityRail
             alerts={alerts}
             unackedCount={unacked.length}
             onInspect={setInspectingId}
             activeId={active?.id ?? null}
+            collapsed={railCollapsed}
+            onToggleCollapse={() => setRailCollapsed((prev) => !prev)}
           />
         )}
       </div>
+
+      {isGuard && pendingAlerts.length > 0 && <VerifyingCard pendingAlerts={pendingAlerts} />}
 
       {active && (
         <AlertModal
           alert={active}
           queued={unacked.filter((a) => a.id !== active.id).length}
-          isHistory={active.acknowledged}
+          isHistory={active.acknowledged || isAutoSuppressed(active)}
           onVerdict={handleVerdict}
           onClose={() => setInspectingId(null)}
         />

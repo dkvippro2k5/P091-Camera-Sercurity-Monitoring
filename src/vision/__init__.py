@@ -1,6 +1,7 @@
 """Vision module for incident event detection."""
 
 from src.vision.detector import IncidentDetector
+from src.vision.fall_motion import FallMotionEvidence, SparseFallMotionAnalyzer
 from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.pipeline import VisionPipeline
@@ -8,6 +9,7 @@ from src.vision.rule_engine import (
     LABEL_ABANDONED,
     LABEL_FALL,
     LABEL_INTRUSION,
+    FallPerspectiveProfile,
     RuleEngine,
 )
 from src.vision.schemas import (
@@ -25,6 +27,9 @@ from src.vision.zone_config import ZoneManager, is_zone_active, point_in_polygon
 
 __all__ = [
     "IncidentDetector",
+    "FallMotionEvidence",
+    "SparseFallMotionAnalyzer",
+    "FallPerspectiveProfile",
     "MotionGate",
     "VisionPipeline",
     "RuleEngine",

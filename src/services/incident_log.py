@@ -25,8 +25,12 @@ growing file on the request path can.
 import json
 import logging
 import os
+import sqlite3
 import threading
 from datetime import UTC, datetime
+
+from src.config import get_settings
+from src.services.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +41,14 @@ DEFAULT_INCIDENT_LOG_PATH = os.path.join(_PROJECT_ROOT, "data", "incidents.jsonl
 class IncidentLog:
     """Append-only log of every alert, with a fold-on-read for verdict updates."""
 
-    def __init__(self, path: str = DEFAULT_INCIDENT_LOG_PATH) -> None:
+    def __init__(self, path: str = DEFAULT_INCIDENT_LOG_PATH, store: SQLiteStore | None = None) -> None:
         self.path = path
+        self.store = store
+        if self.store is None and path == DEFAULT_INCIDENT_LOG_PATH:
+            try:
+                self.store = SQLiteStore(get_settings().database_url)
+            except (OSError, ValueError):
+                self.store = None
         self._lock = threading.Lock()
 
     def record_alert(self, alert_id: str, camera_id: str, camera_name: str, label: str, confidence: float) -> None:
@@ -47,8 +57,7 @@ class IncidentLog:
         Called from `_emit_alert` on the camera's processor thread, which must not block, so
         this stays a single small buffered write under a lock and nothing more.
         """
-        self._append(
-            {
+        row = {
                 "kind": "alert",
                 "alert_id": alert_id,
                 "camera_id": camera_id,
@@ -57,19 +66,39 @@ class IncidentLog:
                 "confidence": confidence,
                 "created_at": datetime.now(UTC).isoformat(),
             }
-        )
+        if self.store is not None:
+            try:
+                self.store.insert_incident(row)
+                return
+            except (OSError, sqlite3.Error):
+                logger.exception("Could not write incident to SQLite")
+        self._append(row)
 
-    def record_review(self, alert_id: str, verdict: str, judged_by: str | None) -> None:
+    def record_review(
+        self,
+        alert_id: str,
+        verdict: str,
+        judged_by: str | None,
+        operator_note: str | None = None,
+        actual_event_type: str | None = None,
+    ) -> None:
         """A second row stamping the guard's judgement onto an existing alert."""
-        self._append(
-            {
+        row = {
                 "kind": "review",
                 "alert_id": alert_id,
                 "operator_verdict": verdict,
                 "judged_by": judged_by,
+                "operator_note": operator_note,
+                "actual_event_type": actual_event_type,
                 "reviewed_at": datetime.now(UTC).isoformat(),
             }
-        )
+        if self.store is not None:
+            try:
+                self.store.update_incident_review(row)
+                return
+            except (OSError, sqlite3.Error):
+                logger.exception("Could not write incident review to SQLite")
+        self._append(row)
 
     def _append(self, row: dict) -> None:
         try:
@@ -110,6 +139,17 @@ class IncidentLog:
         was truncated or hand-edited, and a synthetic alert with no camera or label would
         quietly corrupt every per-camera count computed from it.
         """
+        if self.store is not None:
+            stored = {row["alert_id"]: row for row in self.store.incidents()}
+            # Read legacy JSONL rows during migration; database rows win if both exist.
+            for row in self._fold_file_incidents():
+                stored.setdefault(row["alert_id"], row)
+            return sorted(stored.values(), key=lambda row: row.get("created_at") or "")
+
+        return self._fold_file_incidents()
+
+    def _fold_file_incidents(self) -> list[dict]:
+        """Fold the legacy JSONL stream for read-only migration compatibility."""
         alerts: dict[str, dict] = {}
         reviews: dict[str, dict] = {}
         for row in self._read():
@@ -131,6 +171,8 @@ class IncidentLog:
                     **alert,
                     "operator_verdict": (review or {}).get("operator_verdict"),
                     "judged_by": (review or {}).get("judged_by"),
+                    "operator_note": (review or {}).get("operator_note"),
+                    "actual_event_type": (review or {}).get("actual_event_type"),
                     "reviewed_at": (review or {}).get("reviewed_at"),
                 }
             )

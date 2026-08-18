@@ -13,6 +13,7 @@ from datetime import datetime
 
 import pytest
 
+from src.vision.fall_motion import FallMotionEvidence
 from src.vision.rule_engine import LABEL_FALL, RuleEngine
 from src.vision.schemas import BoundingBox, IncidentDetection
 
@@ -97,6 +98,31 @@ def test_sudden_collapse_trips_all_three_indicators():
     reason = events[0].reason or ""
     assert "3/3 indicators" in reason
     assert "+V_y=" in reason and "+AR=" in reason and "+dH=" in reason
+    assert "foot(" in reason and "aA=" in reason
+
+
+def test_optical_flow_evidence_reaches_the_fall_event_reason():
+    engine = scoring_engine()
+    now = datetime.now()
+    engine.evaluate([standing()], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([standing()], WIDTH, HEIGHT, FRAME_DT, now)
+    events = engine.evaluate(
+        [flat()],
+        WIDTH,
+        HEIGHT,
+        2 * FRAME_DT,
+        now,
+        fall_motion_evidence={
+            "person_1": FallMotionEvidence(
+                downward_flow_ratio=0.8,
+                downward_point_fraction=0.9,
+                tracked_points=12,
+            )
+        },
+    )
+
+    assert len(events) == 1
+    assert "+flow=0.80H/s" in (events[0].reason or "")
 
 
 def test_wide_box_alone_is_not_a_fall():
@@ -144,6 +170,28 @@ def test_fall_away_from_the_camera_arms_on_two_indicators():
     assert run(scoring_engine(fall_min_indicators=3), frames) == []
 
 
+def test_fall_toward_camera_uses_center_descent_and_area_growth():
+    """Perspective enlargement is evidence when it accompanies a rapid downward centre."""
+    toward_lens = box(100, 220, 180)  # larger and still narrow; centre drops despite perspective
+    frames = [(0.0, standing()), (FRAME_DT, standing()), (2 * FRAME_DT, toward_lens)]
+
+    events = run(scoring_engine(), frames)
+
+    assert len(events) == 1
+    reason = events[0].reason or ""
+    assert "+motion" in reason
+    assert "+dA=" in reason
+    assert "-AR=" in reason
+    assert "-dH=" in reason
+
+
+def test_walking_toward_camera_without_downward_center_does_not_fire():
+    larger_upright = box(100, 300, 40)
+    frames = [(0.0, standing()), (FRAME_DT, standing()), (2 * FRAME_DT, larger_upright)]
+
+    assert run(scoring_engine(), frames) == []
+
+
 def test_person_already_on_the_ground_never_fires():
     """A documented coverage gap, pinned so it cannot change without a test failing.
 
@@ -186,6 +234,57 @@ def test_getting_back_up_before_the_dwell_drops_the_suspicion():
         + hold(standing(), 1.4, 4.0)  # upright again, well past the 3s mark
     )
     assert run(engine, frames) == []
+
+
+def test_upright_shape_alone_does_not_count_as_recovery():
+    """A tracker mismatch can be narrow without being the fallen person standing up."""
+    engine = RuleEngine(fall_dwell_sec=1.0)
+    mismatched_upright = box(20, 70, STAND_TOP)
+    frames = collapse() + hold(flat(), 2 * FRAME_DT, 0.4) + hold(mismatched_upright, 0.8, 1.0)
+
+    events = run(engine, frames)
+
+    assert events == []
+    state = engine._tracks[(None, "person_1")]
+    assert state.fall_phase == "upright"
+
+
+def test_upright_baseline_uses_a_median_to_resist_one_noisy_box():
+    engine = RuleEngine()
+    frames = [
+        (0.0, standing()),
+        (FRAME_DT, box(STAND_W + 2, STAND_H - 2, STAND_TOP + 1)),
+        (2 * FRAME_DT, box(10, STAND_H * 2, 20)),
+    ]
+
+    run(engine, frames)
+
+    baseline = engine._tracks[(None, "person_1")].upright_baseline
+    assert baseline is not None
+    assert baseline.height == pytest.approx(STAND_H)
+    assert baseline.top == pytest.approx(STAND_TOP)
+
+
+def test_fall_state_progresses_and_rearms_only_after_recovery():
+    engine = RuleEngine(fall_dwell_sec=0.4)
+    now = datetime.now()
+
+    engine.evaluate([standing()], WIDTH, HEIGHT, 0.0, now)
+    state = engine._tracks[(None, "person_1")]
+    assert state.fall_phase == "upright"
+
+    engine.evaluate([standing()], WIDTH, HEIGHT, FRAME_DT, now)
+    engine.evaluate([flat()], WIDTH, HEIGHT, 2 * FRAME_DT, now)
+    engine.evaluate([flat()], WIDTH, HEIGHT, 4 * FRAME_DT, now)
+    assert state.fall_phase in {"prone", "persistent"}
+
+    engine.evaluate([flat()], WIDTH, HEIGHT, 6 * FRAME_DT, now)
+    assert state.fall_phase == "persistent"
+
+    engine.evaluate([standing()], WIDTH, HEIGHT, 5 * FRAME_DT, now)
+    assert state.fall_phase == "recovered"
+    engine.evaluate([standing()], WIDTH, HEIGHT, 6 * FRAME_DT, now)
+    assert state.fall_phase == "upright"
 
 
 def test_the_ambiguous_aspect_band_holds_the_timer_instead_of_flapping():
@@ -291,17 +390,7 @@ def test_reason_reports_the_indicators_that_did_not_fire():
 
 
 def test_the_default_dwell_is_the_prds_three_seconds():
-    """`fall_dwell_sec` ships at 3.0 (PRD §3.1), so arming a suspicion is not yet an alert.
-
-    The dwell *mechanism* is covered above; what this pins is the shipped **default**, which
-    nothing else asserts — the other dwell tests all pass `fall_dwell_sec=3.0` explicitly and
-    would keep passing if the default silently went back to 0.0.
-
-    Worth pinning for a second reason: `vlm_pre_roll_sec` is sized to reach back past this
-    number plus the 0.5s velocity window. Lower the dwell and the pre-roll is merely generous;
-    raise it and the triage clip's "before" frames show someone already on the ground, so the
-    model sees no fall and calls a real one a false positive.
-    """
+    """The shipped default matches the documented three-second requirement."""
     engine = RuleEngine()
     assert engine.fall_dwell_sec == 3.0
 
@@ -309,7 +398,7 @@ def test_the_default_dwell_is_the_prds_three_seconds():
     assert run(engine, collapse()) == []
 
     # Held on the ground past the dwell, it fires exactly once — on the first frame at or
-    # after arm time + 3.0s, not at the end of the run.
+    # after arm time + 3s, not at the end of the run.
     events = run(engine, hold(flat(), 2 * FRAME_DT, 3.2))
     assert len(events) == 1
     assert events[0].label == LABEL_FALL

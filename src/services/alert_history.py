@@ -30,8 +30,12 @@ The migration path stays open — only `recent_examples` would change.
 import json
 import logging
 import os
+import sqlite3
 import threading
 from datetime import UTC, datetime
+
+from src.config import get_settings
+from src.services.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +57,14 @@ class AlertHistory:
     lifetime short is worth doing regardless. Each row references its `alert_id` instead.
     """
 
-    def __init__(self, path: str = DEFAULT_HISTORY_PATH) -> None:
+    def __init__(self, path: str = DEFAULT_HISTORY_PATH, store: SQLiteStore | None = None) -> None:
         self.path = path
+        self.store = store
+        if self.store is None and path == DEFAULT_HISTORY_PATH:
+            try:
+                self.store = SQLiteStore(get_settings().database_url)
+            except (OSError, ValueError):
+                self.store = None
         # Writes happen on the request thread and reads on a triage worker thread, so the
         # two need to be kept off each other's toes.
         self._lock = threading.Lock()
@@ -70,6 +80,8 @@ class AlertHistory:
         vlm_confidence: float | None = None,
         vlm_rationale: str | None = None,
         judged_by: str | None = None,
+        operator_note: str | None = None,
+        actual_event_type: str | None = None,
     ) -> None:
         """Append one reviewed alert. Never raises — a full disk must not break the UI.
 
@@ -87,8 +99,16 @@ class AlertHistory:
             "vlm_rationale": vlm_rationale,
             "operator_verdict": operator_verdict,
             "judged_by": judged_by,
+            "operator_note": operator_note,
+            "actual_event_type": actual_event_type,
             "recorded_at": datetime.now(UTC).isoformat(),
         }
+        if self.store is not None:
+            try:
+                self.store.insert_history(row)
+                return
+            except (OSError, sqlite3.Error):
+                logger.exception("Could not write alert history to SQLite")
         try:
             with self._lock:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -107,9 +127,10 @@ class AlertHistory:
         if limit <= 0:
             return []
 
+        source_rows = (self.store.history() + self._read_tail()) if self.store is not None else self._read_tail()
         rows = [
             row
-            for row in self._read_tail()
+            for row in source_rows
             if row.get("camera_id") == camera_id and row.get("label") == label and row.get("operator_verdict")
         ]
         # Oldest-first among the selected few: recency reads as "most relevant" to a model
@@ -118,7 +139,7 @@ class AlertHistory:
 
     def all_rows(self) -> list[dict]:
         """Every readable row — for computing the precision/recall the PRD asks for."""
-        return self._read_tail(limit=None)
+        return (self.store.history() + self._read_tail(limit=None)) if self.store is not None else self._read_tail(limit=None)
 
     def _read_tail(self, limit: int | None = _MAX_ROWS_SCANNED) -> list[dict]:
         """Parse the file, skipping any corrupt line rather than losing the whole history."""
@@ -148,4 +169,9 @@ class AlertHistory:
         """One line the prompt can carry: what fired, and what the guard concluded."""
         verdict = _OPERATOR_LABEL.get(row.get("operator_verdict", ""), row.get("operator_verdict", "unknown"))
         reason = row.get("reason") or "no rule evidence recorded"
-        return f'Rule fired with "{reason}" — the guard judged it {verdict}.'
+        note = row.get("operator_note")
+        correction = row.get("actual_event_type")
+        suffix = f" Note: {note}" if note else ""
+        if correction:
+            suffix += f" Actual event: {correction}."
+        return f'Rule fired with "{reason}" — the guard judged it {verdict}.{suffix}'

@@ -1,5 +1,7 @@
 import glob
 import os
+import threading
+import time
 
 import cv2
 import numpy as np
@@ -229,9 +231,69 @@ def test_multi_stream_manager():
     status = manager.get_status()
     assert status["total_cameras"] == 4
     assert status["active_cameras"] == 0
+    assert status["average_latency_p95_ms"] == 0.0
+    assert status["processing_errors"] == 0
 
     # stop_all drops the workers: keeping stopped threads in the registry made
     # get_status report cameras that can never run again.
     manager.stop_all()
     assert len(manager.workers) == 0
     assert manager.get_status()["total_cameras"] == 0
+
+
+def test_manager_coalesces_slow_frame_callbacks_without_blocking_workers():
+    """Preview encoding may lag, but camera inference callbacks must return immediately."""
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    seen: list[int] = []
+
+    def slow_callback(camera_id, result, frame):
+        callback_started.set()
+        release_callback.wait(timeout=2.0)
+        seen.append(result.frame_id)
+
+    manager = MultiStreamManager(
+        global_on_frame_callback=slow_callback,
+        tune_torch_threads=False,
+        max_concurrent_inferences=1,
+    )
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+
+    manager._handle_worker_result(
+        "cam_01", FrameAnalysisResult(frame_id=1, camera_id="cam_01"), frame
+    )
+    assert callback_started.wait(timeout=1.0)
+
+    started = time.perf_counter()
+    for frame_id in range(2, 12):
+        manager._handle_worker_result(
+            "cam_01",
+            FrameAnalysisResult(frame_id=frame_id, camera_id="cam_01"),
+            frame,
+        )
+    enqueue_elapsed = time.perf_counter() - started
+
+    release_callback.set()
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and (not seen or seen[-1] != 11):
+        time.sleep(0.01)
+    status = manager.get_status()
+    manager.stop_all()
+
+    assert enqueue_elapsed < 0.1
+    assert seen == [1, 11]
+    assert status["replaced_frame_callbacks"] == 9
+
+
+def test_manager_shares_one_inference_limiter_across_camera_workers():
+    manager = MultiStreamManager(
+        tune_torch_threads=False,
+        max_concurrent_inferences=1,
+    )
+    first = manager.add_camera("cam_01", "rtsp://host/1", autostart=False)
+    second = manager.add_camera("cam_02", "rtsp://host/2", autostart=False)
+
+    assert first.inference_semaphore is manager._inference_semaphore
+    assert second.inference_semaphore is manager._inference_semaphore
+    assert manager.get_status()["max_concurrent_inferences"] == 1
+    manager.stop_all()
