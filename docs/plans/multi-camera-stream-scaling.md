@@ -72,6 +72,79 @@ mức 1 stream; hướng mở rộng là áp dụng ở mức **toàn hệ thố
 N process, mỗi process phụ trách 1 nhóm camera, GPU-backed — không đổi logic bên trong, chỉ
 đổi topology triển khai. Không giới hạn về mặt kiến trúc, giới hạn bởi chi phí hạ tầng.
 
+## Đối chiếu với kiến trúc DeepCamera (github.com/SharpAI/DeepCamera)
+
+DeepCamera là 1 hệ multi-camera thực tế (Node.js/Shinobi capture + Celery/Redis worker pool
+Python cho AI), dùng 5 nguyên tắc tối ưu. Đối chiếu từng điểm với code thật của project —
+**3/5 đã có sẵn (khác công cụ, cùng ý tưởng), 1 điểm là lỗ hổng thật đáng sửa, 1 điểm là đổi cả
+kiến trúc, chưa cấp thiết ở quy mô hiện tại.**
+
+### #1 Tách "capture nhẹ" khỏi "AI compute nặng" — đã có sẵn
+
+DeepCamera: FFmpeg process riêng + Celery worker riêng, qua Redis. Project: `CameraStreamWorker`
+(`src/vision/stream_worker.py:87-98`) đã tách y hệt về ý tưởng bằng **2 thread** thay vì 2
+process — `_reader_thread` (đọc RTSP) và `_process_thread` (chạy pipeline AI) riêng biệt, nhẹ
+hơn DeepCamera (không cần IPC/Redis) nhưng cùng mục đích: I/O jitter RTSP không chặn tốc độ suy
+luận. Không cần làm gì thêm.
+
+### #2 Model dùng chung, load 1 lần — **lỗ hổng thật, đáng sửa nhất**
+
+DeepCamera load model 1 lần cho cả pool worker phục vụ N camera (`concurrency=1` mỗi loại
+task). Code hiện tại làm **ngược lại**: `_make_default_factory` (`stream_manager.py:183-221`)
+tạo **1 `IncidentDetector` mới cho mỗi camera worker** — mỗi lần là 1 lần `YOLO(resolved)`
+chạy lại, tức N camera = N lần load `yolo26l.pt` vào bộ nhớ, N bản sao model độc lập.
+
+Comment trong code giải thích: *"YOLO's tracker state and the rule engine's dwell timers are
+per-stream and would corrupt each other if shared."* — đúng cho tracker state (ByteTrack,
+per-camera, phải tách) nhưng **nhầm lẫn với trọng số model** (stateless cho forward pass, dùng
+chung được, không có lý do phải tách). Code hiện tại tách cả 2 cùng lúc dù chỉ 1 cái cần tách —
+đúng anti-pattern mà nguyên tắc #2 của DeepCamera tránh.
+
+→ **Việc đáng làm nhất trong đối chiếu này:** refactor `IncidentDetector` nhận 1 model instance
+dùng chung (load 1 lần ở `MultiStreamManager`), còn tracker/rule-engine state vẫn tách riêng
+mỗi camera như hiện tại. Giảm bộ nhớ tuyến tính theo N camera, **không cần đổi hạ tầng** (không
+cần Celery/Redis).
+
+### #3 Aggressive frame dropping/sampling — đã có sẵn, phần lớn khớp
+
+- `_latest_frame` single-slot buffer (`stream_worker.py:67-69`) + `CAP_PROP_BUFFERSIZE=1`
+  (dòng 166-169) = đúng giao thức "1 frame in-flight, luôn lấy frame mới nhất, drop frame cũ"
+  mà DeepCamera dùng (và khớp `detection-protocol.md` của skill mới). Đã có.
+- `target_fps` per-camera đã có sẵn trong `add_camera()` (`stream_manager.py:229`) — khớp
+  "cấu hình FPS theo từng camera (0.2-15fps)".
+- `MotionGate` tương đương `SAMPLING_TO_SAVE_ENERGY_MODE` + `motion_lock` — đã có, tắt mặc định.
+- Các filter đặc thù khuôn mặt (`MINIMAL_FACE_RESOLUTION`, `BIGGEST_FACE_ONLY_MODE`,
+  `ONE_KNOWN_PERSON_BYPASS_QUEUE_MODE`) **không áp dụng được** — DeepCamera là hệ face
+  recognition, project này là phát hiện sự cố (fall/intrusion/abandoned), khác domain, không có
+  khái niệm "known person" hay "face resolution" để lọc.
+
+### #4 Backpressure/queue limit — đạt mục đích bằng cách đơn giản hơn
+
+DeepCamera cần queue-length-polling qua Flower API + timeout Celery vì kiến trúc của họ là hàng
+đợi phân tán thật (nhiều producer, worker pool qua Redis). Project hiện tại **không có hàng
+đợi** giữa reader và processor — chỉ có single-slot buffer (mục #3) — nên tự động có đúng hiệu
+ứng backpressure mong muốn (processor chậm thì reader ghi đè frame mới nhất, không tồn đọng) mà
+không cần cơ chế phức tạp như Flower/timeout/queue-depth polling. Đây là ưu điểm của kiến trúc
+đơn giản hơn (in-process, chưa phân tán), không phải thiếu sót.
+
+### #5 Celery/Redis worker pool, cluster — đúng là Lớp 3, nhưng chi phí lớn
+
+Đây chính là "Lớp 3: Horizontal scaling" ở trên — cùng nguyên tắc (N node/worker chia sẻ camera
+qua broker chung), nhưng DeepCamera hiện thực bằng cả hệ sinh thái (Node.js + Python + Redis +
+Celery + Flower + Bull) — không phải 1 tinh chỉnh nhỏ, mà đổi hẳn từ "1 process, N thread"
+(hiện tại) sang hệ phân tán nhiều process/worker qua message broker. Chi phí triển khai (thêm
+Redis, thêm Celery, deploy phức tạp hơn, thêm giám sát Flower) lớn hơn hẳn lợi ích ở quy mô
+hiện tại (vài camera, dự án hackathon/demo). Chỉ đáng làm khi đã chạm trần capacity của 1 máy
+(đo được qua `get_status()`, xem mục dưới) và cần scale ra nhiều máy thật.
+
+### Kết luận đối chiếu
+
+Fit về **nguyên tắc**, không fit về **công cụ cụ thể**. Cả 5 nguyên tắc DeepCamera dùng đều hợp
+lý và là best-practice chuẩn cho multi-camera — nhưng project này (FastAPI + thread, không phải
+Node.js + Celery/Redis) đã tự implement độc lập 3/5 điểm (#1, #3, #4) theo cách nhẹ hơn, phù
+hợp quy mô nhỏ hơn. #2 (shared model) là khoảng trống thật, đáng sửa ngay vì rẻ và không cần
+đổi hạ tầng. #5 là đúng hướng dài hạn nhưng nên hoãn tới khi đo thấy cần scale ra nhiều máy.
+
 ## Ước tính số camera tối đa — có điều kiện, không phải 1 con số chắc chắn
 
 | Cấu hình | Số camera | Độ tin cậy |
@@ -101,14 +174,20 @@ chấp nhận được. Đây không phải câu hỏi trả lời được bằ
 
 ## Việc tiếp theo
 
-- [ ] Quyết định thứ tự triển khai: Lớp 2 (motion-aware, mở rộng `MotionGate` có sẵn) trước vì
-      chi phí thấp nhất, không cần đổi hạ tầng — hay Lớp 1 (batched detector, cần GPU) trước.
+- [ ] **Ưu tiên cao nhất, rẻ, không cần hạ tầng mới:** refactor `IncidentDetector`/
+      `_make_default_factory` để dùng chung 1 model instance (load 1 lần) giữa các camera
+      worker, tách riêng phần tracker state + rule-engine dwell timers như hiện tại (mục
+      "Đối chiếu với DeepCamera" #2). Đo lại footprint bộ nhớ trước/sau với N camera.
+- [ ] Quyết định thứ tự triển khai tiếp: Lớp 2 (motion-aware, mở rộng `MotionGate` có sẵn)
+      trước vì chi phí thấp nhất — hay Lớp 1 (batched detector, cần GPU) trước.
 - [ ] Nếu có GPU khả dụng để test: benchmark `yolo26l` batched trên số camera tăng dần, dùng
       `get_status()["average_inference_capacity_fps"]`.
 - [ ] Nếu chưa có GPU: đo Lớp 2 mở rộng trên CPU hiện tại trước — chi phí triển khai thấp nhất
       trong 3 lớp, tận dụng được `MotionGate` đã có.
 - [ ] Ghi lại số liệu đo thật vào docstring `stream_manager.py`, thay cho ước tính 20-50 chưa
       kiểm chứng hiện tại.
+- [ ] Lớp 3 (Celery/Redis worker pool kiểu DeepCamera) — hoãn tới khi đo thấy chạm trần
+      capacity 1 máy, không triển khai trước.
 
 ## Nguồn tham khảo
 
