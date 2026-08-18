@@ -18,7 +18,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # inference latency and memory use low when many people are
 # visible. Benchmark the capacity table in stream_manager.py again before quoting its
 # throughput numbers for the deployed hardware and video streams.
-DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo11n.pt")
+DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo26l.pt")
 
 
 class IncidentDetector:

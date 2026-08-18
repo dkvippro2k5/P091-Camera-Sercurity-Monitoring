@@ -51,9 +51,9 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
           <TriagePanel alert={alert} />
           {!alert.operator_verdict && (
             <div className="operator-feedback">
-              <label>
+              <label htmlFor="actual-event-type">
                 What actually happened?
-                <select value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
+                <select id="actual-event-type" value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
                   <option value="">Select if known</option>
                   <option value="real_incident">Real incident</option>
                   <option value="false_alarm">False alarm</option>
@@ -62,9 +62,9 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
                   <option value="other">Other</option>
                 </select>
               </label>
-              <label>
+              <label htmlFor="guard-note">
                 Guard note
-                <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Describe what happened..." />
+                <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Describe what happened..." />
               </label>
             </div>
           )}

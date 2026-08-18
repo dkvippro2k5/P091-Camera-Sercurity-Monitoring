@@ -173,14 +173,16 @@ class RuleEngine:
         # Deliberately sitting or crouching moves maybe half a body height over a second or
         # more, well under 0.5 H/s. 1.2 sits between the two with margin on both sides.
         # This is a reasoned default, not one measured against labelled falls.
-        fall_velocity_ratio: float = 1.2,
-        fall_height_drop_ratio: float = 0.5,
-        fall_center_velocity_ratio: float = 0.5,
-        fall_area_growth_ratio: float = 0.5,
-        fall_area_acceleration_ratio: float = 2.0,
-        fall_foot_stability_ratio: float = 0.18,
-        fall_upper_drop_ratio: float = 0.25,
-        fall_optical_flow_ratio: float = 0.25,
+        # Forward falls can increase box area while the top edge moves less than a
+        # side-on fall, so these defaults give the depth-sensitive signals more weight.
+        fall_velocity_ratio: float = 0.9,
+        fall_height_drop_ratio: float = 0.35,
+        fall_center_velocity_ratio: float = 0.35,
+        fall_area_growth_ratio: float = 0.30,
+        fall_area_acceleration_ratio: float = 1.2,
+        fall_foot_stability_ratio: float = 0.25,
+        fall_upper_drop_ratio: float = 0.18,
+        fall_optical_flow_ratio: float = 0.15,
         fall_confirmation_sec: float = 0.4,
         fall_persistence_grace_sec: float = 0.6,
         fall_recovery_ratio: float = 0.3,

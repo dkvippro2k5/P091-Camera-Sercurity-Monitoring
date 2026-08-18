@@ -12,7 +12,7 @@ services:
       # this must be a volume or every restart loses the operator's setup.
       - ./data:/app/data
       # Model weights are deployment data, not part of the Git repository or image.
-      - ${MODEL_WEIGHTS_HOST_PATH:-./src/vision/weights/yolo11n.pt}:/app/models/detector.pt:ro
+      - ${MODEL_WEIGHTS_HOST_PATH:-./src/vision/weights/yolo26l.pt}:/app/models/detector.pt:ro
     environment:
       MODEL_WEIGHTS_PATH: /app/models/detector.pt
       OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}

@@ -21,7 +21,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the component and data-flow diagrams.
 
 - Python 3.11
 - Node.js 20
-- YOLO checkpoint at `src/vision/weights/yolo11n.pt`
+- YOLO checkpoint at `src/vision/weights/yolo26l.pt`
 - Optional: OpenAI API key or a CUDA-capable GPU for VLM triage
 - Optional: MediaMTX and FFmpeg for looping local videos as RTSP cameras
 
@@ -117,8 +117,8 @@ keep `data/vision/test/fall.mp4` and `normal1.mp4` available for the bundled cas
 | `VLM_MAX_FRAMES` | Maximum sampled evidence frames | `6` |
 | `VLM_TIMEOUT_SEC` | OpenAI request timeout | `20.0` |
 | `VLM_HISTORY_EXAMPLES` | Prior labelled examples sent to VLM | `6` |
-| `MODEL_WEIGHTS_PATH` | Detector checkpoint visible to the backend | `src/vision/weights/yolo11n.pt` |
-| `MODEL_WEIGHTS_HOST_PATH` | Host checkpoint mounted by Docker Compose | `./src/vision/weights/yolo11n.pt` |
+| `MODEL_WEIGHTS_PATH` | Detector checkpoint visible to the backend | `src/vision/weights/yolo26l.pt` |
+| `MODEL_WEIGHTS_HOST_PATH` | Host checkpoint mounted by Docker Compose | `./src/vision/weights/yolo26l.pt` |
 | `DETECTOR_TARGET_LABELS` | YOLO classes retained by the pipeline | `person,backpack,handbag,suitcase` |
 | `DETECTOR_CONFIDENCE` | Main YOLO acceptance threshold | `0.40` |
 | `CAMERA_TARGET_FPS` | Default analysis rate for new cameras | `5` |

@@ -522,6 +522,11 @@ input[type='file'] {
   cursor: pointer;
   box-shadow: -6px 0 16px rgba(0, 0, 0, 0.5);
   transition: background 150ms ease, border-color 150ms ease;
+  touch-action: manipulation;
+}
+
+.rail-drawer-handle:active:not(:disabled) {
+  transform: translateY(-50%);
 }
 
 .rail-drawer-handle:hover {
@@ -597,12 +602,22 @@ input[type='file'] {
   padding: var(--sp-2);
   text-align: left;
   align-items: center;
+  justify-content: stretch;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  transform: none;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: transparent;
   /* Severity is carried on the left edge as a 3px bar as well as in the text label,
      so the band is legible without relying on hue alone. */
   border-left: 3px solid var(--border-strong);
+}
+
+.rail-item:active:not(:disabled) {
+  transform: none;
 }
 
 .rail-item:hover {
@@ -2598,8 +2613,27 @@ select {
   background: #111821;
 }
 
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: var(--sp-3);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: #111821;
+}
+
 input:hover,
 select:hover {
+  border-color: var(--border-interactive);
+}
+
+textarea:hover {
   border-color: var(--border-interactive);
 }
 
@@ -2607,6 +2641,25 @@ input:focus,
 select:focus {
   border-color: var(--text-secondary);
   box-shadow: 0 0 0 3px rgb(170 182 196 / 0.14);
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--text-secondary);
+  box-shadow: 0 0 0 3px rgb(170 182 196 / 0.14);
+}
+
+.operator-feedback {
+  display: grid;
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+}
+
+.operator-feedback label {
+  display: grid;
+  gap: var(--sp-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
 }
 
 ::placeholder {
