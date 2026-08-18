@@ -1,4 +1,4 @@
-# Nghiên cứu: tsfresh + Gradient Boosting cho fall detection (bổ sung case "ngã dọc")
+# Nghiên cứu: tsfresh + Gradient Boosting cho fall detection (case "ngã dọc" + hoạt động lặp lại)
 
 ## Context
 
@@ -20,6 +20,12 @@ Tài liệu này nghiên cứu 1 trong 2 hướng khắc phục đã đề xuấ
 classifier học từ dữ liệu (**tsfresh + Gradient Boosting**), làm rõ cơ chế, input/output, và
 cách áp dụng cho nhiều người trong cùng khung hình.
 
+**Phạm vi không chỉ giới hạn ở ngã dọc.** Ngã dọc là bug cụ thể đã tìm ra (false negative — bỏ
+sót ngã thật) và là lý do đề xuất hướng này, nhưng bản chất kỹ thuật của tsfresh+GB là một
+classifier tổng quát học từ dữ liệu có nhãn — phạm vi nó xử lý được quyết định bởi dữ liệu
+train có gì, không phải giới hạn kỹ thuật. Xem mục "Phạm vi mở rộng: hoạt động lặp lại" bên
+dưới cho loại lỗi thứ hai (false positive) mà hướng này cũng phù hợp để giải quyết.
+
 Hướng còn lại (multi-feature + fall angle qua `yolo26l-seg.pt`) không nằm trong tài liệu này.
 
 ## Nguồn tham khảo chính
@@ -32,8 +38,12 @@ Boosting đạt 96% accuracy trên tập gộp UR Fall Detection + CAUCAFall.
 - https://ojs.bonviewpress.com/index.php/jdsis/article/view/4100
 - https://tsfresh.readthedocs.io/en/stable/text/forecasting.html (cơ chế sliding window)
 - https://www.sciencedirect.com/science/article/pii/S0925231218304843 (thuật toán FRESH gốc)
-- https://fenix.ur.edu.pl/~mkepski/ds/uf.html (UR Fall Detection dataset)
+- https://fenix.ur.edu.pl/~mkepski/ds/uf.html (UR Fall Detection dataset — danh sách ADL)
 - https://data.mendeley.com/datasets/7w7fccy7ky/4 (CAUCAFall dataset)
+- https://www.mdpi.com/1424-8220/25/23/7220 (autocorrelation/periodicity phân biệt ngã vs
+  hoạt động lặp lại)
+- https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3478840/ (fall detection trong hoạt động
+  không kịch bản — continuous unscripted activities)
 
 **Giới hạn cần biết trước:** cả hai PDF gốc không trích xuất được full-text (môi trường thiếu
 `poppler`/thư viện đọc PDF) — nội dung dưới tổng hợp từ snippet tìm kiếm đã kiểm chứng chéo,
@@ -113,12 +123,49 @@ gãy trước case ngoài phân bố (ngã dọc, xem Context). Hướng tsfresh
 có nhãn** thay vì đoán số tay — nếu có đủ case ngã dọc trong tập benchmark, model có thể tự tìm
 ra pattern phân biệt thật, không nhất thiết đơn giản như "AR flattens".
 
+## Phạm vi mở rộng: hoạt động lặp lại (tập thể dục, gập người liên tục)
+
+Đây là loại lỗi ngược với ngã dọc — **false positive** (báo nhầm ngã trong khi không phải),
+chứ không phải false negative. Báo cáo kế hoạch ban đầu của team
+(`docs/reports/2026-08-01.md`) đã liệt kê chính xác case này là yêu cầu chống báo động giả:
+*"Hoạt động có chủ đích (Tập Yoga, tắm nắng, sửa xe): Có chuyển động chậm, mang tính nhịp điệu
+hoặc lặp lại theo chu kỳ"*.
+
+**Vì sao rule engine hiện tại không xử lý được:** `_fall_indicators()` chỉ đọc **1 cửa sổ 0.5s
+duy nhất** (`_VELOCITY_WINDOW_SEC`) rồi so ngưỡng, không có khái niệm "tín hiệu này có lặp lại
+theo chu kỳ không". Một động tác gập người nhanh trong lúc tập (squat nhanh, burpee) có thể đẩy
+`V_y`/`AR` vượt ngưỡng trong đúng cửa sổ đó — chỉ báo hiện tại không phân biệt được với bắt đầu
+1 cú ngã thật, vì nó không "nhìn" được chuỗi động tác trước/sau, chỉ nhìn đúng lát cắt đó.
+
+**Vì sao tsfresh phù hợp cho case này:** literature xác nhận **autocorrelation** (đo tính tuần
+hoàn của tín hiệu) là chỉ báo mạnh để phân biệt vận động lặp lại (đi bộ, chạy, tập thể dục —
+autocorrelation mạnh, đều đặn) khỏi ngã thật (1 sự kiện đột biến, không lặp lại, rồi bất động —
+autocorrelation yếu, bất quy tắc). Nhóm feature autocorrelation/FFT nằm sẵn trong bộ ~800
+feature chuẩn của `tsfresh` (xem mục "Cơ chế hoạt động" — Bước 2) — không cần thêm logic mới,
+chỉ cần dữ liệu train đúng loại.
+
+**2 điều kiện để khả năng này thực sự phát huy** (không tự nhiên có sẵn miễn phí):
+
+1. **Cửa sổ trượt phải đủ dài** để chứa ít nhất 1-2 chu kỳ lặp lại của động tác — dài hơn
+   `_VELOCITY_WINDOW_SEC=0.5s` hiện tại khá nhiều, cần đo thực nghiệm theo tốc độ động tác điển
+   hình (một nhịp squat/gập người thường 1-3s).
+2. **Dữ liệu train phải có case này làm nhãn "không phải ngã".** Danh sách ADL (hoạt động
+   không-ngã) trong dataset UR Fall Detection — ngồi ghế, nằm giường, cúi tìm đồ, khom người,
+   bò — **không có động tác tập thể dục nhịp điệu** (yoga, gym, squat liên tục). Chỉ dùng
+   UR Fall/CAUCAFall làm data train sẽ **không** tự động học được cách phân biệt case này —
+   bắt buộc phải bổ sung case riêng.
+
+Đây là cùng một nút thắt với case ngã dọc: **thiếu footage tự quay có nhãn**, chỉ khác loại
+hoạt động cần quay (lặp lại theo chu kỳ, thay vì ngã dọc theo trục camera).
+
 ## Điều kiện tiên quyết trước khi triển khai
 
-1. **Dữ liệu train** — cần nhiều case ngã dọc đã gắn nhãn thật/giả. Tập benchmark hiện tại
+1. **Dữ liệu train** — cần nhiều case ngã dọc **và** case hoạt động lặp lại (tập thể dục, gập
+   người liên tục) đã gắn nhãn thật/giả. Tập benchmark hiện tại
    (`tests/fixtures/benchmark/cases.jsonl`) chỉ có 6 case — quá mỏng để train một classifier
    có ý nghĩa. Việc này trùng với hạng mục "test LLM trên dataset lớn hơn" đã ghi trong họp
-   17/08 — cả hai đều nghẽn ở cùng một nút thắt: **thu thập thêm footage/case gắn nhãn**.
+   17/08 — cả ba (ngã dọc, hoạt động lặp lại, benchmark LLM) đều nghẽn ở cùng một nút thắt:
+   **thu thập thêm footage/case gắn nhãn**.
 2. **Script train offline** — không chạy trong rule engine thời gian thực. Train 1 lần dùng
    `pos_history` đã thu thập, export model nhẹ (hoặc chỉ export tập feature + threshold đã học)
    để dùng lúc suy luận.
@@ -132,7 +179,10 @@ ra pattern phân biệt thật, không nhất thiết đơn giản như "AR flat
 - [ ] Quyết định: thay thế hay bổ sung chỉ báo thứ 4 song song với 3 chỉ báo hiện tại.
 - [ ] Thu thập thêm case ngã dọc thật (tự quay, theo đúng cách đã làm với case intrusion —
       xem commit `d2787fd`).
+- [ ] Thu thập thêm case hoạt động lặp lại (tập thể dục, gập người liên tục) — nhãn
+      "không phải ngã", cùng đợt quay với case ngã dọc.
+- [ ] Đo thực nghiệm độ dài cửa sổ trượt cần thiết để bắt được chu kỳ lặp lại điển hình.
 - [ ] Viết script offline: đọc `pos_history` đã lưu → chạy tsfresh → train Gradient Boosting →
       export.
 - [ ] Benchmark so sánh: rule engine 3-chỉ-báo hiện tại vs tsfresh+GB, trên cùng tập case ngã
-      dọc mới thu thập.
+      dọc + hoạt động lặp lại mới thu thập.
