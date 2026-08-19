@@ -1,4 +1,4 @@
-# Gate 2 - P-091 Security Monitor
+# Gate 2
 
 Hệ thống hỗ trợ nhân viên an ninh theo dõi nhiều camera cùng lúc. Camera có thể lấy
 từ video mẫu, video tải lên hoặc luồng RTSP. Backend đọc từng luồng, chạy YOLO để bám theo
@@ -105,7 +105,6 @@ Mở `http://localhost:5173`. Có thể kiểm tra backend tại `http://localho
 | `DETECTOR_TARGET_LABELS`        | Các nhãn YOLO được giữ lại                              | `person,backpack,handbag,suitcase` |
 | `DETECTOR_CONFIDENCE`           | Ngưỡng nhận diện chung của YOLO                         | `0.40`                             |
 | `CAMERA_TARGET_FPS`             | Số khung hình phân tích mỗi giây cho camera mới         | `5`                                |
-| `CAMERA_MAX_CONCURRENT_INFERENCES` | Giới hạn camera suy luận đồng thời; `0` tự chọn theo máy | `0`                             |
 | `ALERT_COOLDOWN_SEC`            | Khoảng nghỉ giữa hai cảnh báo cùng loại trên một camera | `30` giây                          |
 | `FALL_POSTURE_ENABLED`          | Bật model tư thế té ngã bổ sung                         | `true`                             |
 | `FALL_POSTURE_CONFIDENCE`       | Ngưỡng của model tư thế té ngã                          | `0.40`                             |
@@ -194,28 +193,6 @@ $camera = @{
 
 Invoke-RestMethod http://localhost:8000/api/v1/cameras `
   -Method Post -WebSession $session -ContentType 'application/json' -Body $camera
-```
-
-## Chạy bằng Docker Compose
-
-Điền `MODEL_WEIGHTS_HOST_PATH` và các biến production trong `.env`, sau đó chạy:
-
-```powershell
-docker compose up -d --build
-docker compose logs -f backend
-```
-
-Frontend được mở tại `http://localhost`. Nginx chuyển request `/api/` sang backend. Thư mục
-`data` được mount ra ngoài container nên camera, video tải lên và lịch sử vẫn còn sau khi restart.
-
-## Kiểm tra trước khi nộp
-
-```powershell
-.\.venv\Scripts\python.exe -m ruff check src tests
-.\.venv\Scripts\python.exe -m pytest -q
-Set-Location src\frontend
-npm ci
-npm run build
 ```
 
 Các tài liệu Gate 2:
