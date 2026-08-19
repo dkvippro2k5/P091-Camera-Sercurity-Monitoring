@@ -1,17 +1,26 @@
 """Asynchronous incident notifications.
 
-Zalo is deliberately an adapter here: credentials and recipient IDs stay in environment
-configuration, and a failed notification is logged without affecting camera processing.
+Each channel (Zalo, email, ...) is an adapter with the same `send_alert(alert) -> bool`
+shape, so `NotificationWorker` and `CompositeNotifier` never need to know which channels
+are active. Credentials and recipients stay in environment configuration, and a failed
+notification is logged without affecting camera processing.
 """
 
 import json
 import logging
 import queue
+import smtplib
 import threading
 import time
+from email.mime.text import MIMEText
+from typing import Protocol
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
+
+
+class NotificationProvider(Protocol):
+    def send_alert(self, alert: dict) -> bool: ...
 
 
 class ZaloNotifier:
@@ -48,10 +57,94 @@ class ZaloNotifier:
         return succeeded
 
 
+class EmailNotifier:
+    """SMTP fallback channel, for teams without a Zalo OA token."""
+
+    def __init__(
+        self,
+        enabled: bool,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        from_address: str,
+        to_addresses: str,
+        use_tls: bool = True,
+    ) -> None:
+        self.recipients = [item.strip() for item in to_addresses.split(",") if item.strip()]
+        self.enabled = enabled and bool(host) and bool(from_address) and bool(self.recipients)
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.from_address = from_address
+        self.use_tls = use_tls
+
+    def send_alert(self, alert: dict) -> bool:
+        if not self.enabled:
+            return True
+        subject = f"[{alert.get('label', 'incident')}] {alert.get('camera_name', alert.get('camera_id', 'camera'))}"
+        body = (
+            f"Camera: {alert.get('camera_name', alert.get('camera_id', 'unknown'))}\n"
+            f"Time: {alert.get('created_at', '')}\n"
+            f"Confidence: {float(alert.get('confidence', 0)):.0%}\n"
+            f"Reason: {alert.get('reason', '')}"
+        )
+        message = MIMEText(body)
+        message["Subject"] = subject
+        message["From"] = self.from_address
+        message["To"] = ", ".join(self.recipients)
+        try:
+            with smtplib.SMTP(self.host, self.port, timeout=8) as server:
+                if self.use_tls:
+                    server.starttls()
+                if self.username:
+                    server.login(self.username, self.password)
+                server.sendmail(self.from_address, self.recipients, message.as_string())
+            return True
+        except Exception as exc:  # noqa: BLE001 - notification must never break monitoring
+            logger.warning("Email notification failed: %s", exc)
+            return False
+
+
+class CompositeNotifier:
+    """Fans an alert out to every active channel; retried as a unit by `NotificationWorker`."""
+
+    def __init__(self, providers: list[NotificationProvider]) -> None:
+        self.providers = providers
+        self.enabled = any(getattr(provider, "enabled", True) for provider in providers)
+
+    def send_alert(self, alert: dict) -> bool:
+        if not self.providers:
+            return True
+        return all(provider.send_alert(alert) for provider in self.providers)
+
+
+def build_notifier(settings) -> CompositeNotifier:
+    channels = [item.strip().lower() for item in settings.notification_channels.split(",") if item.strip()]
+    providers: list[NotificationProvider] = []
+    if "zalo" in channels:
+        providers.append(ZaloNotifier(settings.zalo_enabled, settings.zalo_access_token, settings.zalo_recipients))
+    if "email" in channels:
+        providers.append(
+            EmailNotifier(
+                settings.smtp_enabled,
+                host=settings.smtp_host,
+                port=settings.smtp_port,
+                username=settings.smtp_username,
+                password=settings.smtp_password,
+                from_address=settings.smtp_from_address,
+                to_addresses=settings.smtp_to_addresses,
+                use_tls=settings.smtp_use_tls,
+            )
+        )
+    return CompositeNotifier(providers)
+
+
 class NotificationWorker:
     """Bounded retry worker so notification delivery never blocks detection."""
 
-    def __init__(self, notifier: ZaloNotifier, publish, max_retries: int = 3, backoff_sec: float = 2.0) -> None:
+    def __init__(self, notifier: NotificationProvider, publish, max_retries: int = 3, backoff_sec: float = 2.0) -> None:
         self.notifier = notifier
         self.publish = publish
         self.max_retries = max(0, max_retries)

@@ -52,7 +52,7 @@ from src.services.camera_registry import create_camera_registry
 from src.services.event_bus import build_event_relay
 from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
-from src.services.notifications import NotificationWorker, ZaloNotifier
+from src.services.notifications import NotificationWorker, build_notifier
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
 from src.vision.detector import IncidentDetector
 from src.vision.pipeline import VisionPipeline
@@ -205,7 +205,7 @@ class MonitoringService:
         # Every alert, reviewed or not. `history` holds only judged alerts by design, so it
         # cannot answer "how many did this camera raise" — see incident_log.py.
         self.incidents = incident_log or IncidentLog()
-        self.notifier = ZaloNotifier(settings.zalo_enabled, settings.zalo_access_token, settings.zalo_recipients)
+        self.notifier = build_notifier(settings)
         self.evidence_store = EvidenceStore(
             backend=settings.evidence_storage_backend,
             local_dir=settings.evidence_storage_dir,

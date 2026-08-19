@@ -97,10 +97,26 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     embedding_model: str = "text-embedding-3-small"
 
+    # Active notification channels, comma-separated (e.g. "email,zalo"). Each channel is
+    # still gated by its own *_enabled flag below, so listing one here without credentials
+    # is a safe no-op rather than a startup failure.
+    notification_channels: str = "zalo"
+
     # Zalo OA notifications. Disabled until an official OA token and recipient IDs exist.
     zalo_enabled: bool = False
     zalo_access_token: str = ""
     zalo_recipients: str = ""
+
+    # Email (SMTP) notifications. Disabled until SMTP credentials exist.
+    smtp_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = ""
+    smtp_to_addresses: str = ""
+    smtp_use_tls: bool = True
+
     notification_max_retries: int = Field(default=3, ge=0, le=10)
     notification_backoff_sec: float = Field(default=2.0, gt=0.0, le=60.0)
 
