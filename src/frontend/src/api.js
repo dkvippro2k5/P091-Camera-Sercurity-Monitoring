@@ -110,4 +110,5 @@ export const api = {
 
   streamUrl: (id) => `${BASE}/cameras/${id}/stream`,
   eventsUrl: () => `${BASE}/events`,
+  managerLiveUrl: () => `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${BASE}/manager/live`,
 }

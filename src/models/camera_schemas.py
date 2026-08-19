@@ -162,6 +162,7 @@ class Alert(BaseModel):
     zone_name: str | None = None
     track_id: str | None = None
     image_data_url: str = ""
+    evidence_url: str | None = None
     acknowledged: bool = False
 
     # Second-stage triage. "pending" is what the UI shows a spinner for; "skipped" means the

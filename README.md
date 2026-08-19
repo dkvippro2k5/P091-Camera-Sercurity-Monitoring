@@ -231,6 +231,34 @@ docker compose logs -f backend
 The frontend is exposed on `http://localhost`; nginx proxies `/api/` to the backend. Runtime
 camera configuration, uploads, incident logs, and VLM history remain under `./data`.
 
+For the production stack, copy `.env.production.example` to `.env.production`, set a unique
+`POSTGRES_PASSWORD`, configure the public HTTPS host, and run the production stack with that file
+explicitly selected:
+
+```powershell
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.production.yml ps
+```
+
+The production stack keeps the frontend and backend bound to loopback so an HTTPS reverse proxy can
+front the application. PostgreSQL data is persisted under `./data/postgres` and Redis under
+`./data/redis`. The manager
+dashboard receives live updates over an authenticated WebSocket at `/api/v1/manager/live`,
+while guard incident notifications continue to use SSE at `/api/v1/events`.
+
+Production evidence should use an S3-compatible bucket by setting `EVIDENCE_STORAGE_BACKEND=s3`
+and the `EVIDENCE_S3_*` values. The alert preview remains available immediately in the event;
+the durable object URL arrives as a follow-up `alert.evidence` event.
+
+To retain data from an existing deployment, run the migration once before switching traffic
+to PostgreSQL. It migrates incidents, guard history, users, cameras, and stable camera IDs:
+
+```powershell
+python scripts/migrate_sqlite_to_postgres.py `
+  --sqlite-url sqlite:///./data/app.db `
+  --postgres-url $env:DATABASE_URL
+```
+
 ## Verification
 
 ```powershell

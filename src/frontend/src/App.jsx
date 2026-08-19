@@ -149,6 +149,11 @@ export default function App() {
       setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, ...alert } : a)))
     })
 
+    events.addEventListener('alert.evidence', (e) => {
+      const alert = JSON.parse(e.data)
+      setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, evidence_url: alert.evidence_url } : a)))
+    })
+
     // Logout, from this tab or another one. Filtered by username because `_publish` fans out
     // to every subscriber with no per-user index — unfiltered, one guard signing out would
     // sign out everyone watching.

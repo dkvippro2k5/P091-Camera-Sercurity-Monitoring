@@ -8,7 +8,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.api.auth_routes import router as auth_router
 from src.api.routes import router
-from src.api.vision_routes import manager_router, operator_router
+from src.api.vision_routes import manager_router, manager_ws_router, operator_router
 from src.api.vision_routes import router as monitoring_router
 from src.config import get_settings
 from src.services.login_limiter import LoginLimiter
@@ -30,12 +30,26 @@ async def lifespan(app: FastAPI):
     # Accounts and sessions, both process singletons like the monitoring service below.
     # Built before it, and cheaply, so that if the roster is missing the log says so before
     # anything spends seconds loading YOLO weights.
-    app.state.users = UserStore()
-    app.state.sessions = SessionStore(
-        ttl_hours=settings.session_ttl_hours,
-        idle_minutes=settings.session_idle_minutes,
-        max_sessions=settings.session_max_sessions,
+    use_postgres = settings.app_env.lower() == "production" and settings.database_url.startswith(
+        ("postgresql://", "postgres://")
     )
+    if use_postgres:
+        from src.services.postgres_user_store import PostgresUserStore
+
+        app.state.users = PostgresUserStore(settings.database_url)
+    else:
+        app.state.users = UserStore()
+    session_args = {
+        "ttl_hours": settings.session_ttl_hours,
+        "idle_minutes": settings.session_idle_minutes,
+        "max_sessions": settings.session_max_sessions,
+    }
+    if use_postgres:
+        from src.services.postgres_session_store import PostgresSessionStore
+
+        app.state.sessions = PostgresSessionStore(settings.database_url, **session_args)
+    else:
+        app.state.sessions = SessionStore(**session_args)
     app.state.login_limiter = LoginLimiter(
         max_failures=settings.login_max_failures,
         window_seconds=settings.login_failure_window_minutes * 60,
@@ -90,6 +104,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(monitoring_router, prefix="/api/v1")
 app.include_router(operator_router, prefix="/api/v1")
 app.include_router(manager_router, prefix="/api/v1")
+app.include_router(manager_ws_router, prefix="/api/v1")
 
 
 @app.get("/health")

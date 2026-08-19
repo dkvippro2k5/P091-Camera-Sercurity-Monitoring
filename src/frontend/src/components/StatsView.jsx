@@ -16,6 +16,32 @@ export default function StatsView({ status }) {
 
   useEffect(() => {
     let cancelled = false
+    let socket
+    let reconnectTimer
+
+    const connect = () => {
+      if (cancelled) return
+      socket = new WebSocket(api.managerLiveUrl())
+      socket.onmessage = () => {
+        // The event stream is the invalidation signal; the statistics endpoint remains the
+        // single source of truth for the aggregate report and heat-map data.
+        api.statistics().then((body) => !cancelled && setData(body)).catch(() => {})
+      }
+      socket.onclose = () => {
+        if (!cancelled) reconnectTimer = setTimeout(connect, 3000)
+      }
+    }
+
+    connect()
+    return () => {
+      cancelled = true
+      clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
     api.statistics()
       .then((body) => !cancelled && setData(body))
       .catch((err) => !cancelled && setError(err.message))

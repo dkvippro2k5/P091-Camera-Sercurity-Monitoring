@@ -59,6 +59,7 @@ def isolated_data(monkeypatch, tmp_path):
     from src.services import eval_report as eval_report_module
     from src.services import monitoring as monitoring_module
     from src.services.alert_history import AlertHistory
+    from src.services.evidence_store import EvidenceStore
     from src.services.incident_log import IncidentLog
     from src.vision.detector import IncidentDetector
 
@@ -67,6 +68,11 @@ def isolated_data(monkeypatch, tmp_path):
     monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
     monkeypatch.setattr(monitoring_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     monkeypatch.setattr(monitoring_module, "IncidentLog", lambda: IncidentLog(path=str(tmp_path / "incidents.jsonl")))
+    monkeypatch.setattr(
+        monitoring_module,
+        "EvidenceStore",
+        lambda **_: EvidenceStore(backend="local", local_dir=str(tmp_path)),
+    )
     monkeypatch.setattr(eval_report_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     return tmp_path
 

@@ -80,10 +80,29 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/app.db"
 
+    # Optional distributed event relay. Empty keeps the single-process in-memory fan-out.
+    redis_url: str = ""
+    redis_event_channel: str = "p091.events"
+
+    # Incident evidence is local for development and S3-compatible in production.
+    evidence_storage_backend: str = "local"
+    evidence_storage_dir: str = "./data"
+    evidence_s3_bucket: str = ""
+    evidence_s3_endpoint_url: str = ""
+    evidence_s3_region: str = ""
+    evidence_s3_public_base_url: str = ""
+
+    # Semantic search is asynchronous and disabled until a compatible embedding worker is configured.
+    embeddings_enabled: bool = False
+    embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
+    embedding_model: str = "text-embedding-3-small"
+
     # Zalo OA notifications. Disabled until an official OA token and recipient IDs exist.
     zalo_enabled: bool = False
     zalo_access_token: str = ""
     zalo_recipients: str = ""
+    notification_max_retries: int = Field(default=3, ge=0, le=10)
+    notification_backoff_sec: float = Field(default=2.0, gt=0.0, le=60.0)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"

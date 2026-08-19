@@ -29,8 +29,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 
-from src.config import get_settings
-from src.services.sqlite_store import SQLiteStore
+from src.services.event_store import create_event_store
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +40,17 @@ DEFAULT_INCIDENT_LOG_PATH = os.path.join(_PROJECT_ROOT, "data", "incidents.jsonl
 class IncidentLog:
     """Append-only log of every alert, with a fold-on-read for verdict updates."""
 
-    def __init__(self, path: str = DEFAULT_INCIDENT_LOG_PATH, store: SQLiteStore | None = None) -> None:
+    def __init__(self, path: str = DEFAULT_INCIDENT_LOG_PATH, store=None) -> None:
         self.path = path
         self.store = store
         if self.store is None and path == DEFAULT_INCIDENT_LOG_PATH:
             try:
-                self.store = SQLiteStore(get_settings().database_url)
+                self.store = create_event_store()
             except (OSError, ValueError):
                 self.store = None
         self._lock = threading.Lock()
 
-    def record_alert(self, alert_id: str, camera_id: str, camera_name: str, label: str, confidence: float) -> None:
+    def record_alert(self, alert_id: str, camera_id: str, camera_name: str, label: str, confidence: float, evidence_url: str | None = None) -> None:
         """One row as the alert fires. Never raises — a full disk must not break alerting.
 
         Called from `_emit_alert` on the camera's processor thread, which must not block, so
@@ -64,6 +63,7 @@ class IncidentLog:
                 "camera_name": camera_name,
                 "label": label,
                 "confidence": confidence,
+                "evidence_url": evidence_url,
                 "created_at": datetime.now(UTC).isoformat(),
             }
         if self.store is not None:
@@ -72,7 +72,16 @@ class IncidentLog:
                 return
             except (OSError, sqlite3.Error):
                 logger.exception("Could not write incident to SQLite")
-        self._append(row)
+            self._append(row)
+
+    def record_evidence(self, alert_id: str, evidence_url: str) -> None:
+        if self.store is not None:
+            try:
+                self.store.update_incident_evidence(alert_id, evidence_url)
+                return
+            except (OSError, sqlite3.Error):
+                logger.exception("Could not update incident evidence URL")
+        self._append({"kind": "evidence", "alert_id": alert_id, "evidence_url": evidence_url})
 
     def record_review(
         self,
@@ -152,6 +161,7 @@ class IncidentLog:
         """Fold the legacy JSONL stream for read-only migration compatibility."""
         alerts: dict[str, dict] = {}
         reviews: dict[str, dict] = {}
+        evidence: dict[str, dict] = {}
         for row in self._read():
             alert_id = row.get("alert_id")
             if not alert_id:
@@ -160,6 +170,8 @@ class IncidentLog:
                 # Last review wins — a guard correcting their own judgement should not be
                 # counted twice.
                 reviews[alert_id] = row
+            elif row.get("kind") == "evidence":
+                evidence[alert_id] = row
             else:
                 alerts[alert_id] = row
 
@@ -174,6 +186,7 @@ class IncidentLog:
                     "operator_note": (review or {}).get("operator_note"),
                     "actual_event_type": (review or {}).get("actual_event_type"),
                     "reviewed_at": (review or {}).get("reviewed_at"),
+                    "evidence_url": (evidence.get(alert_id) or {}).get("evidence_url"),
                 }
             )
         folded.sort(key=lambda row: row.get("created_at") or "")

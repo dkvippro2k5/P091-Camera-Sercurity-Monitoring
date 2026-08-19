@@ -48,6 +48,7 @@ class SQLiteStore:
                     reviewed_at TEXT,
                     operator_note TEXT,
                     actual_event_type TEXT
+                    ,evidence_url TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_incidents_camera_time
                     ON incidents(camera_id, created_at);
@@ -70,15 +71,22 @@ class SQLiteStore:
                     ON alert_history(camera_id, label, recorded_at);
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
+            if "evidence_url" not in columns:
+                connection.execute("ALTER TABLE incidents ADD COLUMN evidence_url TEXT")
 
     def insert_incident(self, row: dict) -> None:
         with self._lock, self._connect() as connection:
             connection.execute(
                 """INSERT OR IGNORE INTO incidents
-                (alert_id, camera_id, camera_name, label, confidence, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)""",
-                (row["alert_id"], row["camera_id"], row["camera_name"], row["label"], row["confidence"], row["created_at"]),
+                (alert_id, camera_id, camera_name, label, confidence, created_at, evidence_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (row["alert_id"], row["camera_id"], row["camera_name"], row["label"], row["confidence"], row["created_at"], row.get("evidence_url")),
             )
+
+    def update_incident_evidence(self, alert_id: str, evidence_url: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("UPDATE incidents SET evidence_url=? WHERE alert_id=?", (evidence_url, alert_id))
 
     def update_incident_review(self, row: dict) -> None:
         with self._lock, self._connect() as connection:

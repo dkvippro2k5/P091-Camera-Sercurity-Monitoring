@@ -34,8 +34,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 
-from src.config import get_settings
-from src.services.sqlite_store import SQLiteStore
+from src.services.event_store import create_event_store
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +56,12 @@ class AlertHistory:
     lifetime short is worth doing regardless. Each row references its `alert_id` instead.
     """
 
-    def __init__(self, path: str = DEFAULT_HISTORY_PATH, store: SQLiteStore | None = None) -> None:
+    def __init__(self, path: str = DEFAULT_HISTORY_PATH, store=None) -> None:
         self.path = path
         self.store = store
         if self.store is None and path == DEFAULT_HISTORY_PATH:
             try:
-                self.store = SQLiteStore(get_settings().database_url)
+                self.store = create_event_store()
             except (OSError, ValueError):
                 self.store = None
         # Writes happen on the request thread and reads on a triage worker thread, so the

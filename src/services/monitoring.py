@@ -24,7 +24,6 @@ advisory — it annotates the alert and never suppresses it (see `src/services/v
 
 import asyncio
 import base64
-import json
 import logging
 import os
 import threading
@@ -49,8 +48,11 @@ from src.models.camera_schemas import (
     SystemStatus,
 )
 from src.services.alert_history import AlertHistory
+from src.services.camera_registry import create_camera_registry
+from src.services.event_bus import build_event_relay
+from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
-from src.services.notifications import ZaloNotifier
+from src.services.notifications import NotificationWorker, ZaloNotifier
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
 from src.vision.detector import IncidentDetector
 from src.vision.pipeline import VisionPipeline
@@ -204,10 +206,18 @@ class MonitoringService:
         # cannot answer "how many did this camera raise" — see incident_log.py.
         self.incidents = incident_log or IncidentLog()
         self.notifier = ZaloNotifier(settings.zalo_enabled, settings.zalo_access_token, settings.zalo_recipients)
+        self.evidence_store = EvidenceStore(
+            backend=settings.evidence_storage_backend,
+            local_dir=settings.evidence_storage_dir,
+            bucket=settings.evidence_s3_bucket,
+            endpoint_url=settings.evidence_s3_endpoint_url,
+            region=settings.evidence_s3_region,
+            public_base_url=settings.evidence_s3_public_base_url,
+        )
         # Two workers: enough to overlap a slow API call with a second camera's alert,
         # small enough that a burst cannot spawn threads without bound.
         self._triage_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vlm-triage")
-        self._notification_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="incident-notify")
+        self._evidence_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evidence-store")
         self._triage_in_flight = 0
         self._incident_workflow = build_incident_workflow(
             wait_for_post_roll=self._wait_for_post_roll,
@@ -219,6 +229,14 @@ class MonitoringService:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._subscribers: list[asyncio.Queue] = []
+        self._event_relay = build_event_relay(settings.redis_url, settings.redis_event_channel, self._receive_remote_event)
+        self._registry = create_camera_registry(REGISTRY_PATH)
+        self._notification_worker = NotificationWorker(
+            self.notifier,
+            self._publish,
+            max_retries=settings.notification_max_retries,
+            backoff_sec=settings.notification_backoff_sec,
+        )
 
         self._restore_registry()
 
@@ -233,7 +251,9 @@ class MonitoringService:
         # process open on Ctrl-C. Its verdict is lost, which is the right trade — the
         # verdict is advisory and the alert it belongs to has already been shown.
         self._triage_pool.shutdown(wait=False)
-        self._notification_pool.shutdown(wait=False)
+        self._notification_worker.close()
+        self._evidence_pool.shutdown(wait=False)
+        self._event_relay.close()
 
     # ------------------------------------------------------------------ sources
     @staticmethod
@@ -291,10 +311,10 @@ class MonitoringService:
         with self._lock:
             return self._cameras.get(camera_id)
 
-    def add_camera(self, payload: CameraCreate) -> CameraInfo:
+    def add_camera(self, payload: CameraCreate, camera_id: str | None = None) -> CameraInfo:
         """Register, configure zones for, and start one camera."""
         settings = get_settings()
-        camera_id = f"cam_{uuid.uuid4().hex[:8]}"
+        camera_id = camera_id or f"cam_{uuid.uuid4().hex[:8]}"
         resolved = self.resolve_source(payload.source_type, payload.source)
 
         if payload.source_type != "rtsp" and not os.path.exists(resolved):
@@ -492,12 +512,24 @@ class MonitoringService:
 
         queued_for_triage = self._queue_triage(alert)
         self._publish("alert.created", alert.model_dump())
+        self._evidence_pool.submit(self._store_evidence, alert, jpeg)
         if self.notifier.enabled:
-            self._notification_pool.submit(self.notifier.send_alert, alert.model_dump())
+            self._notification_worker.submit(alert.model_dump())
         # Only after the operator already has the alert. Everything below this line happens
         # on another thread and can take seconds.
         if queued_for_triage:
             self._submit_triage(alert)
+
+    def _store_evidence(self, alert: Alert, jpeg: bytes) -> None:
+        try:
+            url = self.evidence_store.put(alert.id, jpeg)
+            with self._lock:
+                alert.evidence_url = url
+                snapshot = alert.model_dump()
+            self.incidents.record_evidence(alert.id, url)
+            self._publish("alert.evidence", snapshot)
+        except Exception:  # noqa: BLE001 - evidence failure must not stop detection
+            logger.exception("Could not persist evidence for alert %s", alert.id)
 
     # ------------------------------------------------------------------ triage
     def _queue_triage(self, alert: Alert) -> bool:
@@ -832,6 +864,16 @@ class MonitoringService:
         if self._loop is None or self._loop.is_closed():
             return
         message = {"type": event_type, "data": data}
+        self._event_relay.publish(message)
+        for queue in list(self._subscribers):
+            self._loop.call_soon_threadsafe(self._offer, queue, message)
+
+    def _receive_remote_event(self, message: dict) -> None:
+        """Fan out an event published by another API or vision-worker process."""
+        if not isinstance(message, dict) or not message.get("type"):
+            return
+        if self._loop is None or self._loop.is_closed():
+            return
         for queue in list(self._subscribers):
             self._loop.call_soon_threadsafe(self._offer, queue, message)
 
@@ -849,20 +891,15 @@ class MonitoringService:
         with self._lock:
             cameras = [c.model_dump() for c in self._cameras.values()]
         try:
-            os.makedirs(os.path.dirname(REGISTRY_PATH), exist_ok=True)
-            with open(REGISTRY_PATH, "w", encoding="utf-8") as handle:
-                json.dump({"cameras": cameras}, handle, indent=2)
-        except OSError as exc:
+            self._registry.save(cameras)
+        except Exception as exc:  # noqa: BLE001 - registry failure must not stop monitoring
             logger.warning(f"Could not persist camera registry: {exc}")
 
     def _restore_registry(self) -> None:
         """Re-add previously configured cameras on startup, skipping dead sources."""
-        if not os.path.exists(REGISTRY_PATH):
-            return
         try:
-            with open(REGISTRY_PATH, encoding="utf-8") as handle:
-                saved = json.load(handle).get("cameras", [])
-        except (OSError, json.JSONDecodeError, AttributeError) as exc:
+            saved = self._registry.load()
+        except Exception as exc:  # noqa: BLE001
             logger.warning(f"Ignoring unreadable camera registry: {exc}")
             return
 
@@ -878,7 +915,8 @@ class MonitoringService:
                         zone_active_hours=entry.get("zone_active_hours"),
                         target_fps=entry.get("target_fps"),
                         fall_perspective=entry.get("fall_perspective"),
-                    )
+                    ),
+                    camera_id=entry.get("id"),
                 )
             except Exception as exc:  # noqa: BLE001 - one stale entry must not block startup
                 logger.warning(f"Skipping saved camera '{entry.get('name')}': {exc}")
