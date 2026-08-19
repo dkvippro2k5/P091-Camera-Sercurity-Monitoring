@@ -21,6 +21,12 @@ const ROLE_LABEL = { guard: 'Guard', manager: 'Manager' }
 
 export default function Masthead({ screen, onNavigate, status, unackedCount, user, screens, onLogout }) {
   const attention = unackedCount > 0
+  const accountInitials = String(user?.display_name || user?.username || 'U')
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
   // A manager sees this count on their dashboard but is not the one clearing it, so the
   // masthead does not shout at them about a queue they cannot work.
   const showBacklog = user?.role === 'guard'
@@ -28,8 +34,8 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
   return (
     <header className="masthead">
       <div className="brand">
-        <span aria-hidden="true">◉</span>
-        <span>Camera Monitor</span>
+        <span className="brand-mark" aria-hidden="true">CM</span>
+        <span className="brand-copy"><strong>Camera Monitor</strong><small>Operations</small></span>
       </div>
 
       <nav aria-label="Views">
@@ -68,8 +74,11 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
             else's unlocked station needs to be able to see whose name it will carry. */}
         {user && (
           <div className="account">
-            <span className="account-name">{user.display_name || user.username}</span>
-            <span className="account-role">{ROLE_LABEL[user.role] ?? user.role}</span>
+            <span className="account-avatar" aria-hidden="true">{accountInitials}</span>
+            <span className="account-copy">
+              <span className="account-name">{user.display_name || user.username}</span>
+              <span className="account-role">{ROLE_LABEL[user.role] ?? user.role}</span>
+            </span>
           </div>
         )}
         {user && (

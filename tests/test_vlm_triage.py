@@ -15,6 +15,7 @@ What these pin, in order of how expensive the bug would be:
 
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import pytest
@@ -22,8 +23,15 @@ import pytest
 from src.models.camera_schemas import Alert
 from src.services import monitoring as monitoring_module
 from src.services.alert_history import AlertHistory
-from src.services.monitoring import MonitoringService, _evenly_spaced
-from src.services.vlm import NullVLMTriage, OpenAIVLMTriage, TriageRequest, TriageVerdict, build_triage_client
+from src.services.monitoring import MonitoringService, _evenly_spaced, _evidence_frames
+from src.services.vlm import (
+    LocalSmolVLMTriage,
+    NullVLMTriage,
+    OpenAIVLMTriage,
+    TriageRequest,
+    TriageVerdict,
+    build_triage_client,
+)
 
 
 class FakeTriage:
@@ -87,6 +95,10 @@ def _frame(value: int = 0) -> np.ndarray:
 
 
 def _emit(service, camera_id="cam_1", label="fall_detection", reason="2/3 indicators") -> Alert:
+    now = time.monotonic()
+    ring = service._ring.setdefault(camera_id, deque(maxlen=service._default_ring_size))
+    ring.append((now - 1.0, b"fake_jpeg_before"))
+    ring.append((now + 0.1, b"fake_jpeg_after"))
     service._emit_alert(camera_id=camera_id, label=label, confidence=0.9, frame=_frame(), reason=reason)
     return service._alerts[0]
 
@@ -101,13 +113,14 @@ def test_alert_is_published_before_triage_completes(make_service):
     triage = FakeTriage(delay=0.5)
     service = make_service(triage=triage)
 
-    published: list[str] = []
-    service._publish = lambda event_type, data: published.append(event_type)
+    published: list[tuple[str, dict]] = []
+    service._publish = lambda event_type, data: published.append((event_type, data))
 
     alert = _emit(service)
 
     # _emit_alert has returned while the fake is still sleeping inside assess().
-    assert published == ["alert.created"]
+    assert [event for event, _ in published] == ["alert.created"]
+    assert published[0][1]["triage_status"] == "pending"
     assert alert.triage_status == "pending"
 
     assert triage.called.wait(timeout=5), "triage never ran"
@@ -251,6 +264,33 @@ def test_empty_ring_yields_no_frames(make_service):
     assert service._collect_clip("cam_unknown") == ([], 0)
 
 
+def test_missing_before_or_after_evidence_is_uncertain(make_service):
+    """A one-sided clip cannot establish a transition and must not spend an API call."""
+    triage = FakeTriage(verdict="real")
+    service = make_service(triage=triage)
+    service.triage = NullVLMTriage()
+    alert = _emit(service)
+    service.triage = triage
+    service._ring["cam_1"] = __import__("collections").deque([(time.monotonic(), b"after")], maxlen=8)
+    service._triage_in_flight = 1
+
+    service._run_triage(alert)
+
+    assert alert.triage_verdict == "uncertain"
+    assert "insufficient visual evidence" in (alert.triage_error or "")
+    assert triage.requests == []
+
+
+def test_ring_capacity_uses_camera_target_fps(make_service):
+    service = make_service()
+    camera = type("Camera", (), {"target_fps": 30.0})()
+    service._cameras["cam_1"] = camera
+
+    service._on_frame("cam_1", None, _frame(10))
+
+    assert service._ring["cam_1"].maxlen >= int(30 * service._pre_roll_sec * 2)
+
+
 def test_evenly_spaced_keeps_the_ends():
     """Taking the first N would describe the first half-second and nothing else."""
     items = [bytes([i]) for i in range(10)]
@@ -261,18 +301,33 @@ def test_evenly_spaced_keeps_the_ends():
     assert _evenly_spaced(items, 0) == []
 
 
+def test_evidence_frames_are_labelled_for_the_frontend():
+    evidence = _evidence_frames([b"before-a", b"before-b", b"after-a"], pre_count=2)
+
+    assert [frame.index for frame in evidence] == [1, 2, 3]
+    assert [frame.phase for frame in evidence] == ["before", "before", "after"]
+    assert all(frame.image_data_url.startswith("data:image/jpeg;base64,") for frame in evidence)
+
+
 # ------------------------------------------------------------------ HITL + history
 def test_verdict_records_exactly_one_history_row(make_service, tmp_path):
     service = make_service(triage=NullVLMTriage())
     alert = _emit(service)
 
-    assert service.record_operator_verdict(alert.id, "real") is True
+    assert service.record_operator_verdict(
+        alert.id,
+        "real",
+        operator_note="Employee slipped near the loading bay.",
+        actual_event_type="real_incident",
+    ) is True
 
     rows = service.history.all_rows()
     assert len(rows) == 1
     assert rows[0]["operator_verdict"] == "real"
     assert rows[0]["label"] == "fall_detection"
     assert rows[0]["reason"] == "2/3 indicators"
+    assert rows[0]["operator_note"] == "Employee slipped near the loading bay."
+    assert rows[0]["actual_event_type"] == "real_incident"
     assert alert.operator_verdict == "real"
     assert alert.acknowledged is True
 
@@ -364,6 +419,76 @@ def test_build_triage_client_is_null_without_a_key():
     assert isinstance(build_triage_client(settings), NullVLMTriage)
 
 
+def test_build_triage_client_builds_local_without_api_key():
+    settings = type(
+        "S",
+        (),
+        {
+            "vlm_enabled": True,
+            "vlm_provider": "local",
+            "openai_api_key": "",
+            "vlm_local_model": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+            "vlm_local_device": "auto",
+            "vlm_local_max_image_size": 384,
+            "vlm_local_max_new_tokens": 256,
+        },
+    )()
+
+    client = build_triage_client(settings)
+
+    assert isinstance(client, LocalSmolVLMTriage)
+    assert client.max_image_size == 384
+    assert client._model is None
+
+
+def test_local_vlm_posture_state_is_conservative():
+    assert LocalSmolVLMTriage._posture_state("The person is standing upright.") == "upright"
+    assert LocalSmolVLMTriage._posture_state("The person is lying on the floor.") == "lying"
+    assert LocalSmolVLMTriage._posture_state("The person is sitting on a chair.") == "other"
+    assert LocalSmolVLMTriage._posture_state("The view is blocked.") == "unknown"
+
+
+def test_local_vlm_infers_only_an_upright_to_floor_transition():
+    request = TriageRequest(label="fall_detection", pre_count=2, frames=[b"1"] * 4)
+    verdict = LocalSmolVLMTriage._infer_temporal_verdict(
+        request,
+        ["A person is standing upright.", "The person is walking.", "The person is lying on the floor.", "The person is prone on the floor."],
+    )
+
+    assert verdict[0] == "real"
+    assert verdict[1] == 0.7
+
+
+def test_local_vlm_rejects_explicit_push_up_activity():
+    request = TriageRequest(label="fall_detection", pre_count=2, frames=[b"1"] * 4)
+    verdict = LocalSmolVLMTriage._infer_temporal_verdict(
+        request,
+        [
+            "The person is standing upright.",
+            "The person starts a push-up exercise.",
+            "The person is prone on the floor.",
+            "The person continues the push-up workout.",
+        ],
+    )
+
+    assert verdict[0] == "false_positive"
+    assert verdict[1] == 0.85
+
+
+def test_local_vlm_does_not_call_sitting_a_fall():
+    request = TriageRequest(label="fall_detection", pre_count=1, frames=[b"1"] * 2)
+    verdict = LocalSmolVLMTriage._infer_temporal_verdict(request, ["The person is standing.", "The person is sitting on a chair."])
+
+    assert verdict[0] == "uncertain"
+
+
+def test_local_vlm_does_not_reason_about_other_alert_types():
+    request = TriageRequest(label="intrusion", pre_count=1, frames=[b"1"] * 2)
+    verdict = LocalSmolVLMTriage._infer_temporal_verdict(request, ["The person is standing.", "The person is lying on the floor."])
+
+    assert verdict[0] == "uncertain"
+
+
 def test_build_triage_client_builds_the_real_one_when_configured():
     settings = type(
         "S",
@@ -389,6 +514,8 @@ def test_prompt_carries_the_rule_evidence_verbatim():
     assert reason in prompt
     assert "fall_detection" in prompt
     assert "Lobby" in prompt
+    assert "push-ups" in prompt
+    assert "uncontrolled" in prompt
 
 
 def _wait_until(predicate, timeout: float = 5.0) -> None:

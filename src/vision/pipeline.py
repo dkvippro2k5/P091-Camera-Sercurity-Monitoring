@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from src.vision.detector import IncidentDetector
+from src.vision.fall_motion import SparseFallMotionAnalyzer
 from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.rule_engine import RuleEngine
@@ -43,6 +44,7 @@ class VisionPipeline:
         draw_overlays: bool = True,
         inference_size: tuple[int, int] | None = None,
         motion_gate: MotionGate | None = None,
+        fall_motion_analyzer: SparseFallMotionAnalyzer | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -52,6 +54,7 @@ class VisionPipeline:
         self.inference_size = inference_size
         # Stateful — it holds the previous frame — so it must not be shared between streams.
         self.motion_gate = motion_gate or MotionGate(enabled=False)
+        self.fall_motion_analyzer = fall_motion_analyzer or SparseFallMotionAnalyzer()
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
@@ -121,7 +124,19 @@ class VisionPipeline:
                     ymax=int(det.bbox.ymax * scale_y),
                 )
 
-        # 3. Apply temporal rules to decide which of them constitute incidents
+        # 3. Sparse optical flow is computed only for tracks whose cheap bbox geometry
+        # already looks fall-like. The downscaled previous frame is retained for all tracks,
+        # but crowded scenes do not pay a per-person flow cost during normal walking.
+        persons = [d for d in detections if d.label == "person"]
+        flow_candidates = self.rule_engine.optical_flow_candidates(persons, camera_id)
+        fall_motion_evidence = self.fall_motion_analyzer.measure(
+            frame,
+            persons,
+            flow_candidates,
+            stream_time,
+        )
+
+        # 4. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
             frame_width=width,
@@ -129,9 +144,10 @@ class VisionPipeline:
             timestamp=stream_time,
             now=wall_time,
             camera_id=camera_id,
+            fall_motion_evidence=fall_motion_evidence,
         )
 
-        # 4. Annotate zones and incidents for the operator view
+        # 5. Annotate zones and incidents for the operator view
         output_frame = frame
         if self.draw_overlays:
             # The draw_* helpers composite in place, so this copy is unconditional now
@@ -257,6 +273,7 @@ class VisionPipeline:
         # reference frame from the old scene, which would read as a full-frame change.
         self.rule_engine.reset()
         self.motion_gate.reset()
+        self.fall_motion_analyzer.reset()
         self._last_detections = []
 
         # Released in finally: an exception mid-decode would otherwise hold the file

@@ -1,8 +1,10 @@
 import logging
 import os
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 
+import cv2
 import numpy as np
 
 from src.vision.detector import IncidentDetector
@@ -22,6 +24,7 @@ logger = logging.getLogger(__name__)
 #   intra-op threads = 1           -> 13.5 fps aggregate
 # Two is the sweet spot here: enough parallelism per inference, little contention.
 _TORCH_THREADS_PER_WORKER = 2
+_CPU_POOL_ENV_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
 
 _torch_tuned = False
 _torch_tune_lock = threading.Lock()
@@ -45,6 +48,11 @@ def tune_torch_for_multistream(threads_per_worker: int = _TORCH_THREADS_PER_WORK
     with _torch_tune_lock:
         if _torch_tuned:
             return False
+
+        for variable in _CPU_POOL_ENV_VARS:
+            os.environ.setdefault(variable, str(threads_per_worker))
+        cv2.setNumThreads(1)
+
         try:
             import torch
         except ImportError:
@@ -60,6 +68,9 @@ def tune_torch_for_multistream(threads_per_worker: int = _TORCH_THREADS_PER_WORK
             # set_num_threads raises if a parallel region has already started, which is
             # why this wants to run before the first inference.
             torch.set_num_threads(threads_per_worker)
+            # Inter-op parallelism starts separate operation pools and compounds the
+            # oversubscription caused by multiple camera workers.
+            torch.set_num_interop_threads(1)
         except RuntimeError as e:
             logger.warning(f"Could not tune torch threads: {e}")
             return False
@@ -131,6 +142,7 @@ class MultiStreamManager:
         global_on_incident_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
         global_on_frame_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
         tune_torch_threads: bool = True,
+        max_concurrent_inferences: int | None = None,
     ):
         """Initialize the multi-stream manager.
 
@@ -149,6 +161,8 @@ class MultiStreamManager:
             tune_torch_threads: Cap torch's intra-op threads for concurrent CPU inference.
                 Process-global, so pass False if the host process manages its own torch
                 threading or shares the interpreter with unrelated torch work.
+            max_concurrent_inferences: Maximum simultaneous pipeline calls. None selects
+                a conservative host-aware default; zero disables the limit.
         """
         if tune_torch_threads:
             tune_torch_for_multistream()
@@ -156,11 +170,46 @@ class MultiStreamManager:
         self._pipeline_factory = pipeline_factory or self._make_default_factory(shared_pipeline)
         self.global_on_incident_callback = global_on_incident_callback
         self.global_on_frame_callback = global_on_frame_callback
+        concurrency = (
+            self._default_inference_concurrency()
+            if max_concurrent_inferences is None
+            else max_concurrent_inferences
+        )
+        self._max_concurrent_inferences = max(0, concurrency)
+        self._inference_semaphore = (
+            threading.BoundedSemaphore(self._max_concurrent_inferences)
+            if self._max_concurrent_inferences > 0
+            else None
+        )
         self.workers: dict[str, CameraStreamWorker] = {}
         # add/remove are called from API request threads while get_status/start_all/stop_all
         # iterate; without this the iteration raises "dictionary changed size".
         self._workers_lock = threading.RLock()
         self._oversubscription_warned = False
+        # Ordinary preview frames are lossy by design: while encoding is busy, retain
+        # only the newest pending frame per camera. Incident callbacks remain synchronous
+        # and are never placed in this coalescing queue.
+        self._frame_callback_condition = threading.Condition()
+        self._pending_frame_callbacks: OrderedDict[
+            str, tuple[FrameAnalysisResult, np.ndarray]
+        ] = OrderedDict()
+        self._frame_callbacks_replaced = 0
+        self._frame_dispatch_stop = threading.Event()
+        self._frame_dispatch_thread: threading.Thread | None = None
+
+    @staticmethod
+    def _default_inference_concurrency() -> int:
+        """Choose a conservative simultaneous-inference limit for this host."""
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                # Multiple Python threads launching independent models usually increase
+                # GPU memory and tail latency. GPU batching is a separate future path.
+                return 1
+        except ImportError:
+            pass
+        return max(1, min(2, (os.cpu_count() or 2) // 4))
 
     @staticmethod
     def _make_default_factory(
@@ -197,6 +246,15 @@ class MultiStreamManager:
                     fall_upright_aspect_ratio=engine.fall_upright_aspect_ratio,
                     fall_velocity_ratio=engine.fall_velocity_ratio,
                     fall_height_drop_ratio=engine.fall_height_drop_ratio,
+                    fall_center_velocity_ratio=engine.fall_center_velocity_ratio,
+                    fall_area_growth_ratio=engine.fall_area_growth_ratio,
+                    fall_area_acceleration_ratio=engine.fall_area_acceleration_ratio,
+                    fall_foot_stability_ratio=engine.fall_foot_stability_ratio,
+                    fall_upper_drop_ratio=engine.fall_upper_drop_ratio,
+                    fall_optical_flow_ratio=engine.fall_optical_flow_ratio,
+                    fall_confirmation_sec=engine.fall_confirmation_sec,
+                    fall_persistence_grace_sec=engine.fall_persistence_grace_sec,
+                    fall_recovery_ratio=engine.fall_recovery_ratio,
                     fall_min_indicators=engine.fall_min_indicators,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
@@ -259,10 +317,12 @@ class MultiStreamManager:
                 target_fps=target_fps,
                 max_reconnect_attempts=max_reconnect_attempts,
                 loop_finite_sources=loop_finite_sources,
+                inference_semaphore=self._inference_semaphore,
             )
             self.workers[camera_id] = worker
 
         if autostart:
+            self._ensure_frame_dispatcher()
             worker.start()
 
         self._warn_if_oversubscribed()
@@ -315,6 +375,8 @@ class MultiStreamManager:
         with self._workers_lock:
             workers = list(self.workers.values())
 
+        if workers:
+            self._ensure_frame_dispatcher()
         for worker in workers:
             if not worker.is_running():
                 worker.start()
@@ -327,6 +389,7 @@ class MultiStreamManager:
 
         for worker in workers:
             worker.stop()
+        self._stop_frame_dispatcher()
         logger.info("Stopped all camera streams in MultiStreamManager")
 
     def get_status(self) -> dict[str, object]:
@@ -337,6 +400,7 @@ class MultiStreamManager:
         camera_stats = [w.get_stats() for w in workers]
         active_count = sum(1 for s in camera_stats if s["running"])
         total_processed = sum(s["processed_frames"] for s in camera_stats)
+        processing_errors = sum(s["processing_errors"] for s in camera_stats)
         # Averaging inference capacity, not achieved throughput — see CameraStreamWorker
         # .get_stats. This is headroom per camera, so it stays high on an idle system.
         avg_capacity = (
@@ -347,14 +411,92 @@ class MultiStreamManager:
             if active_count > 0
             else 0.0
         )
+        avg_p95_latency = (
+            round(
+                sum(s["latency_p95_ms"] for s in camera_stats if s["running"]) / max(1, active_count),
+                2,
+            )
+            if active_count > 0
+            else 0.0
+        )
+
+        with self._frame_callback_condition:
+            pending_frame_callbacks = len(self._pending_frame_callbacks)
+            replaced_frame_callbacks = self._frame_callbacks_replaced
 
         return {
             "total_cameras": len(camera_stats),
             "active_cameras": active_count,
             "average_inference_capacity_fps": avg_capacity,
+            "average_latency_p95_ms": avg_p95_latency,
+            "processing_errors": processing_errors,
             "total_processed_frames": total_processed,
+            "max_concurrent_inferences": self._max_concurrent_inferences,
+            "pending_frame_callbacks": pending_frame_callbacks,
+            "replaced_frame_callbacks": replaced_frame_callbacks,
             "cameras": camera_stats,
         }
+
+    def _ensure_frame_dispatcher(self) -> None:
+        """Start the bounded latest-frame callback dispatcher when it is needed."""
+        if self.global_on_frame_callback is None:
+            return
+        with self._frame_callback_condition:
+            if self._frame_dispatch_thread and self._frame_dispatch_thread.is_alive():
+                return
+            self._frame_dispatch_stop.clear()
+            self._frame_dispatch_thread = threading.Thread(
+                target=self._frame_dispatch_loop,
+                name="CameraFrameCallbackDispatcher",
+                daemon=True,
+            )
+            self._frame_dispatch_thread.start()
+
+    def _stop_frame_dispatcher(self) -> None:
+        """Drop stale previews and stop the dispatcher after camera workers exit."""
+        with self._frame_callback_condition:
+            self._frame_dispatch_stop.set()
+            self._pending_frame_callbacks.clear()
+            self._frame_callback_condition.notify_all()
+            thread = self._frame_dispatch_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=3.0)
+            if thread.is_alive():
+                logger.warning("Frame callback dispatcher did not stop within 3s.")
+        self._frame_dispatch_thread = None
+
+    def _enqueue_frame_callback(
+        self,
+        camera_id: str,
+        result: FrameAnalysisResult,
+        frame: np.ndarray,
+    ) -> None:
+        self._ensure_frame_dispatcher()
+        with self._frame_callback_condition:
+            if camera_id in self._pending_frame_callbacks:
+                self._pending_frame_callbacks.pop(camera_id)
+                self._frame_callbacks_replaced += 1
+            self._pending_frame_callbacks[camera_id] = (result, frame)
+            self._frame_callback_condition.notify()
+
+    def _frame_dispatch_loop(self) -> None:
+        """Run expensive per-frame callbacks without blocking camera inference."""
+        while True:
+            with self._frame_callback_condition:
+                self._frame_callback_condition.wait_for(
+                    lambda: self._frame_dispatch_stop.is_set()
+                    or bool(self._pending_frame_callbacks)
+                )
+                if self._frame_dispatch_stop.is_set():
+                    return
+                camera_id, (result, frame) = self._pending_frame_callbacks.popitem(last=False)
+
+            try:
+                callback = self.global_on_frame_callback
+                if callback:
+                    callback(camera_id, result, frame)
+            except Exception as e:
+                logger.error(f"Error in global frame callback for '{camera_id}': {e}")
 
     def _handle_worker_result(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
         """Internal handler called by worker threads on every analyzed frame.
@@ -366,10 +508,7 @@ class MultiStreamManager:
         # Every frame. A preview or recorder driven off the incident callback would sit
         # frozen between events, which reads as "the demo is broken".
         if self.global_on_frame_callback:
-            try:
-                self.global_on_frame_callback(camera_id, result, frame)
-            except Exception as e:
-                logger.error(f"Error in global frame callback for '{camera_id}': {e}")
+            self._enqueue_frame_callback(camera_id, result, frame)
 
         # Events only. Gating on `detections` too would fire on every frame containing
         # any person at all, which is the flooding this check exists to prevent.

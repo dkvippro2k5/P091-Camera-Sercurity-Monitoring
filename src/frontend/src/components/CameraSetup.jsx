@@ -28,6 +28,7 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
   const [endTime, setEndTime] = useState('05:00')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [imageError, setImageError] = useState(false)
 
   useEffect(() => {
     api
@@ -43,6 +44,7 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
   // whatever was drawn — keeping it would place the zone against a different scene.
   useEffect(() => {
     setPolygon([])
+    setImageError(false)
   }, [sourceType, source])
 
   const canPreview = Boolean(source) && (sourceType !== 'rtsp' || source.startsWith('rtsp://'))
@@ -104,182 +106,235 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
 
   return (
     <div className="setup">
+      <header className="setup-page-head">
+        <div>
+          <p className="eyebrow">Camera configuration</p>
+          <h1>Manage cameras</h1>
+          <p>Sources, detection rules, and monitoring zones.</p>
+        </div>
+        <button type="button" onClick={onCancel}>Return to live grid</button>
+      </header>
+
       <CameraList cameras={cameras} onDelete={onDelete} />
 
-      <div className="setup-head">
-        <h2>Add camera</h2>
-        <p>
-          Fall and abandoned-object detection start automatically. Intrusion detection is optional and needs a
-          zone drawn on the camera&apos;s own preview.
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit}>
-        <label className="field">
-          <span>Camera name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Lobby north" />
-          <span className="hint">Shown on the tile and in every alert from this camera.</span>
-        </label>
-
-        <fieldset>
-          <legend>Video source</legend>
-
-          {/* Each option is a full-width card; the label is the target, so the hit area is
-              44px rather than the ~13px native radio it wraps. */}
-          <div className="choices">
-            {['demo', 'upload', 'rtsp'].map((type) => (
-              <label key={type} className="choice">
-                <input
-                  type="radio"
-                  name="source_type"
-                  value={type}
-                  checked={sourceType === type}
-                  onChange={() => {
-                    setSourceType(type)
-                    setSource(type === 'demo' && demos.length ? demos[0].id : '')
-                  }}
-                />
-                {SOURCE_LABELS[type]}
-              </label>
-            ))}
+      <form onSubmit={handleSubmit} className="setup-split">
+        {/* Left Column: Form Fields */}
+        <div className="setup-col-form">
+          <div className="setup-form-head">
+            <span className="setup-step">01</span>
+            <div><h2>Add a camera</h2><p>Choose a source and detection policy.</p></div>
           </div>
-
-          {sourceType === 'demo' && (
-            <label className="field">
-              <span className="visually-hidden">Demo clip</span>
-              <select value={source} onChange={(e) => setSource(e.target.value)}>
-                {demos.map((demo) => (
-                  <option key={demo.id} value={demo.id}>
-                    {demo.name}
-                    {demo.suggested_label ? ` — shows ${demo.suggested_label.replace('_', ' ')}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {sourceType === 'upload' && (
-            <div className="field">
-              <input type="file" accept="video/mp4,video/x-matroska,video/quicktime" onChange={handleUpload} />
-              {source && <small className="ok">Uploaded as {source}</small>}
-            </div>
-          )}
-
-          {sourceType === 'rtsp' && (
-            <label className="field">
-              <span className="visually-hidden">RTSP URL</span>
-              <input
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
-              />
-            </label>
-          )}
-        </fieldset>
-
-        <fieldset>
-          <legend>Detection</legend>
-          {/*
-            Fall and abandoned-object are not toggles: PRD §3.1 has them always on. Intrusion
-            is opt-in because it is meaningless without a polygon to be inside of.
-          */}
-          <p className="always-on">
-            <span className="tag">Fall detection</span>
-            <span className="tag">Abandoned object</span>
-            <span>always active</span>
-          </p>
-
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={intrusionEnabled}
-              onChange={(e) => setIntrusionEnabled(e.target.checked)}
-            />
-            <span className="toggle-text">
-              <strong>Intrusion detection</strong>
-              <span className="hint">Alerts when a person stands inside a zone you draw below.</span>
-            </span>
+          <label className="field">
+            <span>Camera name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Lobby north" />
+            <span className="hint">Shown on the live tile and in every alert from this camera.</span>
           </label>
 
-          {intrusionEnabled &&
-            (previewUrl ? (
-              <>
-                <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} />
+          <fieldset>
+            <legend>Video source</legend>
 
-                {/* PRD §3.1: intrusion alerts "trong khung giờ cấm (VD: 22h - 05h)". The
-                    window is per-zone and evaluated against wall-clock time, so it belongs
-                    next to the polygon it arms rather than in a global setting. */}
-                <div className="zone-hours">
-                  <span className="fact-label">Zone hours</span>
+            <div className="choices">
+              {['demo', 'upload', 'rtsp'].map((type) => (
+                <label key={type} className="choice">
+                  <input
+                    type="radio"
+                    name="source_type"
+                    value={type}
+                    checked={sourceType === type}
+                    onChange={() => {
+                      setSourceType(type)
+                      setSource(type === 'demo' && demos.length ? demos[0].id : '')
+                    }}
+                  />
+                  {SOURCE_LABELS[type]}
+                </label>
+              ))}
+            </div>
 
-                  <div className="choices">
-                    <label className="choice">
-                      <input
-                        type="radio"
-                        name="zone_hours"
-                        checked={!hoursEnabled}
-                        onChange={() => setHoursEnabled(false)}
-                      />
-                      Always armed
+            {sourceType === 'demo' && (
+              <label className="field">
+                <span className="visually-hidden">Demo clip</span>
+                <select value={source} onChange={(e) => setSource(e.target.value)}>
+                  {demos.map((demo) => (
+                    <option key={demo.id} value={demo.id}>
+                      {demo.name}
+                      {demo.suggested_label ? ` — shows ${demo.suggested_label.replace('_', ' ')}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {sourceType === 'upload' && (
+              <div className="field">
+                <input type="file" accept="video/mp4,video/x-matroska,video/quicktime" onChange={handleUpload} />
+                {source && <small className="ok">Uploaded as {source}</small>}
+              </div>
+            )}
+
+            {sourceType === 'rtsp' && (
+              <label className="field">
+                <span className="visually-hidden">RTSP URL</span>
+                <input
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
+                />
+              </label>
+            )}
+          </fieldset>
+
+          <fieldset>
+            <legend>Detection rules</legend>
+            <p className="always-on">
+              <span className="tag">Fall detection</span>
+              <span className="tag">Abandoned object</span>
+              <span>always active</span>
+            </p>
+
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={intrusionEnabled}
+                onChange={(e) => setIntrusionEnabled(e.target.checked)}
+              />
+              <span className="toggle-text">
+                <strong>Intrusion detection</strong>
+                <span className="hint">Alerts when a person stands inside a zone you draw on the preview.</span>
+              </span>
+            </label>
+
+            {intrusionEnabled && (
+              <div className="zone-hours">
+                <span className="fact-label">Active monitoring hours</span>
+
+                <div className="choices">
+                  <label className="choice">
+                    <input
+                      type="radio"
+                      name="zone_hours"
+                      checked={!hoursEnabled}
+                      onChange={() => setHoursEnabled(false)}
+                    />
+                    Always armed
+                  </label>
+                  <label className="choice">
+                    <input
+                      type="radio"
+                      name="zone_hours"
+                      checked={hoursEnabled}
+                      onChange={() => setHoursEnabled(true)}
+                    />
+                    Set hours only
+                  </label>
+                </div>
+
+                {hoursEnabled && (
+                  <div className="time-range">
+                    <label className="field compact-field">
+                      <span>From</span>
+                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
                     </label>
-                    <label className="choice">
-                      <input
-                        type="radio"
-                        name="zone_hours"
-                        checked={hoursEnabled}
-                        onChange={() => setHoursEnabled(true)}
-                      />
-                      Only between set hours
+                    <label className="field compact-field">
+                      <span>To</span>
+                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
                     </label>
                   </div>
+                )}
 
-                  {hoursEnabled && (
-                    <>
-                      <div className="time-range">
-                        <label className="field compact-field">
-                          <span>From</span>
-                          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-                        </label>
-                        <label className="field compact-field">
-                          <span>To</span>
-                          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-                        </label>
-                      </div>
-
-                      {/* The consequence, not just the state. An operator who sets a night
-                          window at midday would otherwise leave this screen believing the
-                          zone is live and conclude the feature is broken. aria-live so the
-                          note is announced when the times change, not just painted. */}
-                      <small className={windowNote.armed ? 'ok' : 'warn'} aria-live="polite">
-                        {windowNote.text}
-                      </small>
-                    </>
-                  )}
+                {/* Real-time Status Feedback Card */}
+                <div className="active-hours-status-card" aria-live="polite">
+                  <div className="status-header">
+                    <span className="status-label">Monitoring status</span>
+                    {!hoursEnabled ? (
+                      <span className="status-badge armed">
+                        <span className="pulse-dot green" aria-hidden="true" />
+                        Armed
+                      </span>
+                    ) : windowNote.armed ? (
+                      <span className="status-badge armed">
+                        <span className="pulse-dot green" aria-hidden="true" />
+                        Armed
+                      </span>
+                    ) : (
+                      <span className="status-badge disarmed">
+                        <span className="badge-dot amber" aria-hidden="true" />
+                        Disarmed
+                      </span>
+                    )}
+                  </div>
+                  <small className={!hoursEnabled || windowNote.armed ? 'ok' : 'warn'}>
+                    {!hoursEnabled ? 'Always armed — 24/7 active monitoring enabled.' : windowNote.text}
+                  </small>
                 </div>
-              </>
+              </div>
+            )}
+          </fieldset>
+
+          {error && (
+            <p className="err" role="alert">
+              <span aria-hidden="true">▲</span>
+              {error}
+            </p>
+          )}
+
+          <div className="actions">
+            <button type="submit" className="primary" disabled={busy || !source}>
+              {busy ? 'Starting…' : 'Add camera'}
+            </button>
+            {!source && !busy && <span className="hint">Choose a video source to continue.</span>}
+          </div>
+        </div>
+
+        {/* Right Column: Visual Live Canvas Sticky Card */}
+        <div className="setup-col-preview">
+          <div className="setup-preview-card">
+            <div className="setup-preview-head">
+              <div><span className="setup-step">02</span><h2>Preview and zone</h2></div>
+              {previewUrl && intrusionEnabled && (
+                <span className={polygon.length < 3 ? 'zone-points-badge warning' : 'zone-points-badge active'}>
+                  <span className={polygon.length < 3 ? 'badge-dot amber' : 'badge-dot green'} aria-hidden="true" />
+                  {polygon.length < 3
+                    ? `${polygon.length}/3 points drawn`
+                    : `${polygon.length} points active`}
+                </span>
+              )}
+              {previewUrl && !intrusionEnabled && (
+                <span className="status-badge disarmed">
+                  <span className="badge-dot amber" aria-hidden="true" />
+                  Zone off
+                </span>
+              )}
+            </div>
+
+            {previewUrl && !imageError ? (
+              <div className="preview-container">
+                {intrusionEnabled ? (
+                  <div className="preview-canvas-wrap">
+                    <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} onError={() => setImageError(true)} />
+                  </div>
+                ) : (
+                  <div className="preview-image-wrap">
+                    <div className="polygon-stage">
+                      <img src={previewUrl} alt="Camera preview frame" onError={() => setImageError(true)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : imageError ? (
+              <div className="preview-placeholder">
+                <span className="preview-placeholder-icon error" aria-hidden="true">!</span>
+                <h4>RTSP connection failed</h4>
+                <p>Check the stream URL, credentials, and camera network connection.</p>
+              </div>
             ) : (
-              <small className="warn">Pick a video source first to draw the zone on its preview.</small>
-            ))}
-        </fieldset>
-
-        {/* role="alert" so the failure is announced rather than silently rendered next to
-            a submit button that appears to do nothing. */}
-        {error && (
-          <p className="err" role="alert">
-            <span aria-hidden="true">▲</span>
-            {error}
-          </p>
-        )}
-
-        <div className="actions">
-          <button type="submit" className="primary" disabled={busy || !source}>
-            {busy ? 'Starting…' : 'Add camera'}
-          </button>
-          <button type="button" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          {/* A disabled button with no stated reason reads as a broken button. */}
-          {!source && !busy && <span className="hint">Choose a video source to continue.</span>}
+              <div className="preview-placeholder">
+                <span className="preview-placeholder-icon" aria-hidden="true">+</span>
+                <h4>No source selected</h4>
+                <p>The preview will appear when a video source is ready.</p>
+              </div>
+            )}
+          </div>
         </div>
       </form>
     </div>

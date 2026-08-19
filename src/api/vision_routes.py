@@ -17,10 +17,17 @@ import os
 import uuid
 
 import cv2
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
-from src.api.deps import current_user, require_guard, require_manager, session_is_live
+from src.api.deps import (
+    current_user,
+    current_websocket_manager,
+    require_guard,
+    require_manager,
+    require_operator,
+    session_is_live,
+)
 from src.models.camera_schemas import Alert, AlertVerdict, CameraCreate, CameraInfo, DemoVideo, SystemStatus
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
@@ -33,6 +40,8 @@ router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_guard)])
 # The statistics report is the one manager-only surface. Separate router, and the two never
 # share a path, so FastAPI cannot resolve a request against the wrong gate.
 manager_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_manager)])
+operator_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_operator)])
+manager_ws_router = APIRouter(tags=["monitoring"])
 
 _ALLOWED_UPLOAD_EXT = {".mp4", ".avi", ".mov", ".mkv"}
 # Uploads are read into memory by the frame-probe below, and this is a demo box.
@@ -210,6 +219,17 @@ async def list_alerts(request: Request, unacknowledged_only: bool = False) -> li
     return get_service(request).list_alerts(unacknowledged_only=unacknowledged_only)
 
 
+@router.get("/evidence/{evidence_id}")
+async def incident_evidence(evidence_id: str, request: Request) -> FileResponse:
+    """Serve local evidence only through the authenticated operator surface."""
+    if get_service(request).evidence_store.backend != "local":
+        raise HTTPException(status_code=404, detail="Local evidence storage is disabled")
+    path = get_service(request).evidence_store.local_path(evidence_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.post("/alerts/{alert_id}/acknowledge", status_code=204)
 async def acknowledge_alert(alert_id: str, request: Request) -> Response:
     """Dismiss an alert without judging it.
@@ -233,7 +253,13 @@ async def submit_verdict(alert_id: str, payload: AlertVerdict, request: Request)
     when two guards disagree about what a false alarm looks like.
     """
     judged_by = current_user(request).username
-    if not get_service(request).record_operator_verdict(alert_id, payload.verdict, judged_by=judged_by):
+    if not get_service(request).record_operator_verdict(
+        alert_id,
+        payload.verdict,
+        judged_by=judged_by,
+        operator_note=payload.operator_note,
+        actual_event_type=payload.actual_event_type,
+    ):
         raise HTTPException(status_code=404, detail=f"No alert '{alert_id}'")
     return Response(status_code=204)
 
@@ -298,7 +324,7 @@ async def event_stream(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/monitoring/status", response_model=SystemStatus)
+@operator_router.get("/monitoring/status", response_model=SystemStatus)
 async def monitoring_status(request: Request) -> SystemStatus:
     return get_service(request).status()
 
@@ -321,6 +347,7 @@ async def statistics(request: Request) -> dict:
     # build_report does blocking file I/O; off the event loop, like every other such call.
     report = await asyncio.to_thread(build_report)
     operational = await asyncio.to_thread(service.operational_stats)
+    heatmap = await asyncio.to_thread(service.heatmap)
 
     body = report.model_dump()
     # Nulls are kept deliberately — no `exclude_none`. `precision` is `None` when nothing has
@@ -332,4 +359,38 @@ async def statistics(request: Request) -> dict:
     # the report's central decision — *why* there is no recall number — so it is re-attached
     # explicitly or the most important statement in the report silently vanishes from the API.
     body["recall_note"] = report.recall_note
-    return {"report": body, "operational": operational}
+    return {"report": body, "operational": operational, "heatmap": heatmap}
+
+
+@manager_ws_router.websocket("/manager/live")
+async def manager_live(websocket: WebSocket) -> None:
+    """Push manager dashboard changes without making the browser poll continuously."""
+    user = current_websocket_manager(websocket)
+    if user is None:
+        await websocket.close(code=1008, reason="Manager authentication required")
+        return
+
+    service = getattr(websocket.app.state, "monitoring", None)
+    if service is None:
+        await websocket.close(code=1013, reason="Monitoring service is not ready")
+        return
+
+    await websocket.accept()
+    queue = service.subscribe()
+    try:
+        await websocket.send_json({"type": "manager.connected", "data": {"username": user.username}})
+        while True:
+            if not session_is_live(websocket):
+                await websocket.close(code=1008, reason="Session expired")
+                return
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=5.0)
+                await websocket.send_json(message)
+            except TimeoutError:
+                # A bounded heartbeat keeps camera health moving on the manager screen even
+                # when no incident event has been published.
+                await websocket.send_json({"type": "manager.status", "data": service.status().model_dump()})
+    except WebSocketDisconnect:
+        return
+    finally:
+        service.unsubscribe(queue)

@@ -21,6 +21,7 @@ IncidentLabel = Literal["fall_detection", "abandoned_object", "intrusion"]
 # found inconclusive.
 TriageStatus = Literal["pending", "complete", "skipped"]
 TriageVerdictLabel = Literal["real", "false_positive", "uncertain"]
+EvidencePhase = Literal["before", "after"]
 
 # What the guard concluded (PRD §3.2). Distinct from the model's vocabulary on purpose: the
 # operator answers "is this real", not "was the detector right".
@@ -29,6 +30,19 @@ OperatorVerdict = Literal["real", "false"]
 # Fall and abandoned-object run on every camera unconditionally (PRD §3.1). Intrusion is
 # opt-in because it is meaningless without a polygon to be inside of.
 ALWAYS_ON_LABELS: tuple[str, ...] = ("fall_detection", "abandoned_object")
+
+
+class FallPerspectiveConfig(BaseModel):
+    """Optional per-camera overrides for inference-free fall measurements."""
+
+    center_velocity_ratio: float | None = Field(default=None, ge=0.0, le=10.0)
+    area_growth_ratio: float | None = Field(default=None, ge=0.0, le=10.0)
+    area_acceleration_ratio: float | None = Field(default=None, ge=0.0, le=50.0)
+    foot_stability_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    upper_drop_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    optical_flow_ratio: float | None = Field(default=None, ge=0.0, le=10.0)
+    confirmation_sec: float | None = Field(default=None, ge=0.0, le=3.0)
+    persistence_grace_sec: float | None = Field(default=None, ge=0.0, le=3.0)
 
 
 class DemoVideo(BaseModel):
@@ -57,6 +71,10 @@ class CameraCreate(BaseModel):
     )
     target_fps: float | None = Field(default=None, gt=0.0, le=60.0)
     loop_source: bool = Field(default=True, description="Restart file sources at EOF so the grid keeps running.")
+    fall_perspective: FallPerspectiveConfig | None = Field(
+        default=None,
+        description="Optional bbox/optical-flow thresholds calibrated for this camera view.",
+    )
 
     @model_validator(mode="after")
     def _check_zone(self) -> "CameraCreate":
@@ -100,7 +118,21 @@ class CameraInfo(BaseModel):
     running: bool = False
     processed_frames: int = 0
     inference_capacity_fps: float = 0.0
+    latency_p50_ms: float = 0.0
+    latency_p95_ms: float = 0.0
+    latency_p99_ms: float = 0.0
+    inference_wait_p95_ms: float = 0.0
+    processing_errors: int = 0
     stream_url: str = ""
+    fall_perspective: FallPerspectiveConfig | None = None
+
+
+class AlertEvidenceFrame(BaseModel):
+    """One sampled still from the VLM clip, in chronological order."""
+
+    index: int
+    phase: EvidencePhase
+    image_data_url: str
 
 
 class Alert(BaseModel):
@@ -130,6 +162,7 @@ class Alert(BaseModel):
     zone_name: str | None = None
     track_id: str | None = None
     image_data_url: str = ""
+    evidence_url: str | None = None
     acknowledged: bool = False
 
     # Second-stage triage. "pending" is what the UI shows a spinner for; "skipped" means the
@@ -139,24 +172,34 @@ class Alert(BaseModel):
     triage_verdict: TriageVerdictLabel | None = None
     triage_confidence: float | None = None
     triage_rationale: str | None = None
+    triage_frame_observations: list[str] = Field(default_factory=list)
     triage_error: str | None = None
+    evidence_frames: list[AlertEvidenceFrame] = Field(default_factory=list)
 
     operator_verdict: OperatorVerdict | None = None
     # Who judged it. A labelled dataset whose labels have no author cannot be audited when
     # two guards disagree about what a false alarm looks like. None on rows judged before
     # accounts existed, and on any path that records a verdict without auth in front of it.
     judged_by: str | None = None
+    operator_note: str | None = None
+    actual_event_type: str | None = None
 
 
 class AlertVerdict(BaseModel):
     """The guard's HITL judgement on one alert (PRD §3.2)."""
 
     verdict: OperatorVerdict
+    operator_note: str | None = Field(default=None, max_length=2000)
+    actual_event_type: str | None = Field(default=None, max_length=64)
 
 
 class SystemStatus(BaseModel):
     total_cameras: int = 0
     active_cameras: int = 0
     average_inference_capacity_fps: float = 0.0
+    average_latency_p95_ms: float = 0.0
+    processing_errors: int = 0
     total_processed_frames: int = 0
+    max_concurrent_inferences: int = 0
+    replaced_frame_callbacks: int = 0
     unacknowledged_alerts: int = 0

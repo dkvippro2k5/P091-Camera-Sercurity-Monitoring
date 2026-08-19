@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 import cv2
@@ -17,6 +18,16 @@ logger = logging.getLogger(__name__)
 # repeatedly is harmless; the lock only keeps concurrent writes from interleaving.
 _FFMPEG_OPTS_LOCK = threading.Lock()
 _RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp"
+_LATENCY_WINDOW_SIZE = 100
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    """Nearest-rank percentile for a small bounded telemetry window."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = round((len(ordered) - 1) * fraction)
+    return round(ordered[index], 2)
 
 
 class CameraStreamWorker:
@@ -43,6 +54,7 @@ class CameraStreamWorker:
         open_timeout_sec: float = 10.0,
         read_timeout_sec: float = 10.0,
         loop_finite_sources: bool = False,
+        inference_semaphore: threading.Semaphore | None = None,
     ):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -59,6 +71,7 @@ class CameraStreamWorker:
         # A file or other finite source hits EOF legitimately. Treating that as a dropped
         # connection restarts it from frame 0 forever; opt in explicitly for demo loops.
         self.loop_finite_sources = loop_finite_sources
+        self.inference_semaphore = inference_semaphore
 
         self._stop_event = threading.Event()
         self._process_thread: threading.Thread | None = None
@@ -75,6 +88,10 @@ class CameraStreamWorker:
         self._processed_count = 0
         self._last_fps = 0.0
         self._last_latency_ms = 0.0
+        self._latencies_ms: deque[float] = deque(maxlen=_LATENCY_WINDOW_SIZE)
+        self._last_inference_wait_ms = 0.0
+        self._inference_waits_ms: deque[float] = deque(maxlen=_LATENCY_WINDOW_SIZE)
+        self._processing_errors = 0
         self._reconnect_count = 0
         self._stopped_reason: str | None = None
 
@@ -125,6 +142,7 @@ class CameraStreamWorker:
 
     def get_stats(self) -> dict:
         with self._lock_stats:
+            latencies = list(self._latencies_ms)
             return {
                 "camera_id": self.camera_id,
                 "rtsp_url": self.rtsp_url,
@@ -135,6 +153,16 @@ class CameraStreamWorker:
                 # rate — that is capped by target_fps and by how fast the source delivers.
                 "inference_capacity_fps": self._last_fps,
                 "last_latency_ms": self._last_latency_ms,
+                "latency_p50_ms": _percentile(latencies, 0.50),
+                "latency_p95_ms": _percentile(latencies, 0.95),
+                "latency_p99_ms": _percentile(latencies, 0.99),
+                "latency_window_frames": len(latencies),
+                "last_inference_wait_ms": self._last_inference_wait_ms,
+                "inference_wait_p95_ms": _percentile(list(self._inference_waits_ms), 0.95),
+                "inference_wait_max_ms": (
+                    max(self._inference_waits_ms) if self._inference_waits_ms else 0.0
+                ),
+                "processing_errors": self._processing_errors,
                 "reconnect_count": self._reconnect_count,
                 "stopped_reason": self._stopped_reason,
             }
@@ -340,10 +368,13 @@ class CameraStreamWorker:
         """Processing thread: pick the latest frame from the buffer, run the pipeline."""
         frame_interval = 1.0 / self.target_fps if self.target_fps > 0 else 0.033
         last_processed_id = 0
+        next_process_at = time.monotonic()
 
         while not self._stop_event.is_set():
-            # Wait for the next processing window
-            self._stop_event.wait(frame_interval)
+            # Pace inference starts, not inference completions. Sleeping a full interval
+            # after a 180ms inference at a 5fps target produces only ~2.6fps.
+            wait_for = max(0.0, next_process_at - time.monotonic())
+            self._stop_event.wait(wait_for)
             if self._stop_event.is_set():
                 break
 
@@ -354,20 +385,39 @@ class CameraStreamWorker:
 
             # Skip if no new frame since last processing
             if frame is None or frame_id == last_processed_id:
+                next_process_at = time.monotonic() + frame_interval
                 continue
             last_processed_id = frame_id
 
             # Process frame with Vision Pipeline
-            process_start = time.perf_counter()
+            queue_start = time.perf_counter()
             try:
-                output_frame, result = self.pipeline.process_frame(
-                    frame, frame_id=frame_id, camera_id=self.camera_id
-                )
+                acquired = False
+                if self.inference_semaphore is not None:
+                    while not self._stop_event.is_set():
+                        acquired = self.inference_semaphore.acquire(timeout=0.1)
+                        if acquired:
+                            break
+                    if not acquired:
+                        break
 
-                elapsed = time.perf_counter() - process_start
+                inference_start = time.perf_counter()
+                try:
+                    output_frame, result = self.pipeline.process_frame(
+                        frame, frame_id=frame_id, camera_id=self.camera_id
+                    )
+                finally:
+                    if acquired:
+                        self.inference_semaphore.release()
+
+                elapsed = time.perf_counter() - inference_start
+                inference_wait_ms = round((inference_start - queue_start) * 1000, 2)
                 with self._lock_stats:
                     self._processed_count += 1
                     self._last_latency_ms = round(elapsed * 1000, 2)
+                    self._latencies_ms.append(self._last_latency_ms)
+                    self._last_inference_wait_ms = inference_wait_ms
+                    self._inference_waits_ms.append(inference_wait_ms)
                     self._last_fps = round(1.0 / max(0.001, elapsed), 2)
 
                 # Trigger callback if registered
@@ -375,4 +425,10 @@ class CameraStreamWorker:
                     self.on_result_callback(self.camera_id, result, output_frame)
 
             except Exception as e:
+                with self._lock_stats:
+                    self._processing_errors += 1
                 logger.error(f"[{self.camera_id}] Error in vision pipeline processing: {e}")
+            finally:
+                # Do not run catch-up bursts after an overloaded interval; use the newest
+                # frame at the next normal slot instead.
+                next_process_at = max(next_process_at + frame_interval, time.monotonic())

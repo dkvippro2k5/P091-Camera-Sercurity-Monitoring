@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Cache YOLO weights
+        id: cache-weights
+        uses: actions/cache@v4
+        with:
+          path: src/vision/weights/yolo26l.pt
+          key: yolo26l-weights-v1
+
+      - name: Download YOLO weights
+        if: steps.cache-weights.outputs.cache-hit != 'true'
+        # gitignored on purpose (53MB binary) -- fetched here via ultralytics' own
+        # resolver so the URL always matches the installed ultralytics version,
+        # instead of a hand-pinned GitHub release link that would go stale.
+        run: |
+          mkdir -p src/vision/weights
+          python -c "from ultralytics import YOLO; YOLO('yolo26l.pt')"
+          mv yolo26l.pt src/vision/weights/yolo26l.pt
+
       - name: Lint with ruff
         run: ruff check src/ tests/
 
@@ -30,3 +47,34 @@ jobs:
         env:
           APP_ENV: test
           OPENAI_API_KEY: test-key
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: p091-backend:ci
+      - uses: docker/build-push-action@v6
+        with:
+          context: src/frontend
+          push: false
+          tags: p091-frontend:ci

@@ -29,16 +29,15 @@ RUN useradd -m appuser
 # Copy application code
 COPY . .
 
-# Create data directory with correct ownership
-RUN mkdir -p /app/data && chown -R appuser:appuser /app
+# Runtime state is writable; application code remains root-owned and read-only to appuser.
+RUN mkdir -p /app/data /app/models && chown -R appuser:appuser /app/data
 
 USER appuser
 
 EXPOSE 8000
 
-# Model weights are gitignored, so a fresh clone builds an image without them and the
-# detector raises FileNotFoundError at startup rather than pretending to see. Mount or
-# COPY src/vision/weights/yolo26l.pt into the image.
+# Model weights are mounted read-only at runtime by docker-compose. Keeping them outside the
+# image avoids a 50+ MB layer and lets operators update a checkpoint without rebuilding.
 HEALTHCHECK --start-period=90s --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 

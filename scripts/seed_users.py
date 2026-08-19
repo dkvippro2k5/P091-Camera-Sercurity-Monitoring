@@ -25,6 +25,8 @@ if sys.platform == "win32":
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.config import get_settings  # noqa: E402
+from src.services.postgres_user_store import PostgresUserStore  # noqa: E402
 from src.services.user_store import DEFAULT_USERS_PATH, UserStore  # noqa: E402
 
 # Short enough not to encourage a sticky note, long enough to be worth hashing.
@@ -68,7 +70,14 @@ def main() -> int:
     parser.add_argument("--path", default=DEFAULT_USERS_PATH, help="Where users.json lives")
     args = parser.parse_args()
 
-    store = UserStore(path=args.path)
+    settings = get_settings()
+    store = (
+        PostgresUserStore(settings.database_url)
+        if args.path == DEFAULT_USERS_PATH
+        and settings.app_env.lower() == "production"
+        and settings.database_url.startswith(("postgresql://", "postgres://"))
+        else UserStore(path=args.path)
+    )
 
     if args.list:
         users = store.list_users()
