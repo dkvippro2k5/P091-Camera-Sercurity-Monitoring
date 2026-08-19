@@ -15,7 +15,7 @@ They are used two ways, which is not redundancy:
   whether an `auth.revoked` broadcast is about it.
 """
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocket
 
 from src.services.sessions import COOKIE_NAME, SessionStore
 from src.services.user_store import User, UserStore
@@ -25,6 +25,7 @@ from src.services.user_store import User, UserStore
 # surfaces an error without throwing away the session.
 _NOT_AUTHENTICATED = "Not signed in"
 _NOT_PERMITTED = "This action is for managers only"
+_GUARD_ONLY = "This action is for guards only"
 
 
 def _stores(request: Request) -> tuple[UserStore, SessionStore]:
@@ -62,19 +63,15 @@ def current_user(request: Request, touch: bool = True) -> User:
 
 
 def require_guard(request: Request) -> User:
-    """Any signed-in operator. Guards and managers both pass.
+    """Allow guards onto live footage, incidents, verdicts, and camera configuration."""
+    user = current_user(request)
+    if user.role != "guard":
+        raise HTTPException(status_code=403, detail=_GUARD_ONLY)
+    return user
 
-    Named for the surface it protects rather than the role it demands: this is everything a
-    guard does — the live grid, the alert queue, and camera configuration.
 
-    A manager is not offered any of it in the UI, and the gate still admitting them is
-    deliberate rather than an oversight. `/monitoring/status` is polled every 3 seconds by
-    every signed-in browser to feed the masthead's camera vitals, and the frontend signs out
-    on any 401 — so a role check here would evict a manager from their own session seconds
-    after they logged in. The manager's restriction is enforced by not routing them to these
-    screens, which means a direct API call still reaches them. Accepted, and the reason it is
-    acceptable is that the two roles are colleagues in one control room, not adversaries.
-    """
+def require_operator(request: Request) -> User:
+    """Allow either operator role onto shared system-status routes."""
     return current_user(request)
 
 
@@ -83,6 +80,21 @@ def require_manager(request: Request) -> User:
     user = current_user(request)
     if user.role != "manager":
         raise HTTPException(status_code=403, detail=_NOT_PERMITTED)
+    return user
+
+
+def current_websocket_manager(websocket: WebSocket) -> User | None:
+    """Resolve and authorize the session cookie for a manager WebSocket."""
+    users = getattr(websocket.app.state, "users", None)
+    sessions = getattr(websocket.app.state, "sessions", None)
+    if users is None or sessions is None:
+        return None
+    session = sessions.resolve(websocket.cookies.get(COOKIE_NAME), touch=False)
+    if session is None:
+        return None
+    user = users.get(session.username)
+    if user is None or user.role != "manager":
+        return None
     return user
 
 

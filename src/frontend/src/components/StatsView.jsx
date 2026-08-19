@@ -1,261 +1,190 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { incidentMeta } from '../incidents'
 
-/**
- * The manager's numbers: PRD §4 accuracy on the left, operational volume on the right.
- *
- * No charting library — the two views that matter here are a small table and a bar per day,
- * both of which are a `<div>` with a width. Adding a dependency for that would triple the
- * frontend's dependency count for one screen.
- *
- * Two rules the rest of the codebase is emphatic about and this screen must honour:
- *
- * - **`precision` is `float | None`, and `None` is not `0.0`.** `eval_report._precision`
- *   returns `None` when nothing has been reviewed specifically so that "nobody has looked
- *   at this camera yet" cannot be read as "every alert from it was wrong". Rendering it as
- *   `0%` would undo that at the last step, so `pct()` prints `—`.
- * - **Colour is never the only encoding.** Every value is labelled in text; the severity
- *   hues are decoration on top of a name that is already there.
- */
 function pct(value) {
   return value === null || value === undefined ? '—' : `${(value * 100).toFixed(1)}%`
 }
 
-export default function StatsView() {
+function number(value) {
+  return new Intl.NumberFormat().format(value ?? 0)
+}
+
+export default function StatsView({ status }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
-    api
-      .statistics()
-      .then((body) => !cancelled && setData(body))
-      .catch((err) => !cancelled && setError(err.message))
+    let socket
+    let reconnectTimer
+
+    const connect = () => {
+      if (cancelled) return
+      socket = new WebSocket(api.managerLiveUrl())
+      socket.onmessage = () => {
+        // The event stream is the invalidation signal; the statistics endpoint remains the
+        // single source of truth for the aggregate report and heat-map data.
+        api.statistics().then((body) => !cancelled && setData(body)).catch(() => {})
+      }
+      socket.onclose = () => {
+        if (!cancelled) reconnectTimer = setTimeout(connect, 3000)
+      }
+    }
+
+    connect()
     return () => {
       cancelled = true
+      clearTimeout(reconnectTimer)
+      socket?.close()
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    api.statistics()
+      .then((body) => !cancelled && setData(body))
+      .catch((err) => !cancelled && setError(err.message))
+    return () => { cancelled = true }
+  }, [])
+
   if (error) {
-    return (
-      <p className="err" role="alert">
-        <span aria-hidden="true">▲</span>
-        {error}
-      </p>
-    )
+    return <div className="stats-error" role="alert"><span className="status-mark danger">!</span><div><h4>Statistics unavailable</h4><p>{error}</p></div></div>
   }
-  if (!data) return <p className="hint">Loading statistics…</p>
+  if (!data) return <div className="stats-loading">Preparing manager view…</div>
 
-  const { report, operational } = data
+  const { report, operational, heatmap } = data
+  const total = operational.total_alerts || 0
+  const reviewed = operational.reviewed_alerts || 0
+  const reviewRate = total ? reviewed / total : null
+  const activeCameras = status?.active_cameras ?? null
+  const totalCameras = status?.total_cameras ?? null
+  const cameraRows = operational.by_camera || []
+  const labelRows = report.by_label || []
+  const days = operational.by_day || []
 
   return (
-    <div className="stats">
-      <div className="stage-head">
-        <h2>Statistics</h2>
-        <span className="count">
-          {operational.total_alerts} alert{operational.total_alerts === 1 ? '' : 's'} recorded
-        </span>
-      </div>
+    <section className="manager-dashboard" aria-labelledby="manager-page-title">
+      <header className="manager-hero">
+        <div>
+          <p className="eyebrow"><span className="live-dot" /> Operations intelligence</p>
+          <h1 id="manager-page-title">Manager overview</h1>
+          <p className="hero-copy">A clear view of detection quality, review workload, and where attention is accumulating.</p>
+        </div>
+        <div className="hero-stamp">
+          <span>Last activity</span>
+          <strong>{operational.last_alert ? new Date(operational.last_alert).toLocaleString() : 'No alerts yet'}</strong>
+        </div>
+      </header>
 
-      {/* Caveats first, not last. They are a first-class `warnings` list on the report for
-          exactly this reason: a figure whose caveat sits below the fold gets quoted without
-          it, and every number on this page is small-sample early on. */}
       {report.warnings?.length > 0 && (
-        <section className="stats-warnings" role="note">
-          <h3>Read these first</h3>
-          <ul>
-            {report.warnings.map((warning, i) => (
-              <li key={i}>{warning}</li>
-            ))}
-          </ul>
+        <section className="manager-warning" role="note">
+          <span className="status-mark warning">!</span>
+          <div><strong>Read the sample with care</strong><p>{report.warnings[0]}</p></div>
+          {report.warnings.length > 1 && <span className="warning-count">+{report.warnings.length - 1} more</span>}
         </section>
       )}
 
-      <section className="stats-block">
-        <h3>Right now</h3>
-        <div className="stat-tiles">
-          <Tile value={operational.live_unacknowledged} label="Awaiting a guard" attention={operational.live_unacknowledged > 0} />
-          <Tile value={operational.total_alerts} label="Alerts all time" />
-          <Tile value={operational.reviewed_alerts} label="Judged by a guard" />
-          <Tile value={operational.unreviewed_alerts} label="Never judged" />
-        </div>
-        <p className="hint">
-          &ldquo;Awaiting a guard&rdquo; counts only alerts still held in memory — the shift&apos;s live backlog.
-          &ldquo;Never judged&rdquo; counts the whole log, including alerts too old for anyone to action now.
-        </p>
+      <section className="manager-kpis" aria-label="Executive metrics">
+        <MetricCard label="Detection precision" value={pct(report.rule_precision)} detail="Reviewed incidents classified correctly" tone="good" />
+        <MetricCard label="False alarm rate" value={pct(report.false_alarm_rate)} detail="Across labelled alerts" tone={report.false_alarm_rate > 0.3 ? 'bad' : 'neutral'} />
+        <MetricCard label="Review coverage" value={pct(reviewRate)} detail={`${number(reviewed)} of ${number(total)} alerts judged`} tone="neutral" />
+        <MetricCard label="Live backlog" value={number(operational.live_unacknowledged)} detail="Alerts awaiting guard action" tone={operational.live_unacknowledged ? 'bad' : 'good'} />
       </section>
 
-      <section className="stats-block">
-        <h3>Detection accuracy (PRD §4)</h3>
-        <div className="stat-tiles">
-          <Tile value={pct(report.rule_precision)} label="Rule precision" />
-          <Tile value={pct(report.false_alarm_rate)} label="False-alarm rate" />
-          <Tile value={report.reviewed_rows} label="Reviewed alerts" />
-          <Tile value={report.cameras} label="Cameras reviewed" />
-        </div>
-
-        {/* The report refuses to print recall and says why, in its own words. Reproduced
-            verbatim rather than paraphrased — the refusal is the finding. */}
-        <p className="stats-note">
-          <strong>Recall: not computable.</strong> {report.recall_note}
-        </p>
-
-        {report.by_label?.length > 0 && (
-          <table className="stats-table">
-            <caption className="visually-hidden">Precision by incident label</caption>
-            <thead>
-              <tr>
-                <th scope="col">Incident</th>
-                <th scope="col">Reviewed</th>
-                <th scope="col">Real</th>
-                <th scope="col">False alarms</th>
-                <th scope="col">Precision</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.by_label.map((row) => (
-                <tr key={row.label}>
-                  <th scope="row">
-                    {incidentMeta(row.label).short}
-                    {/* Stated in words, not implied by a faint colour. A precision figure
-                        from four reviews is not a weaker number, it is a different kind of
-                        claim, and the reader has to be told which one they are looking at. */}
-                    {row.low_sample && <span className="hint"> too few to trust</span>}
-                  </th>
-                  <td>{row.reviewed}</td>
-                  <td>{row.real}</td>
-                  <td>{row.false_alarms}</td>
-                  <td>{pct(row.precision)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <section className="manager-primary-grid">
+        <TrendChart days={days} />
+        <ReviewPulse reviewed={reviewed} total={total} activeCameras={activeCameras} totalCameras={totalCameras} />
       </section>
 
-      {report.comparisons?.length > 0 && (
-        <section className="stats-block">
-          <h3>What AI triage would have done</h3>
-          <p className="hint">
-            Nothing was actually suppressed — every alert reached a guard. This replays each policy over alerts
-            whose outcome is already known, which is the only way to price the trade-off before committing to it.
-            Agreement with guards: {pct(report.triage_agreement)} over {report.triage_coverage} triaged alert
-            {report.triage_coverage === 1 ? '' : 's'}.
-          </p>
-
-          <table className="stats-table">
-            <caption className="visually-hidden">Rules alone versus rules plus VLM triage</caption>
-            <thead>
-              <tr>
-                <th scope="col">Policy</th>
-                <th scope="col">Precision before</th>
-                <th scope="col">Precision after</th>
-                <th scope="col">False alarms hidden</th>
-                <th scope="col">Real incidents hidden</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.comparisons.map((row) => (
-                <tr key={row.policy}>
-                  <th scope="row">{row.policy}</th>
-                  <td>{pct(row.baseline_precision)}</td>
-                  <td>{pct(row.precision)}</td>
-                  <td>{row.false_alarms_suppressed}</td>
-                  {/* The number that decides whether triage should ever gate the dashboard.
-                      Any value above zero is a medical emergency the system would have
-                      swallowed, so it is called out rather than left to blend in. */}
-                  <td className={row.real_incidents_suppressed > 0 ? 'stat-bad' : undefined}>
-                    {row.real_incidents_suppressed}
-                    {row.real_incidents_suppressed > 0 && ' — would have been missed'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      <section className="stats-block">
-        <h3>Alerts by camera</h3>
-        {operational.by_camera.length === 0 ? (
-          <p className="hint">No alerts recorded yet.</p>
-        ) : (
-          <table className="stats-table">
-            <thead>
-              <tr>
-                <th scope="col">Camera</th>
-                <th scope="col">Alerts</th>
-                <th scope="col">Reviewed</th>
-                <th scope="col">Unreviewed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {operational.by_camera.map((row) => (
-                <tr key={row.camera_id}>
-                  <th scope="row">{row.camera_name}</th>
-                  <td>{row.total}</td>
-                  <td>{row.reviewed}</td>
-                  <td>{row.total - row.reviewed}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <section className="manager-secondary-grid">
+        <IncidentMix rows={labelRows} />
+        <CameraHotspots rows={cameraRows} />
       </section>
 
-      {operational.by_day.length > 0 && <ByDay days={operational.by_day} />}
+      <HeatMap points={heatmap?.points || []} />
 
-      <section className="stats-block">
-        <h3>Coverage</h3>
-        <dl className="stats-meta">
-          <dt>Incident types seen</dt>
-          <dd>
-            {operational.by_label.length === 0
-              ? '—'
-              : operational.by_label.map((row) => `${incidentMeta(row.label).short} (${row.total})`).join(', ')}
-          </dd>
-          <dt>Guards who have judged alerts</dt>
-          <dd>{operational.reviewers.length ? operational.reviewers.join(', ') : '—'}</dd>
-          <dt>First alert</dt>
-          <dd>{operational.first_alert ? new Date(operational.first_alert).toLocaleString() : '—'}</dd>
-          <dt>Most recent alert</dt>
-          <dd>{operational.last_alert ? new Date(operational.last_alert).toLocaleString() : '—'}</dd>
-        </dl>
-      </section>
-    </div>
-  )
-}
+      {report.comparisons?.length > 0 && <TriagePanel rows={report.comparisons} agreement={report.triage_agreement} coverage={report.triage_coverage} />}
 
-function Tile({ value, label, attention }) {
-  return (
-    <div className={attention ? 'vital attention' : 'vital'}>
-      <span className="vital-value">{value}</span>
-      <span className="vital-label">{label}</span>
-    </div>
-  )
-}
-
-/**
- * Daily alert volume as plain bars. Each carries its own count in text beside it, so the
- * bar is redundant reinforcement rather than the only way to read the value.
- */
-function ByDay({ days }) {
-  const peak = Math.max(...days.map((d) => d.total), 1)
-  return (
-    <section className="stats-block">
-      <h3>Alerts per day</h3>
-      <ul className="bars">
-        {days.map((day) => (
-          <li key={day.date}>
-            <span className="bar-label">{day.date}</span>
-            <span className="bar-track">
-              <span className="bar-fill" style={{ width: `${(day.total / peak) * 100}%` }} />
-            </span>
-            <span className="bar-value">{day.total}</span>
-          </li>
-        ))}
-      </ul>
+      <footer className="manager-footer">
+        <span>Data window</span>
+        <strong>{operational.first_alert ? new Date(operational.first_alert).toLocaleDateString() : '—'} to {operational.last_alert ? new Date(operational.last_alert).toLocaleDateString() : '—'}</strong>
+        <span className="footer-separator" />
+        <span>Reviewers</span>
+        <strong>{operational.reviewers?.length ? operational.reviewers.join(', ') : 'None recorded'}</strong>
+        <span className="footer-separator" />
+        <span>Recall</span>
+        <strong className="footer-muted">Not measurable from surfaced alerts</strong>
+      </footer>
     </section>
   )
 }
+
+function HeatMap({ points }) {
+  const max = Math.max(...points.map((point) => point.total || 0), 1)
+  return <article className="viz-panel heatmap-panel">
+    <div className="panel-heading"><div><p className="eyebrow">Simulated floor plan</p><h2>Incident heat map</h2></div><span className="panel-stat">{points.length} cameras</span></div>
+    {points.length ? <div className="heatmap-canvas" role="img" aria-label="Simulated incident heat map">
+      {points.map((point) => <span key={point.camera_id} className="heatmap-point" title={`${point.camera_name}: ${point.total} alerts`} style={{ left: `${point.x}%`, top: `${point.y}%`, '--intensity': point.total / max }}><b>{point.total}</b></span>)}
+    </div> : <EmptyState text="No incident locations recorded" />}
+  </article>
+}
+
+function MetricCard({ label, value, detail, tone }) {
+  return <article className={`manager-metric ${tone}`}>
+    <span className="metric-label">{label}</span>
+    <strong className="metric-value">{value}</strong>
+    <span className="metric-detail">{detail}</span>
+  </article>
+}
+
+function TrendChart({ days }) {
+  const values = days.map((day) => day.total || 0)
+  const peak = Math.max(...values, 1)
+  const width = 680
+  const height = 220
+  const padX = 28
+  const padY = 24
+  const points = values.map((value, index) => {
+    const x = values.length <= 1 ? width / 2 : padX + (index / (values.length - 1)) * (width - padX * 2)
+    const y = height - padY - (value / peak) * (height - padY * 2)
+    return [x, y]
+  })
+  const line = points.map(([x, y]) => `${x},${y}`).join(' ')
+  const area = points.length ? `${padX},${height - padY} ${line} ${width - padX},${height - padY}` : ''
+
+  return <article className="viz-panel trend-panel">
+    <div className="panel-heading"><div><p className="eyebrow">Signal over time</p><h2>Alert activity</h2></div><span className="panel-stat">{number(values.reduce((sum, value) => sum + value, 0))} total</span></div>
+    {points.length ? <div className="trend-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Daily alert activity trend">
+      {[0.25, 0.5, 0.75].map((fraction) => <line key={fraction} x1={padX} x2={width - padX} y1={height - padY - fraction * (height - padY * 2)} y2={height - padY - fraction * (height - padY * 2)} className="chart-gridline" />)}
+      <polygon points={area} className="chart-area" />
+      <polyline points={line} className="chart-line" />
+      {points.map(([x, y], index) => <circle key={index} cx={x} cy={y} r="4" className="chart-point"><title>{days[index].date}: {days[index].total} alerts</title></circle>)}
+    </svg><div className="chart-labels">{days.map((day) => <span key={day.date}>{day.date}</span>)}</div></div> : <EmptyState text="No alert activity in this window" />}
+  </article>
+}
+
+function ReviewPulse({ reviewed, total, activeCameras, totalCameras }) {
+  const ratio = total ? Math.round((reviewed / total) * 100) : 0
+  return <article className="viz-panel pulse-panel">
+    <div className="panel-heading"><div><p className="eyebrow">Operator readiness</p><h2>Review pulse</h2></div><span className="panel-icon">↗</span></div>
+    <div className="pulse-main"><div className="donut" style={{ '--progress': `${ratio * 3.6}deg` }}><div><strong>{ratio}%</strong><span>reviewed</span></div></div><div className="pulse-copy"><strong>{reviewed ? `${number(reviewed)} judgements recorded` : 'No judgements yet'}</strong><span>{total ? `${number(total - reviewed)} alerts still need a decision` : 'The review queue is clear'}</span></div></div>
+    <div className="pulse-foot"><span><i className="pulse-key green" />Cameras live</span><strong>{activeCameras !== null && totalCameras !== null ? `${activeCameras}/${totalCameras}` : '—'}</strong></div>
+  </article>
+}
+
+function IncidentMix({ rows }) {
+  const max = Math.max(...rows.map((row) => row.total || row.reviewed || 0), 1)
+  return <article className="viz-panel mix-panel"><div className="panel-heading"><div><p className="eyebrow">Classification quality</p><h2>Incident mix</h2></div><span className="panel-stat">{rows.length} types</span></div>{rows.length ? <div className="mix-list">{rows.map((row) => { const total = row.total || row.reviewed || 0; const precision = row.precision; const meta = incidentMeta(row.label); return <div className="mix-row" key={row.label}><div className="mix-row-top"><strong>{meta.short}</strong><span>{number(total)} reviewed · {pct(precision)} precision</span></div><div className="mix-track"><span style={{ width: `${(total / max) * 100}%` }} /><b style={{ left: `${Math.min(100, (precision || 0) * 100)}%` }} /></div></div>})}</div> : <EmptyState text="No reviewed incidents yet" />}</article>
+}
+
+function CameraHotspots({ rows }) {
+  const max = Math.max(...rows.map((row) => row.total || 0), 1)
+  return <article className="viz-panel camera-panel"><div className="panel-heading"><div><p className="eyebrow">Where attention lands</p><h2>Camera hotspots</h2></div><span className="panel-stat">{rows.length} cameras</span></div>{rows.length ? <div className="hotspot-list">{rows.slice().sort((a, b) => b.total - a.total).map((row) => <div className="hotspot-row" key={row.camera_id}><div className="hotspot-label"><strong>{row.camera_name}</strong><span>{number(row.total)} alerts · {row.total ? Math.round((row.reviewed / row.total) * 100) : 0}% reviewed</span></div><div className="hotspot-track"><span style={{ width: `${(row.total / max) * 100}%` }} /></div></div>)}</div> : <EmptyState text="No camera alerts recorded" />}</article>
+}
+
+function TriagePanel({ rows, agreement, coverage }) {
+  return <section className="viz-panel triage-panel"><div className="panel-heading"><div><p className="eyebrow">Decision support</p><h2>VLM policy replay</h2><p className="panel-description">Historical replay only. It shows how automated review would have changed surfaced alerts.</p></div><div className="triage-summary"><strong>{pct(agreement)}</strong><span>agreement · {number(coverage)} cases</span></div></div><div className="policy-grid">{rows.map((row) => { const missed = row.real_incidents_suppressed > 0; const delta = (row.precision - row.baseline_precision) * 100; return <div className={`policy-row ${missed ? 'risk' : ''}`} key={row.policy}><strong>{row.policy}</strong><span>{pct(row.baseline_precision)} <i>→</i> {pct(row.precision)}</span><span className={delta >= 0 ? 'delta positive' : 'delta'}>{delta >= 0 ? '+' : ''}{delta.toFixed(1)} pts</span><span className="policy-result">{missed ? `${row.real_incidents_suppressed} real missed` : `${row.false_alarms_suppressed} false alarms filtered`}</span></div>})}</div></section>
+}
+
+function EmptyState({ text }) { return <div className="manager-empty">{text}</div> }

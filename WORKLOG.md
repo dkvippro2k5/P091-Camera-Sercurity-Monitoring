@@ -122,7 +122,7 @@ Dọn dẹp theo 3 quyết định của team: **chỉ dùng OpenAI key**, **b�
 | _(điền tên)_ | Khai báo `openai` thành dependency trực tiếp trong `requirements.txt` — `vlm.py` import thẳng, không nên phụ thuộc vào việc `langchain-openai` kéo nó về. | Done | [requirements.txt](requirements.txt) | 06/08/2026 |
 
 **Lưu ý về vận hành:** vì mock đã bỏ, một bản clone mới (weights `*.pt` bị gitignore) sẽ **không
-khởi động được** cho tới khi có `src/vision/weights/yolo11n.pt`. Đây là chủ ý — hệ giám sát báo
+khởi động được** cho tới khi có `src/vision/weights/yolo26l.pt`. Đây là chủ ý — hệ giám sát báo
 "không thấy gì" trong khi thực chất chưa nạp model là kiểu hỏng nguy hiểm nhất.
 
 `test_camera_id_propagates_into_detections` trước đây dựa vào mock để có detection trên frame

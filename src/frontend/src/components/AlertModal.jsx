@@ -1,12 +1,13 @@
+import { useState } from 'react'
 import { useFocusTrap } from '../useFocusTrap'
 import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incidents'
 
 export default function AlertModal({ alert, queued = 0, isHistory = false, onVerdict, onClose }) {
   const meta = incidentMeta(alert.label)
-  // Moves focus in on open, wraps Tab, and restores focus on close. The dialog declared
-  // role="alertdialog" + aria-modal before but never took focus, so a keyboard operator
-  // was left tabbing through the grid hidden behind the overlay.
   const dialogRef = useFocusTrap(true)
+  const [note, setNote] = useState(alert.operator_note || '')
+  const [actualEventType, setActualEventType] = useState(alert.actual_event_type || '')
+  const submit = (verdict) => onVerdict(alert.id, verdict, note, actualEventType)
 
   return (
     <div className="overlay">
@@ -20,7 +21,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
       >
         <div className="modal-head">
           <p className="modal-eyebrow">
-            <span aria-hidden="true">▲</span>
+            <span aria-hidden="true">!</span>
             {isHistory ? 'Reviewed incident' : `${meta.severity} priority`}
           </p>
           <h2 id="alert-heading">{meta.headline}</h2>
@@ -29,9 +30,6 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
           </p>
         </div>
 
-        {/* Facts as labelled pairs. Previously one run-on sentence — "Lobby (cam_3) ·
-            zone north · confidence 62%" — which forces the operator to parse prose at
-            the moment they are least able to. */}
         <div className="modal-facts">
           <Fact label="Camera" value={alert.camera_name} />
           {alert.zone_name && <Fact label="Zone" value={alert.zone_name} />}
@@ -41,21 +39,8 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
         </div>
 
         <div className="modal-body">
-          {/*
-            The captured frame, exactly as the rule engine saw it.
-            width/height are declared so the browser reserves the box before the JPEG
-            decodes; without them the modal grew as the image landed and the Acknowledge
-            button slid under an already-moving cursor.
-          */}
-          <img
-            className="shot"
-            src={alert.image_data_url}
-            width="640"
-            height="360"
-            alt={`${meta.headline} on ${alert.camera_name}`}
-          />
+          <EvidenceFrames alert={alert} meta={meta} />
 
-          {/* The rule engine's own evidence — which rule fired and on what. */}
           {alert.reason && (
             <p className="reason">
               <span className="fact-label">Rule</span>
@@ -63,23 +48,55 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
             </p>
           )}
 
-          {/* The second-stage assessment. Advisory only — it never suppressed this alert,
-              and it must not restyle the modal's severity, or a wrong verdict would
-              visually downgrade a real emergency. */}
           <TriagePanel alert={alert} />
+          {!alert.operator_verdict && (
+            <div className="operator-feedback">
+              <label htmlFor="actual-event-type">
+                What actually happened?
+                <select id="actual-event-type" value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
+                  <option value="">Select if known</option>
+                  <option value="real_incident">Real incident</option>
+                  <option value="false_alarm">False alarm</option>
+                  <option value="normal_activity">Normal activity</option>
+                  <option value="maintenance">Maintenance / service activity</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label htmlFor="guard-note">
+                Guard note
+                <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Describe what happened..." />
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="modal-foot">
           {isHistory ? (
             <>
-              {alert.operator_verdict && (
-                <span className="queued">
-                  Recorded as {alert.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
-                </span>
+              {alert.operator_verdict ? (
+                <>
+                  <span className="queued">
+                    Recorded as {alert.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
+                  </span>
+                  <button data-autofocus onClick={onClose}>
+                    Close
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="queued">
+                    {alert.triage_verdict === 'false_positive'
+                      ? 'AI Filtered — Override AI verdict:'
+                      : 'Past alert — Record verdict:'}
+                  </span>
+                  <button className="verdict-false" onClick={() => submit('false')}>
+                    False alarm
+                  </button>
+                  <button className="primary" data-autofocus onClick={() => submit('real')}>
+                    Confirm real
+                  </button>
+                </>
               )}
-              <button data-autofocus onClick={onClose}>
-                Close <kbd className="hotkey-badge">Esc</kbd>
-              </button>
             </>
           ) : (
             <>
@@ -88,11 +105,11 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
                   {queued} more {queued === 1 ? 'incident' : 'incidents'} waiting
                 </span>
               )}
-              <button className="danger" onClick={() => onVerdict(alert.id, 'false')}>
-                False alarm <kbd className="hotkey-badge">F</kbd>
+              <button className="verdict-false" onClick={() => submit('false')}>
+                False alarm
               </button>
-              <button className="primary" data-autofocus onClick={() => onVerdict(alert.id, 'real')}>
-                Confirm real <kbd className="hotkey-badge">↵ Enter</kbd>
+              <button className="primary" data-autofocus onClick={() => submit('real')}>
+                Confirm real
               </button>
             </>
           )}
@@ -102,14 +119,6 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
   )
 }
 
-/**
- * "AI assessment" — the VLM's reading of the rule engine's evidence plus a short clip.
- *
- * Rendered as a labelled aside rather than anything resembling a decision, because it is
- * advisory: every alert reaches the operator regardless of what this says. `skipped` is
- * shown as nothing at all — an assessment that never ran is not an inconclusive one, and
- * an empty panel is more honest than "unknown".
- */
 function TriagePanel({ alert }) {
   if (!alert.triage_status || alert.triage_status === 'skipped') return null
 
@@ -117,26 +126,71 @@ function TriagePanel({ alert }) {
     return (
       <p className="triage triage-pending" aria-live="polite">
         <span className="fact-label">AI assessment</span>
-        <span className="triage-text">Assessing…</span>
+        <span className="triage-text">Assessing...</span>
       </p>
     )
   }
 
   const meta = triageMeta(alert.triage_verdict)
+  const observations = Array.isArray(alert.triage_frame_observations) ? alert.triage_frame_observations : []
+
   return (
-    <p className={`triage ${meta.tone}`} aria-live="polite">
+    <div className={`triage ${meta.tone}`} aria-live="polite">
       <span className="fact-label">AI assessment</span>
-      <span className="triage-text">
+      <div className="triage-text">
         <strong>{meta.text}</strong>
         {typeof alert.triage_confidence === 'number' && alert.triage_verdict !== 'uncertain' && (
           <span className="triage-confidence"> ({(alert.triage_confidence * 100).toFixed(0)}% confident)</span>
         )}
-        {alert.triage_rationale && <span className="triage-rationale"> — {alert.triage_rationale}</span>}
+        {alert.triage_rationale && <span className="triage-rationale"> - {alert.triage_rationale}</span>}
         {!alert.triage_rationale && alert.triage_error && (
-          <span className="triage-rationale"> — assessment unavailable</span>
+          <span className="triage-rationale"> - assessment unavailable</span>
         )}
-      </span>
-    </p>
+        {observations.length > 0 && (
+          <ol className="triage-observations" aria-label="Frame observations">
+            {observations.map((observation, index) => (
+              <li key={`${index}-${observation}`}>{observation}</li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EvidenceFrames({ alert, meta }) {
+  const frames = Array.isArray(alert.evidence_frames) ? alert.evidence_frames : []
+
+  if (frames.length === 0) {
+    return (
+      <img
+        className="shot"
+        src={alert.image_data_url}
+        width="640"
+        height="360"
+        alt={`${meta.headline} on ${alert.camera_name}`}
+      />
+    )
+  }
+
+  return (
+    <section className="evidence-strip" aria-label="VLM evidence frames">
+      <div className="evidence-head">
+        <span className="fact-label">Evidence clip</span>
+        <span>{frames.length} chronological frames</span>
+      </div>
+      <div className="evidence-grid">
+        {frames.map((frame) => (
+          <figure key={`${frame.phase}-${frame.index}`} className="evidence-frame">
+            <img src={frame.image_data_url} alt={`${frame.phase} frame ${frame.index} for ${meta.headline}`} />
+            <figcaption>
+              <span>{frame.phase}</span>
+              <strong>#{frame.index}</strong>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
   )
 }
 

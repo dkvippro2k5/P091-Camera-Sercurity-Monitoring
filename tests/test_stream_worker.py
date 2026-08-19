@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from src.vision import IncidentDetector, VisionPipeline
-from src.vision.stream_worker import CameraStreamWorker
+from src.vision.stream_worker import CameraStreamWorker, _percentile
 
 
 class FakeCapture:
@@ -94,6 +94,72 @@ def wait_until(predicate, timeout: float = 5.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+# ---------------------------------------------------------------------------
+# Operational telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_percentile_handles_empty_and_unsorted_windows():
+    assert _percentile([], 0.95) == 0.0
+    assert _percentile([50.0, 10.0, 30.0, 20.0, 40.0], 0.50) == 30.0
+    assert _percentile([50.0, 10.0, 30.0, 20.0, 40.0], 0.95) == 50.0
+
+
+def test_worker_reports_bounded_latency_percentiles(mock_pipeline):
+    worker = CameraStreamWorker("cam_stats", "video.mp4", pipeline=mock_pipeline)
+    with worker._lock_stats:
+        worker._latencies_ms.extend([10.0, 20.0, 30.0, 40.0, 50.0])
+
+    stats = worker.get_stats()
+
+    assert stats["latency_p50_ms"] == 30.0
+    assert stats["latency_p95_ms"] == 50.0
+    assert stats["latency_p99_ms"] == 50.0
+    assert stats["latency_window_frames"] == 5
+
+
+def test_pipeline_failures_increment_processing_error_count(monkeypatch):
+    class ExplodingPipeline:
+        def process_frame(self, *args, **kwargs):
+            raise RuntimeError("synthetic inference failure")
+
+    monkeypatch.setattr(CameraStreamWorker, "_open_capture", lambda self: FakeCapture())
+    worker = CameraStreamWorker(
+        "cam_error",
+        "rtsp://fake/stream",
+        pipeline=ExplodingPipeline(),
+        target_fps=30.0,
+    )
+    worker.start()
+    observed = wait_until(lambda: worker.get_stats()["processing_errors"] > 0)
+    worker.stop()
+
+    assert observed, "pipeline exception was not reflected in worker telemetry"
+    assert worker.get_stats()["processed_frames"] == 0
+
+
+def test_worker_reports_time_waiting_for_shared_inference_slot(mock_pipeline, monkeypatch):
+    monkeypatch.setattr(CameraStreamWorker, "_open_capture", lambda self: FakeCapture())
+    limiter = threading.BoundedSemaphore(1)
+    limiter.acquire()
+    worker = CameraStreamWorker(
+        "cam_limited",
+        "rtsp://fake/stream",
+        pipeline=mock_pipeline,
+        target_fps=30.0,
+        inference_semaphore=limiter,
+    )
+    worker.start()
+    time.sleep(0.12)
+    limiter.release()
+
+    observed = wait_until(lambda: worker.get_stats()["processed_frames"] > 0)
+    worker.stop()
+
+    assert observed
+    assert worker.get_stats()["inference_wait_max_ms"] >= 50.0
 
 
 # ---------------------------------------------------------------------------

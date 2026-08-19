@@ -4,13 +4,21 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     volumes:
       # Camera registry, uploaded videos, demo clips and zone config all live here, so
       # this must be a volume or every restart loses the operator's setup.
       - ./data:/app/data
+      # Model weights are deployment data, not part of the Git repository or image.
+      - ${MODEL_WEIGHTS_HOST_PATH:-./src/vision/weights/yolo26l.pt}:/app/models/detector.pt:ro
+    environment:
+      MODEL_WEIGHTS_PATH: /app/models/detector.pt
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+      MKL_NUM_THREADS: ${MKL_NUM_THREADS:-2}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-2}
+      NUMEXPR_NUM_THREADS: ${NUMEXPR_NUM_THREADS:-2}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -26,7 +34,13 @@ services:
       context: ./src/frontend
       dockerfile: Dockerfile
     ports:
-      - "5173:80"
+      - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "fall_kitchen_transition",
+    "label": "fall_detection",
+    "source": "data/vision/test/fall.mp4",
+    "frame_times_sec": [24.0, 28.0, 31.0, 35.0, 39.0, 44.0],
+    "pre_count": 3,
+    "reason": "specialized fall posture model fired after a standing-to-floor transition",
+    "expected_verdicts": ["real"]
+  },
+  {
+    "id": "normal_warehouse_activity",
+    "label": "fall_detection",
+    "source": "data/vision/test/normal1.mp4",
+    "frame_times_sec": [0.0, 3.0, 6.0, 9.0, 12.0, 15.0],
+    "pre_count": 3,
+    "reason": "fall rule fired during ordinary upright activity",
+    "expected_verdicts": ["false_positive"]
+  }
+]

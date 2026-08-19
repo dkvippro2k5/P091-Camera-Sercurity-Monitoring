@@ -10,7 +10,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8092',
+        // FastAPI binds to IPv4 in local development; avoid Node trying ::1 first
+        // and reporting an AggregateError while the backend is restarting.
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

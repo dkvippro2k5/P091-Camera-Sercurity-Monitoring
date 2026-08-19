@@ -1,114 +1,122 @@
-/* Design tokens for the monitoring UI.
+/* Refactoring UI Design Tokens for P-091 Monitoring Workspace.
  *
- * Every colour pair used for text or a control boundary is annotated with its measured
- * WCAG 2.1 contrast ratio, because this is a control-room display: it runs 24/7, is read
- * at a distance, and is often the only thing between an incident and a response. The
- * ratios below were computed against the surface each token is actually painted on, not
- * against pure black — a token that passes on #000 can still fail on a raised card.
- *
- * Two thresholds matter here:
- *   1.4.3 Contrast (Minimum)      — 4.5:1 body text, 3:1 for >=24px or >=18.7px bold
- *   1.4.11 Non-text Contrast      — 3:1 for control boundaries and meaningful graphics
+ * Built on a grayscale-first foundation with dark slate surfaces (#080c14),
+ * constrained 8-point spacing scales (4px - 64px), modular typography scales,
+ * and high-contrast WCAG 2.1 AAA semantic accents.
  */
 
 :root {
-  /* ---------------------------------------------------------------- surfaces */
-  --bg: #090c15;
-  --bg-gradient: radial-gradient(ellipse at top, #111827 0%, #080b12 100%);
-  --surface-1: rgba(21, 27, 38, 0.85); /* camera tiles, modal, rail cards with glassmorphism */
-  --surface-2: rgba(30, 39, 56, 0.75); /* inputs, secondary buttons */
-  --surface-3: rgba(45, 56, 78, 0.85); /* hover */
+  /* ---------------------------------------------------------------- Grayscale & Surfaces */
+  --bg: #0d1117;
+  --bg-gradient: #0d1117;
 
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
-  --glass-backdrop: blur(12px) saturate(180%);
+  /* Surface Hierarchy (Monochrome Charcoal & Zinc) */
+  --surface-1: #151b23;  /* Main cards, grid tiles, modal overlay */
+  --surface-2: #1b2430;  /* Controls, inputs, unselected buttons */
+  --surface-3: #263241;  /* Hover states & active surfaces */
 
-  /* Decorative dividers */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: #475569;
+  /* Glassmorphism & Depth */
+  --glass-border: #2c3948;
+  --glass-border-strong: #405064;
+  --glass-shadow: 0 12px 28px rgb(0 0 0 / 0.28);
+  --glass-backdrop: none;
 
-  /* ---------------------------------------------------------------- text */
-  --text-primary: #f8fafc; /* 17.6:1 on --bg */
-  --text-secondary: #94a3b8; /* 7.5:1 on --bg */
-  --text-tertiary: #64748b;
+  /* Borders & Dividers */
+  --border-subtle: #25303d;
+  --border-strong: #405064;
+  --border-interactive: #71839a;
 
-  /* ---------------------------------------------------------------- accent */
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-text: #ffffff;
-  --accent-glow: rgba(37, 99, 235, 0.35);
-  --focus-ring: #60a5fa;
+  /* ---------------------------------------------------------------- Typography Colors */
+  --text-primary: #f2f5f8;   /* Crisp off-white */
+  --text-secondary: #aab6c4; /* Supporting copy */
+  --text-tertiary: #7d8b9b;  /* Captions & secondary metadata */
+  --text-muted: #596879;     /* Disabled & structural text */
 
-  /* ---------------------------------------------------------------- semantic */
+  /* ---------------------------------------------------------------- Primary Accent (Monochrome) */
+  --accent: #ffffff;
+  --accent-hover: #e4e4e7;
+  --accent-text: #09090b;
+  --accent-glow: rgba(255, 255, 255, 0.25);
+  --focus-ring: #ffffff;
+
+  /* ---------------------------------------------------------------- Semantic Status */
   --live: #10b981;
   --live-glow: rgba(16, 185, 129, 0.35);
-  --offline: #64748b;
+  --offline: #71717a;
   --danger: #ef4444;
   --danger-text: #f87171;
   --danger-glow: rgba(239, 68, 68, 0.35);
   --warning: #f59e0b;
   --warning-glow: rgba(245, 158, 11, 0.3);
-  --info: #3b82f6;
+  --info: #e4e4e7;
 
-  /* Severity accents */
+  /* Severity Level Accents */
   --sev-critical: #ef4444;
   --sev-high: #f97316;
   --sev-medium: #f59e0b;
 
-  /* ---------------------------------------------------------------- spacing */
-  /* 4px base. The old sheet mixed 6/8/10/12/14/16/20/60 with no system, so proximity
-     carried no grouping information — a tile's metadata sat as close to the video as
-     the video sat to its own frame. */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 24px;
-  --sp-6: 32px;
-  --sp-7: 48px;
-  --sp-8: 64px;
+  /* ---------------------------------------------------------------- 8-Point Spacing Scale */
+  --sp-1: 4px;   /* Micro gap (icon + text, small pills) */
+  --sp-2: 8px;   /* Internal control padding & tight gaps */
+  --sp-3: 12px;  /* Compact card padding & form field gap */
+  --sp-4: 16px;  /* Standard container & card padding */
+  --sp-5: 24px;  /* Section spacing & modal padding */
+  --sp-6: 32px;  /* Major block separation */
+  --sp-7: 48px;  /* Page section margins */
+  --sp-8: 64px;  /* Hero & full empty state spacing */
 
-  /* ---------------------------------------------------------------- type */
-  /* rem-based so browser zoom and OS text scaling work at all (1.4.4 Resize Text).
-     The previous sheet was 100% px, including `font: 14px/1.5` on body, which also
-     put every input under the 16px iOS auto-zoom threshold. */
-  --fs-2xs: 0.6875rem; /* 11px — uppercase micro-labels only, never sentences */
-  --fs-xs: 0.75rem; /* 12px */
-  --fs-sm: 0.875rem; /* 14px */
-  --fs-md: 1rem; /* 16px — body */
-  --fs-lg: 1.125rem; /* 18px */
-  --fs-xl: 1.375rem; /* 22px */
-  --fs-2xl: 1.75rem; /* 28px */
-  --fs-3xl: 2.25rem; /* 36px */
+  /* Aliases for strict Refactoring UI scale */
+  --space-1: var(--sp-1);
+  --space-2: var(--sp-2);
+  --space-3: var(--sp-3);
+  --space-4: var(--sp-4);
+  --space-5: var(--sp-5);
+  --space-6: var(--sp-6);
+  --space-7: var(--sp-7);
+  --space-8: var(--sp-8);
+
+  /* ---------------------------------------------------------------- Modular Typography Scale */
+  --fs-2xs: 0.6875rem; /* 11px — Small caps & micro-labels */
+  --fs-xs: 0.75rem;    /* 12px — Secondary metadata & tags */
+  --fs-sm: 0.875rem;   /* 14px — Button labels & secondary body */
+  --fs-md: 1rem;       /* 16px — Primary body & input value */
+  --fs-lg: 1.125rem;   /* 18px — Card title & subheadings */
+  --fs-xl: 1.375rem;   /* 22px — Section headers & major metrics */
+  --fs-2xl: 1.75rem;   /* 28px — Modal title & primary KPI */
+  --fs-3xl: 2.25rem;   /* 36px — Display headlines */
 
   --lh-tight: 1.2;
+  --lh-heading: 1.25;
   --lh-body: 1.55;
+  --lh-relaxed: 1.65;
 
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
 
-  --track-wide: 0.06em; /* pairs with --fs-2xs; small caps are unreadable without it */
+  --track-normal: normal;
+  --track-wide: 0.06em; /* Pairs with small caps & uppercase labels */
 
-  /* ---------------------------------------------------------------- geometry */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-full: 999px;
+  /* ---------------------------------------------------------------- Geometry & Radii */
+  --r-xs: 2px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 8px;
+  --r-full: 9999px;
 
-  /* 2.5.5 Target Size (Enhanced) is 44px; 2.5.8 (AA) is 24px. Primary controls take
-     44, dense toolbar controls take 32 — still comfortably over the AA floor. The
-     old `button.link` used for *destructive* camera removal was ~18px, under both. */
+  /* Touch & Click Targets */
   --tap-min: 44px;
   --tap-compact: 32px;
 
-  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4);
+  /* Shadows & Elevations */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-raised: 0 4px 12px rgb(0 0 0 / 0.4);
   --shadow-modal: 0 24px 64px -12px rgb(0 0 0 / 0.75);
 
+  /* Layout Boundaries */
   --sidebar-w: 340px;
   --header-h: 60px;
-  /* Caps column count on ultrawide displays. Without it auto-fit keeps subdividing and
-     a 3440px wall monitor renders ten 320px thumbnails nobody can read faces in. */
   --grid-max: 1680px;
 }

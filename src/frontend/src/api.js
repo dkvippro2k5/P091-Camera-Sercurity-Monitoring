@@ -75,11 +75,15 @@ export const api = {
 
   // The HITL judgement (PRD §3.2). Distinct from acknowledge: this one records whether the
   // incident was real, and is the only call that appends to the labelled history.
-  submitVerdict: (id, verdict) =>
+  submitVerdict: (id, verdict, operatorNote = '', actualEventType = '') =>
     request(`/alerts/${id}/verdict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ verdict }),
+      body: JSON.stringify({
+        verdict,
+        operator_note: operatorNote.trim() || null,
+        actual_event_type: actualEventType.trim() || null,
+      }),
     }),
 
   // --- Camera setup, the guard's -----------------------------------------------------------
@@ -106,4 +110,5 @@ export const api = {
 
   streamUrl: (id) => `${BASE}/cameras/${id}/stream`,
   eventsUrl: () => `${BASE}/events`,
+  managerLiveUrl: () => `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${BASE}/manager/live`,
 }

@@ -1,218 +1,278 @@
-# 🤖 AI20K Agent Template
+# P-091 Security Monitor
 
-Template chính thức cho học viên **VinUni AI20K Build Phase** — cung cấp sẵn cấu trúc dự án, code mẫu, và hướng dẫn kỹ thuật chi tiết để xây dựng AI Agent đạt điểm cao (35+/50).
+Real-time multi-camera incident monitoring for security control rooms. The MVP combines
+YOLO/OpenCV detection, temporal incident rules, optional local or OpenAI vision triage, and a
+mandatory guard verdict in a React dashboard.
 
-> 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+## Main User Flow
 
-## 🎯 Template này dùng để làm gì?
+1. A guard signs in and adds a prepared demo, uploaded video, or RTSP camera.
+2. The backend analyzes the camera in an independent worker.
+3. YOLO tracks people and relevant objects. Temporal rules produce fall, intrusion, and
+   abandoned-object incidents.
+4. The browser receives annotated video over MJPEG and alerts over SSE.
+5. When VLM triage is enabled, the selected provider reviews before/after frames, rule evidence,
+   and recent labelled examples.
+6. The guard records `real` or `false`. Managers see reviewed precision and operational counts.
 
-Khi tham gia AI20K Build Phase, mỗi đội cần xây dựng một AI Agent hoàn chỉnh — từ kiến trúc, code, test, đến deploy. Thay vì bắt đầu từ con số không, template này cung cấp:
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the component and data-flow diagrams.
 
-- **Cấu trúc thư mục chuẩn** — đã được thiết kế theo best practices (separation of concerns)
-- **Code mẫu** cho các phần cốt lõi: LangGraph agent, FastAPI API, config, schemas
-- **Docker + CI/CD sẵn** — Dockerfile multi-stage, GitHub Actions workflow
-- **Hướng dẫn kỹ thuật 10 chương** — từ clone template đến nộp bài Demo Day
-- **Checklist 10 deliverables** — đảm bảo không bỏ sót yêu cầu BTC
-- **AI Usage Logging tự động** — Pre-configured hooks cho Claude Code, Cursor, Codex, Gemini CLI, Antigravity, và GitHub Copilot
+## Prerequisites
 
-## ⚡ Quick Start
+- Python 3.11
+- Node.js 20
+- YOLO checkpoint at `src/vision/weights/yolo26l.pt`
+- Optional: OpenAI API key or a CUDA-capable GPU for VLM triage
+- Optional: MediaMTX and FFmpeg for looping local videos as RTSP cameras
 
-### Bước 1: Fork hoặc Clone
+## Local Setup
 
-```bash
-# Clone template
-git clone https://github.com/AI20K-Build-Cohort-2/starter-code-template.git team-YOUR_TEAM_NAME
-cd team-YOUR_TEAM_NAME
+Create the Python environment and install dependencies:
 
-# Xóa git history cũ và khởi tạo lại
-rm -rf .git
-git init
-git add .
-git commit -m "feat: khởi tạo dự án từ template"
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-### Bước 2: Setup môi trường
+Create the initial guard and manager accounts interactively:
 
-```bash
-# Tạo virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# Cài dependencies
-pip install -e ".[dev]"
-
-# Cấu hình API keys
-cp .env.example .env
-# Mở .env và thêm OPENAI_API_KEY của bạn
-# Đồng thời cập nhật AI_LOG_API_KEY bằng key riêng từ link mời của BTC
-# (giá trị trong .env.example chỉ là placeholder)
+```powershell
+.\.venv\Scripts\python.exe scripts/seed_users.py
 ```
 
-**Tải YOLO weight cho Vision Pipeline** — `src/vision/weights/*.pt` bị `.gitignore` (binary
-~53MB, không commit vào git), nên clone xong sẽ **chưa có** file model. Thiếu file này,
-`IncidentDetector` sẽ raise `FileNotFoundError` ngay lúc khởi tạo thay vì âm thầm bỏ qua (chủ
-ý, để tránh hệ giám sát chạy mà không thực sự nạp model). Tải checkpoint gốc `yolo26l.pt` từ
-Ultralytics bằng chính thư viện `ultralytics` (đảm bảo đúng bản khớp với `ultralytics` đã cài,
-xem `requirements.txt`):
+For local SmolVLM2 triage, set these values in `.env` without committing the file:
 
-```bash
-mkdir -p src/vision/weights
-python -c "from ultralytics import YOLO; YOLO('yolo26l.pt')"
-mv yolo26l.pt src/vision/weights/yolo26l.pt
+```dotenv
+VLM_ENABLED=true
+VLM_PROVIDER=local
+VLM_MAX_FRAMES=4
+VLM_LOCAL_MODEL=HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+VLM_LOCAL_DEVICE=auto
+VLM_LOCAL_MAX_IMAGE_SIZE=512
+VLM_LOCAL_MAX_NEW_TOKENS=64
 ```
 
-CI (`.github/workflows/ci.yml`) làm y hệt bước này (có cache) trên runner self-hosted của BTC
-trước khi chạy test — không cần làm gì thêm cho CI, chỉ cần làm bước này trên máy local của
-từng thành viên.
+The local provider reads model weights from the Hugging Face cache and does not make inference
+API calls. Download the checkpoint once before starting the monitor if it is not already cached.
+To use OpenAI instead:
 
-### Bước 3: Cài AI Logging Hooks
-
-```bash
-# Linux / macOS / Git Bash
-bash scripts/setup_hooks.sh
-
-# Windows PowerShell
-# powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
+```dotenv
+VLM_ENABLED=true
+VLM_PROVIDER=openai
+OPENAI_API_KEY=your-key
+VLM_MODEL=gpt-4o-mini
 ```
 
-Hooks tự động log mọi AI prompt khi dùng Claude Code, Cursor, Codex, Gemini CLI, Antigravity, hoặc GitHub Copilot. Không cần thao tác thủ công.
+Start the backend:
 
-### Bước 4: Chạy server
-
-```bash
-# Chạy FastAPI backend
-uvicorn src.main:app --reload --port 8000
-
-# Mở Swagger UI
-# http://localhost:8000/docs
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn src.main:app --reload --port 8000
 ```
 
-### Bước 5: Đọc hướng dẫn
+In a second terminal, start the frontend:
 
-📖 Mở **[Technical Guidebook](https://phoenix.note.transformerlabs.ai/technical-book)** và làm theo từng chương.
-
-## 📁 Cấu trúc dự án
-
-```
-├── src/
-│   ├── agents/           # 🧠 LangGraph Agent
-│   │   ├── graph.py      #    State graph (nodes + edges)
-│   │   ├── state.py      #    State schema (TypedDict)
-│   │   ├── nodes/        #    Node functions
-│   │   └── tools/        #    Agent tools (@tool)
-│   ├── api/              # 🌐 FastAPI Backend
-│   │   └── routes.py     #    API endpoints
-│   ├── models/           # 📋 Pydantic schemas
-│   ├── services/         # 🔧 Business logic (LLM, etc.)
-│   ├── config.py         # ⚙️ Pydantic Settings
-│   └── main.py           # 🚀 App entry point
-├── tests/                # 🧪 pytest suite
-│   ├── test_agents/      #    Agent/graph tests
-│   └── test_api/         #    API endpoint tests
-├── scripts/              # 🔌 AI Logging Hooks
-│   ├── log_hook.py       #    Auto-log cho Claude/Cursor/Codex/Gemini/Copilot
-│   ├── log_antigravity.py#    Antigravity IDE prompt scanner
-│   ├── log_manual.py     #    Manual log cho ChatGPT / web tools
-│   ├── submit_log.py     #    Submit logs on git push
-│   └── setup_hooks.sh    #    One-time hook installer
-├── .claude/ .codex/ .cursor/ .gemini/  # Per-tool hook configs
-├── .agents/              # Antigravity rules + workflows
-├── .ai-log/              # 📊 AI usage logs (auto-generated)
-├── docs/
-│   ├── guide/            # 📖 Technical Guidebook (10 chapters)
-│   └── architecture_diagram.md
-├── eval/                 # 📊 Evaluation results
-├── presentation/         # 🎤 Demo Day slides
-├── .github/workflows/    # ⚡ CI/CD (GitHub Actions)
-├── .github/hooks/        # 🪝 Copilot hook config
-├── Dockerfile            # 🐳 Multi-stage build
-├── docker-compose.yml    # 🐙 Full stack orchestration
-└── README_boilerplate.md # 📝 README template cho đội của bạn
+```powershell
+Set-Location src\frontend
+npm ci
+npm run dev
 ```
 
-## 📚 Technical Guidebook — 10 Chương
+Open `http://localhost:5173`. The API health check is `http://localhost:8000/health`.
 
-| Chương | Nội dung | Thời gian |
-|---------|----------|-----------|
-| 1 | Lời mở đầu — Mục tiêu, cách sử dụng | 15 phút |
-| 2 | Khởi tạo dự án — Clone, setup, git workflow | 4 giờ |
-| 3 | Thiết kế kiến trúc — 3-tier, diagrams, ADR | 6 giờ |
-| 4 | **LangGraph Agent** — State, nodes, edges, tools, RAG | 8 giờ |
-| 5 | FastAPI — Routes, validation, error handling, streaming | 6 giờ |
-| 6 | Giao diện — Next.js + Streamlit quickstart | 6 giờ |
-| 7 | DevOps — Docker, CI/CD, deploy, logging | 6 giờ |
-| 8 | Kiểm thử — Unit test, integration test, RAGAS | 4 giờ |
-| 9 | Demo Day — 10 deliverables, checklist, tips | 2 giờ |
-| 10 | Tài nguyên — Khóa học, docs, BMAD method | tham khảo |
+Each live camera tile reports its rolling p95 inference latency beside the inference-capacity
+estimate. The backend computes p50, p95, and p99 over the latest 100 successfully processed
+frames and separately counts processing failures, so transient slowdowns do not disappear into
+a single last-frame number.
 
-📖 **Đọc online:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+## VLM Regression Check
 
-## 📋 10 Deliverables cho Demo Day
+The regression runner samples chronological frames from the local fall and normal test videos.
+Its default mode only validates and lists cases; it cannot call the API:
 
-| # | Deliverable | File vị trí | Template có sẵn |
-|---|-------------|-------------|:---:|
-| 1 | Source Code | `src/` | ✅ |
-| 2 | README.md | `README_boilerplate.md` → copy thành `README.md` | ✅ |
-| 3 | Architecture Diagram | `docs/architecture_diagram.md` | ✅ |
-| 4 | AI Logs | LangSmith (3 env vars) + Auto AI Usage Logging | ✅ |
-| 5 | Live URL | Deploy lên Render/Vercel | ⚡ CI/CD sẵn |
-| 6 | Video Demo | `presentation/` | 📝 |
-| 7 | Pitch Deck | `presentation/` | 📝 |
-| 8 | Development Journal | `JOURNAL.md` | ✅ |
-| 9 | Worklog | `WORKLOG.md` | ✅ |
-| 10 | Evaluation Evidence | `eval/` | 📝 |
-
-## 🛠 Tech Stack
-
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| AI Agent | LangGraph + LangChain | Latest |
-| Backend | FastAPI + Uvicorn | 0.100+ |
-| LLM | OpenAI GPT-4o-mini | API |
-| Frontend | Next.js / Streamlit | 14+ / 1.30+ |
-| Database | SQLite (dev) / PostgreSQL (prod) | — |
-| DevOps | Docker + GitHub Actions | — |
-| Testing | pytest + pytest-asyncio | 8+ |
-
-## 📊 AI Usage Logging
-
-Template đã tích hợp sẵn auto-logging hooks cho 6 AI tools:
-
-| Tool | Cơ chế | Config |
-|------|--------|--------|
-| Claude Code | `.claude/settings.json` hooks | Tự động |
-| Cursor | `.cursor/hooks.json` | Tự động |
-| OpenAI Codex CLI | `.codex/hooks.json` | Tự động |
-| Gemini CLI | `.gemini/settings.json` | Tự động |
-| GitHub Copilot | `.github/hooks/hooks.json` | Tự động |
-| Antigravity IDE | Pre-push scan transcript | Tự động trên `git push` |
-
-Tất cả prompts và tool calls được log vào `.ai-log/session.jsonl` và tự động submit lên grading server mỗi khi `git push`.
-
-**ChatGPT / web tools khác** — log thủ công:
-```bash
-bash scripts/_pyrun.sh scripts/log_manual.py --tool chatgpt --prompt "What you asked"
+```powershell
+.\.venv\Scripts\python.exe eval/vlm_regression.py
 ```
 
-> ⚠️ Chạy `bash scripts/setup_hooks.sh` một lần sau khi clone để cài pre-push hook.
+Run the billed OpenAI check explicitly, optionally persisting the JSON result:
 
-## 📖 Đọc Technical Guidebook
+```powershell
+.\.venv\Scripts\python.exe eval/vlm_regression.py --execute `
+  --output eval/results/vlm-regression.json
+```
 
-**Online (khuyến nghị):** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+Each case sends six high-detail images. Review OpenAI image-token pricing before running it, and
+keep `data/vision/test/fall.mp4` and `normal1.mp4` available for the bundled cases.
 
-Đăng nhập bằng GitHub (cùng account đã được BTC mời vào org `AI20K-Build-Cohort-2`)
-→ chọn tab **Technical Book** ở sidebar trái → đọc 10 chương + topic sections,
-có table of contents bên phải, hỗ trợ light/dark/cyberpunk theme.
+## Environment Variables
 
-**Offline:** mọi chương đều ở thư mục `docs/guide/` trong template này — mở bằng
-bất kỳ markdown viewer/editor nào (VS Code, Obsidian, GitHub UI, …).
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `APP_ENV`, `APP_HOST`, `APP_PORT` | Runtime mode and bind address | `development`, `0.0.0.0`, `8000` |
+| `OPENAI_API_KEY` | OpenAI credential when `VLM_PROVIDER=openai` | empty |
+| `VLM_ENABLED`, `VLM_PROVIDER` | Enable evidence review and select `openai` or `local` | `false`, `openai` |
+| `VLM_MODEL` | OpenAI vision model | `gpt-4o-mini` |
+| `VLM_LOCAL_*` | Local model, device, image size, and generation limit | see `.env.example` |
+| `VLM_PRE_ROLL_SEC`, `VLM_POST_ROLL_SEC` | Evidence window around an alert | `5.0`, `2.0` |
+| `VLM_MAX_FRAMES` | Maximum sampled evidence frames | `6` |
+| `VLM_TIMEOUT_SEC` | OpenAI request timeout | `20.0` |
+| `VLM_HISTORY_EXAMPLES` | Prior labelled examples sent to VLM | `6` |
+| `MODEL_WEIGHTS_PATH` | Detector checkpoint visible to the backend | `src/vision/weights/yolo26l.pt` |
+| `MODEL_WEIGHTS_HOST_PATH` | Host checkpoint mounted by Docker Compose | `./src/vision/weights/yolo26l.pt` |
+| `DETECTOR_TARGET_LABELS` | YOLO classes retained by the pipeline | `person,backpack,handbag,suitcase` |
+| `DETECTOR_CONFIDENCE` | Main YOLO acceptance threshold | `0.40` |
+| `CAMERA_TARGET_FPS` | Default analysis rate for new cameras | `5` |
+| `CAMERA_MAX_CONCURRENT_INFERENCES` | Simultaneous camera inference limit; `0` selects a host-aware default | `0` |
+| `ALERT_COOLDOWN_SEC` | Minimum gap per camera and incident label | `30` seconds |
+| `CORS_ORIGINS`, `ALLOWED_HOSTS` | Browser and host security policy | local values |
+| `SESSION_COOKIE_SECURE` | Require HTTPS cookies | `false` locally |
+| `LOGIN_*` | Login failure and lockout limits | see `.env.example` |
 
-## 🔗 Liên kết
+`DATABASE_URL`, `CHROMA_PERSIST_DIR`, and LangSmith settings are retained for optional/template
+integrations. The monitoring MVP persists to `data/*.json` and `data/*.jsonl`.
 
-- 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-- 🏫 **AI20K Program:** VinUni AI20K Build Phase
-- 👨‍🏫 **Mentor:** Đặng Hải Lộc
+## Add A Camera
 
-## 📄 License
+Go to **Cameras -> Add a camera** and choose one source:
 
-MIT — Sử dụng tự do cho mục đích giáo dục.
+- **Prepared demo:** select a bundled clip.
+- **Upload video:** choose an MP4; the backend stores it under `data/uploads`.
+- **RTSP stream:** enter a URL such as `rtsp://127.0.0.1:8554/fall`.
+
+Enable intrusion only after drawing a polygon. Draw the protected ground area, not the whole
+frame. For the gate clips under `data/vision/test`, exclude the road and sidewalk and include
+the courtyard behind the gate.
+
+## Loop Local Videos As RTSP
+
+Start MediaMTX with RTSP listening on port `8554`. Publish one looping video per terminal:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/publish_rtsp.py `
+  data/vision/test/intrusion.mp4 `
+  rtsp://127.0.0.1:8554/intrusion
+```
+
+Example stream URLs:
+
+```text
+rtsp://127.0.0.1:8554/fall
+rtsp://127.0.0.1:8554/abandoned
+rtsp://127.0.0.1:8554/intrusion
+rtsp://127.0.0.1:8554/intrusion-false
+rtsp://127.0.0.1:8554/intrusion-umbrella
+```
+
+The helper uses real-time input pacing, infinite looping, and video stream copy. Publishing is
+cheap; YOLO inference is the expensive part. If the backend runs in Docker, use
+`rtsp://host.docker.internal:8554/<path>` instead of `127.0.0.1`.
+
+## Sample API Requests
+
+Check the service:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+```
+
+Login and retain the HttpOnly session cookie:
+
+```powershell
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+Invoke-RestMethod http://localhost:8000/api/v1/auth/login `
+  -Method Post -WebSession $session -ContentType 'application/json' `
+  -Body '{"username":"guard","password":"your-password"}'
+```
+
+List cameras and alerts:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/v1/cameras -WebSession $session
+Invoke-RestMethod http://localhost:8000/api/v1/alerts -WebSession $session
+```
+
+Register an RTSP camera:
+
+```powershell
+$camera = @{
+  name = 'Fall test'
+  source_type = 'rtsp'
+  source = 'rtsp://127.0.0.1:8554/fall'
+  intrusion_enabled = $false
+  target_fps = 5
+  loop_source = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod http://localhost:8000/api/v1/cameras `
+  -Method Post -WebSession $session -ContentType 'application/json' -Body $camera
+```
+
+The optional scaffold chat route is separate from the camera MVP. A sample query is:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/v1/chat `
+  -Method Post -WebSession $session -ContentType 'application/json' `
+  -Body '{"message":"Explain the current monitoring workflow"}'
+```
+
+This route demonstrates the conversational LangGraph graph. Production monitoring uses a
+separate asynchronous LangGraph incident workflow after an alert is created; YOLO and temporal
+rules remain outside LangGraph for predictable real-time latency.
+
+## Docker Compose
+
+Set `MODEL_WEIGHTS_HOST_PATH` and production values in `.env`, then run:
+
+```powershell
+docker compose up -d --build
+docker compose logs -f backend
+```
+
+The frontend is exposed on `http://localhost`; nginx proxies `/api/` to the backend. Runtime
+camera configuration, uploads, incident logs, and VLM history remain under `./data`.
+
+For the production stack, copy `.env.production.example` to `.env.production`, set a unique
+`POSTGRES_PASSWORD`, configure the public HTTPS host, and run the production stack with that file
+explicitly selected:
+
+```powershell
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.production.yml ps
+```
+
+The production stack keeps the frontend and backend bound to loopback so an HTTPS reverse proxy can
+front the application. PostgreSQL data is persisted under `./data/postgres` and Redis under
+`./data/redis`. The manager
+dashboard receives live updates over an authenticated WebSocket at `/api/v1/manager/live`,
+while guard incident notifications continue to use SSE at `/api/v1/events`.
+
+Production evidence should use an S3-compatible bucket by setting `EVIDENCE_STORAGE_BACKEND=s3`
+and the `EVIDENCE_S3_*` values. The alert preview remains available immediately in the event;
+the durable object URL arrives as a follow-up `alert.evidence` event.
+
+To retain data from an existing deployment, run the migration once before switching traffic
+to PostgreSQL. It migrates incidents, guard history, users, cameras, and stable camera IDs:
+
+```powershell
+python scripts/migrate_sqlite_to_postgres.py `
+  --sqlite-url sqlite:///./data/app.db `
+  --postgres-url $env:DATABASE_URL
+```
+
+## Verification
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check src tests eval
+.\.venv\Scripts\python.exe -m pytest -q
+Set-Location src\frontend
+npm ci
+npm run build
+```
+
+## Documentation
+
+- [Architecture and data flow](ARCHITECTURE.md)
+- [Compact architecture diagram](docs/architecture_diagram.md)
+- [Evaluation results](eval/results/report.md)
+- [Gate 2 documentation in Vietnamese](docs/gate2/README.md)
+- [Three-minute MVP demo](https://drive.google.com/file/d/1DwTT9Bh_V6_9cmfgZGWwqVtIRbyloHsS/view?usp=sharing)

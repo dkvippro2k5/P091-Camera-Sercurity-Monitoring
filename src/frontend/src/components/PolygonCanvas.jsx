@@ -13,7 +13,7 @@ import { useRef, useEffect, useState } from 'react'
  * by the image's natural size. The canvas is CSS-scaled to fit the layout, so the natural
  * size is not what the click landed on.
  */
-export default function PolygonCanvas({ imageUrl, points, onChange }) {
+export default function PolygonCanvas({ imageUrl, points, onChange, onError }) {
   const canvasRef = useRef(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
 
@@ -90,7 +90,7 @@ export default function PolygonCanvas({ imageUrl, points, onChange }) {
   return (
     <div className="polygon">
       <div className="polygon-stage">
-        <img src={imageUrl} alt="Camera preview for zone drawing" />
+        <img src={imageUrl} alt="Camera preview for zone drawing" onError={onError} />
         <canvas ref={canvasRef} onClick={handleClick} />
       </div>
       <div className="polygon-controls">

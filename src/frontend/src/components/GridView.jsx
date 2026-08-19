@@ -18,17 +18,12 @@ export default function GridView({ cameras, alertingCameras, onDelete, onAddClic
     // worse, it points the wrong person at the problem while the grid stays dark.
     return (
       <div className="empty">
+        <span className="empty-symbol" aria-hidden="true">+</span>
         <h2>No cameras yet</h2>
         {onAddClick ? (
-          <>
-            <p>
-              Add a camera to start monitoring. Fall and abandoned-object detection run automatically; intrusion
-              detection needs a zone drawn on the camera&apos;s preview.
-            </p>
-            <button className="primary" onClick={onAddClick}>
-              Add your first camera
-            </button>
-          </>
+          <button className="primary" onClick={onAddClick}>
+            Add your first camera
+          </button>
         ) : (
           <p>No cameras have been configured yet — until then there is nothing to monitor.</p>
         )}
@@ -36,16 +31,22 @@ export default function GridView({ cameras, alertingCameras, onDelete, onAddClic
     )
   }
 
-
   const live = cameras.filter((c) => c.running).length
 
   return (
     <>
-      <div className="stage-head">
-        <h2>Live grid</h2>
-        <span className="count">
-          {live} of {cameras.length} streaming
-        </span>
+      <div className="stage-head grid-stage-head">
+        <div>
+          <p className="eyebrow">Guard workspace</p>
+          <h1>Live monitoring</h1>
+        </div>
+        <div className="stage-head-actions">
+          <span className={live === cameras.length ? 'count healthy' : 'count degraded'}>
+            <span className="dot" aria-hidden="true" />
+            {live} of {cameras.length} streaming
+          </span>
+          {onAddClick && <button onClick={onAddClick}>Add camera</button>}
+        </div>
       </div>
 
       <div className="grid">
@@ -144,8 +145,7 @@ function CameraTile({ camera, alerting, onDelete }) {
           </span>
         ))}
         <span className="telemetry spacer">
-          {camera.source_type} · {camera.processed_frames.toLocaleString()} frames ·{' '}
-          {camera.inference_capacity_fps.toFixed(1)} fps
+          {camera.source_type} · {camera.inference_capacity_fps.toFixed(1)} fps · p95 {(camera.latency_p95_ms ?? 0).toFixed(0)} ms
         </span>
       </div>
     </article>

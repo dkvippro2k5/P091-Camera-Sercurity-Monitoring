@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.api.vision_routes import event_stream
+from src.services.login_limiter import LoginLimiter
 from src.services.security import hash_password, verify_password
 from src.services.sessions import COOKIE_NAME, SessionStore
 from src.services.user_store import UserStore
@@ -25,20 +26,20 @@ MANAGER_ONLY = [
     ("get", "/api/v1/statistics"),
 ]
 
-# Everything else. Reachable by any signed-in operator — which in practice means the guard,
-# who both watches the grid and builds the cameras. A manager passes these gates too; they
-# are simply never routed here by the UI (see `deps.require_guard` for why the gate is not
-# tightened: `/monitoring/status` is polled every 3s and a 403 would evict them).
+# Guard-only product operations. Shared system status is listed separately below.
 AUTHENTICATED_ONLY = [
     ("get", "/api/v1/cameras"),
     ("get", "/api/v1/alerts"),
-    ("get", "/api/v1/monitoring/status"),
     ("post", "/api/v1/alerts/anything/acknowledge"),
     ("post", "/api/v1/cameras"),
     ("delete", "/api/v1/cameras/anything"),
     ("get", "/api/v1/demo-videos"),
     ("post", "/api/v1/uploads"),
     ("get", "/api/v1/preview-frame?source_type=demo&source=x.mp4"),
+]
+
+OPERATOR_ONLY = [
+    ("get", "/api/v1/monitoring/status"),
 ]
 
 
@@ -115,17 +116,9 @@ def test_a_guard_can_configure_cameras(guard_client):
     assert response.status_code == 400, response.text
 
 
-def test_a_manager_is_not_locked_out_of_the_monitoring_routes(manager_client):
-    """`require_guard` means "any signed-in operator", and that is load-bearing, not slack.
-
-    The manager's restriction is enforced in the UI — they are offered the statistics screen
-    and nothing else. Tightening these routes to guards-only instead would break the thing
-    that keeps a manager signed in: every browser polls `/monitoring/status` every 3 seconds
-    and the frontend signs out on any 401, so a role check here would evict a manager from
-    their own session moments after they logged in.
-    """
-    assert manager_client.get("/api/v1/cameras").status_code == 200
-    assert manager_client.get("/api/v1/alerts").status_code == 200
+def test_a_manager_cannot_reach_guard_routes_but_can_read_shared_status(manager_client):
+    assert manager_client.get("/api/v1/cameras").status_code == 403
+    assert manager_client.get("/api/v1/alerts").status_code == 403
     assert manager_client.get("/api/v1/monitoring/status").status_code == 200
 
 
@@ -137,7 +130,7 @@ def test_every_gated_route_is_401_when_signed_out(anon_client):
     that would catch someone mounting a new one on a bare `APIRouter`.
     """
     wrong = []
-    for method, path in MANAGER_ONLY + AUTHENTICATED_ONLY:
+    for method, path in MANAGER_ONLY + AUTHENTICATED_ONLY + OPERATOR_ONLY:
         status = getattr(anon_client, method)(path).status_code
         if status != 401:
             wrong.append(f"{method.upper()} {path} -> {status}")
@@ -211,6 +204,34 @@ def test_a_wrong_password_and_an_unknown_user_are_indistinguishable(anon_client)
 
     assert wrong.status_code == unknown.status_code == 401
     assert wrong.json()["detail"] == unknown.json()["detail"]
+
+
+def test_repeated_failed_logins_are_temporarily_limited(anon_client):
+    anon_client.app.state.login_limiter = LoginLimiter(
+        max_failures=3,
+        window_seconds=60,
+        lockout_seconds=30,
+    )
+
+    for _ in range(2):
+        response = anon_client.post(
+            "/api/v1/auth/login",
+            json={"username": "gwen", "password": "wrong"},
+        )
+        assert response.status_code == 401
+
+    blocked = anon_client.post(
+        "/api/v1/auth/login",
+        json={"username": "gwen", "password": "wrong"},
+    )
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) > 0
+
+    still_blocked = anon_client.post(
+        "/api/v1/auth/login",
+        json={"username": "gwen", "password": "guard-password"},
+    )
+    assert still_blocked.status_code == 429
 
 
 def test_the_password_hash_never_leaves_the_server(anon_client):

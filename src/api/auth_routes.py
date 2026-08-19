@@ -63,14 +63,35 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
     if users is None or sessions is None:
         raise HTTPException(status_code=503, detail="Authentication is not configured")
 
+    limiter = getattr(request.app.state, "login_limiter", None)
+    remote = request.client.host if request.client else "unknown"
+    limit_key = f"{remote}:{payload.username.strip().lower()}"
+    retry_after = limiter.retry_after(limit_key) if limiter else 0
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     # scrypt is deliberately expensive (~120 ms), which is the whole point of using it — but
     # that is 120 ms the event loop must not spend blocked, or a handful of concurrent logins
     # would stall every camera stream and SSE connection in the process.
     user = await asyncio.to_thread(users.authenticate, payload.username, payload.password)
     if user is None:
+        retry_after = limiter.failed(limit_key) if limiter else 0
+        if retry_after:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Try again later.",
+                headers={"Retry-After": str(retry_after)},
+            )
         # One message for every failure mode. Distinguishing "no such user" from "wrong
         # password" hands an attacker a free username oracle.
         raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    if limiter:
+        limiter.succeeded(limit_key)
 
     # Any existing session is discarded rather than reused, so a session id an attacker
     # planted in the browser before login cannot survive into the authenticated session.
