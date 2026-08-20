@@ -6,6 +6,11 @@ __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
+.codegraph/
+.ai-log/
+data/
+tests/
+*.pt
 docs/
 presentation/
 eval/

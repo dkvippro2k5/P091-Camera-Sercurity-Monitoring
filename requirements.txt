@@ -14,10 +14,10 @@ langchain-openai>=0.3.0
 langgraph>=0.2.0
 
 # Vision (incident detection)
-# torch must resolve before ultralytics; on CPU-only or non-default CUDA hosts
-# install it from the matching PyTorch index first.
-torch>=2.13.0
-torchvision>=0.28.0
+# Docker pins the CUDA build in its base image. Local environments may install matching
+# CPU or CUDA wheels from the appropriate PyTorch index.
+torch>=2.7.1
+torchvision>=0.22.1
 ultralytics>=8.4.115
 opencv-python>=5.0.0.93
 numpy>=2.4.6
@@ -45,3 +45,4 @@ ruff>=0.8.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 httpx>=0.28.0
+Brotli>=1.2.0
