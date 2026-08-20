@@ -231,6 +231,30 @@ docker compose logs -f backend
 The frontend is exposed on `http://localhost`; nginx proxies `/api/` to the backend. Runtime
 camera configuration, uploads, incident logs, and VLM history remain under `./data`.
 
+For the Tesla T4 host, layer the small GPU override on top of the base compose file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml exec backend \
+  python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Docker exposes the host GPU to the unchanged detector implementation from `develop`;
+Ultralytics keeps responsibility for its normal device and precision selection. Uploads are
+streamed through nginx and accepted up to 500 MiB by the backend; nginx allows 510 MiB so
+multipart framing has headroom.
+
+To expose the frontend through a Cloudflare Quick Tunnel without starting ngrok:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile tunnel up -d cloudflared
+docker compose logs -f cloudflared
+```
+
+The generated public URL is printed in the cloudflared logs. Runtime data and uploaded
+videos remain in `./data` when application containers are recreated. Do not use
+`docker compose down -v` when preserving deployment data.
+
 For the production stack, copy `.env.production.example` to `.env.production`, set a unique
 `POSTGRES_PASSWORD`, configure the public HTTPS host, and run the production stack with that file
 explicitly selected:
