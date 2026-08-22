@@ -88,6 +88,7 @@ def auth_app(monkeypatch, tmp_path, isolated_data):
 
     Yields `(TestClient, UserStore)` so a test can add an account or flip `active` directly.
     """
+    from src.config import get_settings
     from src.services.sessions import SessionStore
     from src.services.user_store import UserStore
 
@@ -100,6 +101,14 @@ def auth_app(monkeypatch, tmp_path, isolated_data):
 
     monkeypatch.setattr(main_module, "UserStore", lambda: users)
     monkeypatch.setattr(main_module, "SessionStore", lambda **_: sessions)
+
+    # `use_postgres` in the lifespan reads settings.database_url directly, bypassing the two
+    # patches above entirely whenever a developer's real .env points at a real Postgres URL
+    # (as opposed to the sqlite:// default) — the suite would otherwise hit a live network
+    # database with a fresh schema that has none of the users seeded below. Force sqlite here
+    # so the suite's behavior never depends on what happens to be in the local .env.
+    sqlite_settings = get_settings().model_copy(update={"database_url": f"sqlite:///{tmp_path / 'unused.db'}"})
+    monkeypatch.setattr(main_module, "get_settings", lambda: sqlite_settings)
 
     users.add_user("gwen", "guard-password", "guard", "Gwen the Guard", work_factor=TEST_WORK_FACTOR)
     users.add_user("morgan", "manager-password", "manager", "Morgan the Manager", work_factor=TEST_WORK_FACTOR)
