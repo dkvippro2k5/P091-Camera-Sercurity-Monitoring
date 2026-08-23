@@ -164,6 +164,7 @@ class MonitoringService:
                 model_path=settings.model_weights_path,
                 conf_threshold=settings.detector_confidence,
                 target_labels=_detector_labels(settings.detector_target_labels),
+                imgsz=settings.detector_imgsz,
             ),
             rule_engine=RuleEngine(
                 zone_manager=self.zone_manager,
@@ -238,7 +239,10 @@ class MonitoringService:
             backoff_sec=settings.notification_backoff_sec,
         )
 
-        self._restore_registry()
+        if settings.restore_cameras_on_start:
+            self._restore_registry()
+        else:
+            logger.info("RESTORE_CAMERAS_ON_START is off; starting with no cameras running.")
 
     # ------------------------------------------------------------------ lifecycle
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:

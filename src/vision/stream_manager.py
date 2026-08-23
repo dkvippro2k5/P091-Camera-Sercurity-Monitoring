@@ -236,6 +236,7 @@ class MultiStreamManager:
                     conf_threshold=detector.conf_threshold,
                     target_labels=detector.target_labels,
                     use_tracking=detector.use_tracking,
+                    imgsz=detector.imgsz,
                 ),
                 rule_engine=RuleEngine(
                     # Zones are immutable config and carry no per-stream state, so the

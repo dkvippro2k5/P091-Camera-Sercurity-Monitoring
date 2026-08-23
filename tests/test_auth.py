@@ -16,7 +16,7 @@ from src.api.vision_routes import event_stream
 from src.services.login_limiter import LoginLimiter
 from src.services.security import hash_password, verify_password
 from src.services.sessions import COOKIE_NAME, SessionStore
-from src.services.user_store import UserStore
+from src.services.user_store import User, UserStore
 from tests.conftest import TEST_WORK_FACTOR
 
 # Every route a guard must not reach, as (method, path). Kept as a list, and swept in a loop,
@@ -69,6 +69,20 @@ class _StreamRequest:
 
     async def is_disconnected(self) -> bool:
         return False
+
+
+def _open_stream(client, username: str):
+    """Call the route the way FastAPI would, minus the framework.
+
+    `event_stream` takes its identity from the router's `require_guard` dependency rather
+    than re-resolving the session itself, so calling the coroutine directly has to supply
+    what the injector otherwise would. The cookie on `_StreamRequest` is still what the
+    in-loop revocation check reads — that is the thing under test and it is untouched.
+    """
+    return event_stream(
+        _StreamRequest(client, username),
+        guard=User(username=username, role="guard", display_name=username),
+    )
 
 
 # ---------------------------------------------------------------- privilege boundary
@@ -400,7 +414,7 @@ async def test_a_revoked_session_ends_the_event_stream(auth_app):
     service = test_client.app.state.monitoring
     service.bind_loop(asyncio.get_running_loop())
 
-    response = await event_stream(_StreamRequest(test_client, "gwen"))
+    response = await _open_stream(test_client, "gwen")
     events = response.body_iterator
 
     service.publish_event("alert.created", {"id": "warmup"})
@@ -428,7 +442,7 @@ async def test_a_revocation_for_someone_else_leaves_the_stream_open(auth_app):
     service = test_client.app.state.monitoring
     service.bind_loop(asyncio.get_running_loop())
 
-    response = await event_stream(_StreamRequest(test_client, "gwen"))
+    response = await _open_stream(test_client, "gwen")
     events = response.body_iterator
 
     service.publish_event("auth.revoked", {"username": "someone-else"})

@@ -22,9 +22,18 @@ class Settings(BaseSettings):
     # this API with an opaque CORS error that looks like the backend is down.
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     allowed_hosts: str = "localhost,127.0.0.1,test,testserver"
+    # Whether startup re-adds the cameras saved in the registry. On by default, because a
+    # deployment that restarts must come back watching what it was watching. Turn it off for
+    # local work, where the saved set is whatever the last experiment left behind and having
+    # it start itself means every `--reload` re-opens six video files and floods the alert
+    # queue before anyone has asked for a camera at all.
+    restore_cameras_on_start: bool = True
 
     # LLM
     openai_api_key: str = ""
+    # Empty keeps the official OpenAI endpoint. Set to point the same OpenAI-compatible
+    # client at a proxy/alternate provider (e.g. an internal gateway) without touching code.
+    openai_base_url: str = ""
     model_name: str = "gpt-4o-mini"
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
@@ -58,6 +67,12 @@ class Settings(BaseSettings):
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
     model_weights_path: str = "src/vision/weights/yolo26l.pt"
     detector_target_labels: str = "person,backpack,handbag,suitcase"
+    # Ultralytics' own default. Every extra pixel is quadratic cost for a linear gain in
+    # small-object recall, so this is the first knob to turn down on a CPU-only host — a
+    # camera watching from head height rarely needs to resolve anything as small as 640px
+    # would preserve. Left at the default rather than lowered for everyone, since a GPU
+    # deployment has no reason to trade recall for speed it does not need.
+    detector_imgsz: int = Field(default=640, ge=32, le=1920)
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
     # 15 -> 164 ms, 16 -> 333 ms. 14 sits in the 80-150 ms band — real cost to an attacker,

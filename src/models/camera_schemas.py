@@ -70,7 +70,12 @@ class CameraCreate(BaseModel):
         ),
     )
     target_fps: float | None = Field(default=None, gt=0.0, le=60.0)
-    loop_source: bool = Field(default=True, description="Restart file sources at EOF so the grid keeps running.")
+    # Off by default. Looping a demo clip means the same few seconds of footage are analysed
+    # forever, so one 40-second file raises the same handful of incidents again and again —
+    # a queue of duplicate alerts to dismiss, and, with VLM triage on, a paid model call for
+    # each one. A file that has been watched to the end has nothing further to say; RTSP is
+    # unaffected either way, since a live camera has no EOF.
+    loop_source: bool = Field(default=False, description="Restart file sources at EOF instead of stopping.")
     fall_perspective: FallPerspectiveConfig | None = Field(
         default=None,
         description="Optional bbox/optical-flow thresholds calibrated for this camera view.",

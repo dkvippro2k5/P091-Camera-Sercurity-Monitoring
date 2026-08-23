@@ -173,13 +173,17 @@ class OpenAIVLMTriage:
         model: str = "gpt-4o-mini",
         timeout_sec: float = 20.0,
         max_retries: int = 1,
+        base_url: str | None = None,
     ) -> None:
         from openai import OpenAI  # imported lazily so the package is optional at runtime
 
         self.model = model
         # The SDK's own retry handles the transient 429/5xx case; a hand-rolled loop around
         # a 20s timeout would multiply worst-case latency instead of bounding it.
-        self._client = OpenAI(api_key=api_key, timeout=timeout_sec, max_retries=max_retries)
+        # base_url=None keeps the SDK's own default (official OpenAI endpoint); passing a
+        # value points the same client at any OpenAI-compatible proxy without changing how
+        # requests are built here.
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec, max_retries=max_retries)
 
     def assess(self, request: TriageRequest) -> TriageVerdict:
         """Judge one alert. Never raises.
@@ -470,6 +474,7 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
             api_key=settings.openai_api_key,
             model=settings.vlm_model,
             timeout_sec=settings.vlm_timeout_sec,
+            base_url=getattr(settings, "openai_base_url", "") or None,
         )
     except Exception as exc:  # noqa: BLE001 - a missing openai package must not block startup
         logger.error(f"Could not build the VLM client, continuing without triage: {exc}")

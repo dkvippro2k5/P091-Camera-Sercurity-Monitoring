@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
     finally:
         print("Shutting down...")
         service.shutdown()
+        # After the service, so nothing is still mid-write when the connections go. A no-op
+        # unless a Postgres-backed store actually opened a pool.
+        from src.services.pg_pool import close_all
+
+        close_all()
 
 
 app = FastAPI(

@@ -1,5 +1,29 @@
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../api'
 import { incidentMeta } from '../incidents'
 import { isWithinWindow } from '../activeHours'
+
+/**
+ * How many tiles may hold an open MJPEG stream at once.
+ *
+ * This is a browser limit, not a server one. `multipart/x-mixed-replace` in an `<img>` is a
+ * response that never ends, so each live tile permanently occupies one of the **six**
+ * connections HTTP/1.1 allows per origin. At six cameras the grid used the entire budget by
+ * itself: the `EventSource` alert stream could not connect, and every `fetch` — submitting a
+ * verdict included — sat queued forever, which in DevTools looks like a request stuck on
+ * "pending" with 0 B transferred and in the control room looks like the buttons are dead.
+ *
+ * Three leaves three: one for the alert stream, two for ordinary API calls. Tiles past the
+ * cap fall back to snapshot polling, which uses a connection for a few milliseconds at a
+ * time instead of holding one open.
+ *
+ * The cap can go once the app is served over HTTP/2, which multiplexes streams over a single
+ * connection and has no such budget to exhaust.
+ */
+const MAX_LIVE_STREAMS = 3
+
+/** Refresh rate for tiles that are not holding a live stream. */
+const SNAPSHOT_INTERVAL_MS = 1000
 
 /**
  * `onDelete` and `onAddClick` are passed for a guard, who both watches the cameras and
@@ -33,6 +57,17 @@ export default function GridView({ cameras, alertingCameras, onDelete, onAddClic
 
   const live = cameras.filter((c) => c.running).length
 
+  // Which tiles get one of the scarce live-stream slots. Alerting cameras come first —
+  // that is the one the guard is about to be asked to judge, so it is the one that must be
+  // moving. `sort` is stable, so everything else keeps the grid's existing order and tiles
+  // do not shuffle between renders.
+  const streamingIds = useMemo(() => {
+    const byUrgency = [...cameras].sort(
+      (a, b) => Number(alertingCameras.has(b.id)) - Number(alertingCameras.has(a.id))
+    )
+    return new Set(byUrgency.slice(0, MAX_LIVE_STREAMS).map((c) => c.id))
+  }, [cameras, alertingCameras])
+
   return (
     <>
       <div className="stage-head grid-stage-head">
@@ -55,6 +90,7 @@ export default function GridView({ cameras, alertingCameras, onDelete, onAddClic
             key={camera.id}
             camera={camera}
             alerting={alertingCameras.has(camera.id)}
+            streaming={streamingIds.has(camera.id)}
             onDelete={onDelete}
           />
         ))}
@@ -74,16 +110,42 @@ function windowStart(window) {
   return String(window ?? '').split('-')[0]
 }
 
-function CameraTile({ camera, alerting, onDelete }) {
+/**
+ * One tile's picture: a live MJPEG stream if it holds a slot, a polled still if it does not.
+ *
+ * The `<img>` is deliberately the same element in both modes. Swapping `src` off the stream
+ * URL is what actually closes the MJPEG connection and hands the slot back — rendering a
+ * second element and hiding the first would leave the response open and the budget spent.
+ */
+function CameraFeed({ camera, streaming }) {
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    if (streaming) return undefined
+    const timer = setInterval(() => setTick((n) => n + 1), SNAPSHOT_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [streaming])
+
+  // The cache-buster is required, not defensive: without a changing URL the browser reuses
+  // the decoded image and the tile freezes on its first frame.
+  const src = streaming ? camera.stream_url : `${api.snapshotUrl(camera.id)}?t=${tick}`
+
+  return <img className="feed" src={src} alt={`${camera.name} live feed`} />
+}
+
+function CameraTile({ camera, alerting, streaming, onDelete }) {
   return (
     <article className={alerting ? 'tile alerting' : 'tile'}>
       <div className="tile-head">
         {/* Status is a chip with a word in it, not a bare coloured dot. Green-vs-grey at
             8px was the only signal that a camera had stopped, which fails 1.4.1 Use of
             Colour and is invisible at wall-display distance regardless of vision. */}
+        {/* A polled tile is labelled as such rather than left saying "Live". It is a second
+            behind and updating once a second, and a guard deciding whether to walk over to a
+            camera has to be able to tell that from a real-time feed. */}
         <span className={camera.running ? 'status-chip live' : 'status-chip offline'}>
           <span className="dot" aria-hidden="true" />
-          {camera.running ? 'Live' : 'Offline'}
+          {camera.running ? (streaming ? 'Live' : '1 fps') : 'Offline'}
         </span>
 
         <span className="tile-name" title={camera.name}>
@@ -120,7 +182,7 @@ function CameraTile({ camera, alerting, onDelete }) {
           backend pipeline; face blurring was removed on 2026-08-10, so faces here are
           identifiable.
         */}
-        <img className="feed" src={camera.stream_url} alt={`${camera.name} live feed`} />
+        <CameraFeed camera={camera} streaming={streaming} />
 
         {alerting && (
           <span className="feed-badge">

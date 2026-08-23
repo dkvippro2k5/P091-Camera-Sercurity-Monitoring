@@ -22,7 +22,15 @@ class PostgresStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        """A pooled connection, not a fresh one.
+
+        Every method here calls this, and against hosted Postgres a fresh connect costs
+        ~1.1 s of handshake before any query runs. See `pg_pool` for why that mattered
+        enough to be worth a pool.
+        """
+        from src.services.pg_pool import get_pool
+
+        return get_pool(self.database_url).connection()
 
     def _initialize(self) -> None:
         with self._connect() as connection:

@@ -32,7 +32,7 @@ num2words>=0.5.14
 lap>=0.5.12
 
 # Database
-psycopg[binary]>=3.2.0
+psycopg[binary,pool]>=3.2.0
 pgvector>=0.3.6
 redis>=5.2.0
 boto3>=1.35.0

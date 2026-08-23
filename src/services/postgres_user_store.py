@@ -19,7 +19,10 @@ class PostgresUserStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        """Shares the pool with the incident and session stores — see `pg_pool`."""
+        from src.services.pg_pool import get_pool
+
+        return get_pool(self.database_url).connection()
 
     def _initialize(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:

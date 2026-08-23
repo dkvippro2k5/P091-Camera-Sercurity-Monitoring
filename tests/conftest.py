@@ -14,6 +14,22 @@ from src.main import app
 TEST_WORK_FACTOR = 12
 
 
+@pytest.fixture(autouse=True)
+def _registry_restore_is_on(monkeypatch):
+    """Pin `restore_cameras_on_start` on, whatever the developer's own `.env` says.
+
+    `MonitoringService.__init__` reads it, and turning it off locally — which is the point
+    of the setting — otherwise silently changes what several tests are asserting about
+    `_restore_registry`. Tests must describe the code's behaviour, not the machine's config;
+    this is the same isolation `auth_app` applies to `database_url` for the same reason.
+    """
+    from src.config import get_settings
+    from src.services import monitoring as monitoring_module
+
+    pinned = get_settings().model_copy(update={"restore_cameras_on_start": True})
+    monkeypatch.setattr(monitoring_module, "get_settings", lambda: pinned)
+
+
 @pytest_asyncio.fixture
 async def client():
     """Async HTTP client for testing API endpoints."""

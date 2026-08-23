@@ -119,7 +119,11 @@ def test_alert_is_published_before_triage_completes(make_service):
     alert = _emit(service)
 
     # _emit_alert has returned while the fake is still sleeping inside assess().
-    assert [event for event, _ in published] == ["alert.created"]
+    # alert.evidence comes from the unrelated evidence-store upload, submitted to its own
+    # thread pool in the same call; it races independently of triage and is filtered here
+    # because this test pins the triage latency contract, not evidence persistence.
+    triage_events = [event for event, _ in published if event != "alert.evidence"]
+    assert triage_events == ["alert.created"]
     assert published[0][1]["triage_status"] == "pending"
     assert alert.triage_status == "pending"
 
@@ -153,7 +157,9 @@ def test_verdict_event_is_published_when_triage_finishes(make_service):
     assert alert.triage_status == "complete"
     assert alert.triage_verdict == "real"
     assert alert.triage_rationale == "person is prone and motionless"
-    assert [event for event, _ in published] == ["alert.created", "alert.verdict"]
+    # See test_alert_is_published_before_triage_completes for why alert.evidence is filtered.
+    triage_events = [event for event, _ in published if event != "alert.evidence"]
+    assert triage_events == ["alert.created", "alert.verdict"]
 
 
 # ------------------------------------------------------------------ annotate only

@@ -23,7 +23,14 @@ class PostgresSessionStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        """Shares the pool with the incident and user stores — see `pg_pool`.
+
+        The hottest caller in the app: `session_is_live` runs on every wake of every open
+        SSE stream, so this is the path that most needs the handshake not to be repeated.
+        """
+        from src.services.pg_pool import get_pool
+
+        return get_pool(self.database_url).connection()
 
     def _initialize(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -53,22 +60,50 @@ class PostgresSessionStore:
         return session_id
 
     def resolve(self, session_id: str | None, touch: bool = True) -> Session | None:
+        """Validate a session id, and slide its idle window forward.
+
+        Every authenticated request in the app lands here, so the round-trip count is the
+        latency of the whole API. Read-then-update as two statements cost two round trips
+        plus the commit — roughly 0.9 s against Supabase ap-southeast-1, on *every* request,
+        which is most of what made the dashboard feel hung. Expiry is therefore expressed as
+        `WHERE` clauses and folded into a single `UPDATE ... RETURNING`: the common case (a
+        live session) is now one statement, and only the miss path pays for a second.
+        """
         if not session_id:
             return None
         now = datetime.now(UTC)
+        ttl_cutoff = now - self.ttl
+        idle_cutoff = now - self.idle
+
+        if not touch:
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT username, created_at, last_seen FROM sessions"
+                    " WHERE session_id=%s AND created_at > %s AND last_seen > %s",
+                    (session_id, ttl_cutoff, idle_cutoff),
+                )
+                row = cursor.fetchone()
+            return Session(username=row[0], created_at=row[1], last_seen=row[2]) if row else None
+
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT username, created_at, last_seen FROM sessions WHERE session_id=%s", (session_id,))
+            # RETURNING hands back the post-update row, so `last_seen` is already `now`.
+            cursor.execute(
+                "UPDATE sessions SET last_seen=%s"
+                " WHERE session_id=%s AND created_at > %s AND last_seen > %s"
+                " RETURNING username, created_at, last_seen",
+                (now, session_id, ttl_cutoff, idle_cutoff),
+            )
             row = cursor.fetchone()
-            if row is None:
-                return None
-            session = Session(username=row[0], created_at=row[1], last_seen=row[2])
-            if now - session.created_at >= self.ttl or now - session.last_seen >= self.idle:
-                cursor.execute("DELETE FROM sessions WHERE session_id=%s", (session_id,))
-                return None
-            if touch:
-                cursor.execute("UPDATE sessions SET last_seen=%s WHERE session_id=%s", (now, session_id))
-                session.last_seen = now
-            return session
+            if row is not None:
+                return Session(username=row[0], created_at=row[1], last_seen=row[2])
+
+            # No row matched: the id is either unknown or expired. Reaping it costs a second
+            # round trip, but only here — on the miss path, not on every authenticated call.
+            cursor.execute(
+                "DELETE FROM sessions WHERE session_id=%s AND (created_at <= %s OR last_seen <= %s)",
+                (session_id, ttl_cutoff, idle_cutoff),
+            )
+        return None
 
     def destroy(self, session_id: str | None) -> str | None:
         if not session_id:

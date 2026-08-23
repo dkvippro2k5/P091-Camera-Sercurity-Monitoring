@@ -39,12 +39,17 @@ class IncidentDetector:
         conf_threshold: float = 0.5,
         target_labels: list[str] | None = None,
         use_tracking: bool = True,
+        imgsz: int = 640,
     ):
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         # None keeps every class the model emits; a list filters to those classes.
         self.target_labels = target_labels
         self.use_tracking = use_tracking
+        # Ultralytics resizes to this on the longer side before inference. Smaller is
+        # quadratically cheaper (halving it is ~4x fewer pixels) at the cost of missing
+        # small/far objects — see `Settings.detector_imgsz` for why 640 is the default.
+        self.imgsz = imgsz
         self.model = None
 
         self._initialize_model()
@@ -108,9 +113,11 @@ class IncidentDetector:
             # persist=True carries the tracker's state between calls, which is what makes
             # box.id stable. Without it every frame restarts numbering and the temporal
             # rules can never accumulate history.
-            results = self.model.track(frame, conf=self.conf_threshold, persist=True, verbose=False)
+            results = self.model.track(
+                frame, conf=self.conf_threshold, persist=True, verbose=False, imgsz=self.imgsz
+            )
         else:
-            results = self.model(frame, conf=self.conf_threshold, verbose=False)
+            results = self.model(frame, conf=self.conf_threshold, verbose=False, imgsz=self.imgsz)
 
         detections: list[IncidentDetection] = []
         current_time = round(time.time(), 2)
