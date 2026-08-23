@@ -19,12 +19,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
-
 # Security: run as non-root user
 RUN useradd -m appuser
+
+# Copy installed packages from builder into appuser's own home, not /root. `pip install
+# --user` in the builder stage put everything under /root/.local, and /root is mode 700 --
+# root's own home is deliberately unreadable by anyone else. Landing straight there was
+# never actually runnable as appuser: `docker compose up` failed with
+# "PermissionError: /root/.local/bin/uvicorn" on the very first `USER appuser` run, because
+# appuser cannot even traverse into /root to reach the copied files, regardless of what
+# permissions the files themselves carry. --chown fixes both the target ownership and the
+# traversal problem by not putting it under /root in the first place.
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+ENV PATH=/home/appuser/.local/bin:$PATH
 
 # Copy application code
 COPY . .
