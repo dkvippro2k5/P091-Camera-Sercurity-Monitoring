@@ -73,6 +73,10 @@ export const api = {
   deleteCamera: (id) => request(`/cameras/${id}`, { method: 'DELETE' }),
   acknowledge: (id) => request(`/alerts/${id}/acknowledge`, { method: 'POST' }),
 
+  // Empty list whenever the feature is off or nothing similar has been judged yet -- never
+  // an error the modal needs to handle specially. See docs/database/schema.sql (PLANNED).
+  similarIncidents: (id) => request(`/alerts/${id}/similar`),
+
   // The HITL judgement (PRD §3.2). Distinct from acknowledge: this one records whether the
   // incident was real, and is the only call that appends to the labelled history.
   submitVerdict: (id, verdict, operatorNote = '', actualEventType = '') =>

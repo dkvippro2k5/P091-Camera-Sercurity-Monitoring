@@ -198,6 +198,22 @@ class AlertVerdict(BaseModel):
     actual_event_type: str | None = Field(default=None, max_length=64)
 
 
+class SimilarIncident(BaseModel):
+    """One neighbor from `MonitoringService.similar_incidents` (PLANNED, see
+    docs/database/schema.sql): a past *judged* incident whose rule-engine reason embedded
+    close to the alert being looked at, used both by the guard-facing "similar past events"
+    panel and as VLM few-shot context.
+    """
+
+    alert_id: str
+    camera_name: str
+    label: str
+    operator_verdict: OperatorVerdict | None = None
+    evidence_url: str | None = None
+    similarity: float
+    created_at: str
+
+
 class SystemStatus(BaseModel):
     total_cameras: int = 0
     active_cameras: int = 0

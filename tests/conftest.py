@@ -82,6 +82,13 @@ def isolated_data(monkeypatch, tmp_path):
     history_path = str(tmp_path / "vlm_history.jsonl")
     monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda **_: IncidentDetector(model_path=None))
     monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
+    # Same isolation concern as database_url in `auth_app`: EMBEDDINGS_ENABLED=true in a
+    # developer's real .env would otherwise make every MonitoringService() constructed in
+    # this suite open a real connection to whatever Postgres DATABASE_URL points at, and
+    # call the real embeddings API, on every test -- not just slow, but a real spend against
+    # someone's API quota for tests that have nothing to do with this feature.
+    monkeypatch.setattr(monitoring_module, "create_embedding_store", lambda: None)
+    monkeypatch.setattr(monitoring_module, "build_embedder", lambda settings: None)
     monkeypatch.setattr(monitoring_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     monkeypatch.setattr(monitoring_module, "IncidentLog", lambda: IncidentLog(path=str(tmp_path / "incidents.jsonl")))
     monkeypatch.setattr(

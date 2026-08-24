@@ -28,7 +28,15 @@ from src.api.deps import (
     require_operator,
     session_is_live,
 )
-from src.models.camera_schemas import Alert, AlertVerdict, CameraCreate, CameraInfo, DemoVideo, SystemStatus
+from src.models.camera_schemas import (
+    Alert,
+    AlertVerdict,
+    CameraCreate,
+    CameraInfo,
+    DemoVideo,
+    SimilarIncident,
+    SystemStatus,
+)
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
 from src.services.user_store import User
@@ -283,6 +291,23 @@ async def submit_verdict(
     if not recorded:
         raise HTTPException(status_code=404, detail=f"No alert '{alert_id}'")
     return Response(status_code=204)
+
+
+@router.get("/alerts/{alert_id}/similar", response_model=list[SimilarIncident])
+async def similar_incidents(
+    alert_id: str, request: Request, limit: int = Query(default=5, ge=1, le=20)
+) -> list[SimilarIncident]:
+    """Past guard-judged incidents whose rule-engine reason reads similarly to this one's.
+
+    PLANNED feature (docs/database/schema.sql): empty until EMBEDDINGS_ENABLED and
+    DATABASE_URL is Postgres, and until at least one alert has been judged since -- the
+    comparison library only contains incidents a guard has already confirmed, so a fresh
+    deployment starts with nothing to compare against. Never a 404/500 for "not configured
+    yet" or "no matches" -- both read as an empty list, the same way a search with zero
+    results is not an error.
+    """
+    rows = await asyncio.to_thread(get_service(request).similar_incidents, alert_id, limit)
+    return [SimilarIncident(**row) for row in rows]
 
 
 @router.get("/events")
