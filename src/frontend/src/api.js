@@ -71,6 +71,7 @@ export const api = {
   listAlerts: () => request('/alerts'),
 
   deleteCamera: (id) => request(`/cameras/${id}`, { method: 'DELETE' }),
+  replayCamera: (id) => request(`/cameras/${id}/replay`, { method: 'POST' }),
   acknowledge: (id) => request(`/alerts/${id}/acknowledge`, { method: 'POST' }),
 
   // Empty list whenever the feature is off or nothing similar has been judged yet -- never

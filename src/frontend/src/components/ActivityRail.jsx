@@ -22,57 +22,62 @@ export default function ActivityRail({
   const resolved = alerts.filter((a) => a.acknowledged).slice().reverse()
 
   return (
-    <aside className={collapsed ? 'rail drawer-rail collapsed' : 'rail drawer-rail'} aria-label="Incident activity">
+    <>
       {onToggleCollapse && (
         <button
-          className="rail-drawer-handle"
+          className={collapsed ? 'rail-drawer-handle collapsed' : 'rail-drawer-handle'}
           onClick={(e) => {
             e.stopPropagation()
             onToggleCollapse()
           }}
-          title={collapsed ? 'Open activity panel' : 'Close activity panel'}
-          aria-label={collapsed ? 'Open activity panel' : 'Close activity panel'}
+          title={collapsed ? 'Mở danh sách sự cố' : 'Đóng danh sách sự cố'}
+          aria-label={collapsed ? 'Mở danh sách sự cố' : 'Đóng danh sách sự cố'}
         >
-          <span className="handle-icon">{collapsed ? '‹' : '›'}</span>
+          <svg className="handle-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d={collapsed ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7'} />
+          </svg>
           {unackedCount > 0 && (
             <span className="handle-badge">{unackedCount}</span>
           )}
         </button>
       )}
 
+    <aside className={collapsed ? 'rail drawer-rail collapsed' : 'rail drawer-rail'} aria-label="Danh sách sự cố">
+
       <div className="rail-head">
-        <div><span className="eyebrow">Incident queue</span><h2>Activity</h2></div>
+        <div><span className="eyebrow">Hàng đợi sự cố</span><h2>Hoạt động</h2></div>
         {unackedCount > 0 && (
           <span className="rail-count">
             {unackedCount}
-            <span className="visually-hidden"> awaiting review</span>
+            <span className="visually-hidden"> đang chờ xử lý</span>
           </span>
         )}
       </div>
 
       {alerts.length === 0 ? (
-        <p className="rail-empty">No incidents recorded this session.</p>
+        <p className="rail-empty">Chưa có sự cố nào trong ca này.</p>
       ) : (
         <ul className="rail-list">
-          {pendingReview.length > 0 && <li className="rail-section-label">Needs review</li>}
+          {pendingReview.length > 0 && <li className="rail-section-label">Cần xử lý</li>}
           {pendingReview.map((alert) => (
             <RailItem key={alert.id} alert={alert} onInspect={onInspect} activeId={activeId} unacked />
           ))}
-          {pendingVerification.length > 0 && <li className="rail-section-label">AI verification</li>}
+          {pendingVerification.length > 0 && <li className="rail-section-label">AI đang xác minh</li>}
           {pendingVerification.map((alert) => (
             <RailItem key={alert.id} alert={alert} onInspect={onInspect} activeId={activeId} pending />
           ))}
-          {filtered.length > 0 && <li className="rail-section-label">Filtered</li>}
+          {filtered.length > 0 && <li className="rail-section-label">Đã lọc</li>}
           {filtered.map((alert) => (
             <RailItem key={alert.id} alert={alert} onInspect={onInspect} activeId={activeId} autoFiltered />
           ))}
-          {resolved.length > 0 && <li className="rail-section-label">Reviewed</li>}
+          {resolved.length > 0 && <li className="rail-section-label">Đã xem</li>}
           {resolved.map((alert) => (
             <RailItem key={alert.id} alert={alert} onInspect={onInspect} activeId={activeId} />
           ))}
         </ul>
       )}
     </aside>
+    </>
   )
 }
 
@@ -96,7 +101,7 @@ function RailItem({ alert, onInspect, activeId, unacked = false, pending = false
         <span className="rail-text">
           <span className="rail-title">
             {meta.short}
-            {!unacked && <span className="visually-hidden"> (reviewed)</span>}
+            {!unacked && <span className="visually-hidden"> (đã xem)</span>}
           </span>
           <span className="rail-sub">
             {alert.camera_name} -{' '}
@@ -104,8 +109,8 @@ function RailItem({ alert, onInspect, activeId, unacked = false, pending = false
               {relativeTime(alert.created_at)}
             </time>
           </span>
-          {pending && <span className="rail-badge pending">AI verifying...</span>}
-          {autoSuppressed && !pending && <span className="rail-badge">AI filtered</span>}
+          {pending && <span className="rail-badge pending">AI đang xác minh…</span>}
+          {autoSuppressed && !pending && <span className="rail-badge">AI đã lọc</span>}
         </span>
       </button>
     </li>

@@ -317,6 +317,7 @@ class MonitoringService:
         for camera in cameras:
             stat = stats.get(camera.id, {})
             camera.running = bool(stat.get("running", False))
+            camera.stopped_reason = stat.get("stopped_reason")
             camera.processed_frames = int(stat.get("processed_frames", 0))
             camera.inference_capacity_fps = float(stat.get("inference_capacity_fps", 0.0))
             camera.latency_p50_ms = float(stat.get("latency_p50_ms", 0.0))
@@ -367,8 +368,8 @@ class MonitoringService:
             rtsp_url=resolved,
             target_fps=info.target_fps,
             autostart=False,
-            # A file source that stops at EOF leaves a dead tile in the grid; RTSP is
-            # already continuous so looping it is meaningless.
+            # File sources stop at EOF by default. The grid retains their final frame and
+            # offers an explicit replay action; RTSP is already continuous.
             loop_finite_sources=payload.loop_source and payload.source_type != "rtsp",
         )
         if worker is not None and payload.fall_perspective is not None:
@@ -384,6 +385,41 @@ class MonitoringService:
         self._publish("camera.added", info.model_dump())
         logger.info(f"Camera '{info.name}' ({camera_id}) started on {resolved}")
         return info
+
+    def replay_camera(self, camera_id: str) -> CameraInfo | None:
+        """Restart an ended file source under the same configured camera id."""
+        with self._lock:
+            camera = self._cameras.get(camera_id)
+        if camera is None:
+            return None
+        if camera.source_type == "rtsp":
+            raise ValueError("RTSP cameras are continuous and cannot be replayed")
+
+        stats = {s["camera_id"]: s for s in self.manager.get_status()["cameras"]}
+        stat = stats.get(camera_id, {})
+        if stat.get("running"):
+            raise ValueError("Camera is still running")
+        if stat.get("stopped_reason") != "end_of_source":
+            raise ValueError("Camera can only be replayed after the video reaches its end")
+
+        worker = self.manager.add_camera(
+            camera_id=camera_id,
+            rtsp_url=camera.resolved_source,
+            target_fps=camera.target_fps,
+            autostart=False,
+            loop_finite_sources=False,
+        )
+        if camera.fall_perspective is not None:
+            worker.pipeline.rule_engine.set_camera_fall_profile(
+                camera_id,
+                FallPerspectiveProfile(**camera.fall_perspective.model_dump(exclude_none=True)),
+            )
+        worker.start()
+        camera.running = True
+        camera.stopped_reason = None
+        self._publish("camera.updated", camera.model_dump())
+        logger.info(f"Camera '{camera.name}' ({camera_id}) replayed from the beginning")
+        return camera
 
     def remove_camera(self, camera_id: str) -> bool:
         self.manager.remove_camera(camera_id)

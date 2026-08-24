@@ -11,7 +11,7 @@ export default function VerifyingCard({ pendingAlerts }) {
     <div className="verifying-card" role="status" aria-live="polite">
       <div className="verifying-card-head">
         <span className="verifying-spinner" aria-hidden="true" />
-        <span className="verifying-title">AI verifying</span>
+        <span className="verifying-title">AI đang xác minh</span>
         {count > 1 && <span className="verifying-count">+{count - 1} more</span>}
       </div>
       <div className="verifying-card-body">

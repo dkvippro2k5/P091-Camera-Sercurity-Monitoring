@@ -106,6 +106,62 @@ def test_source_resolution_rejects_path_traversal():
     assert MonitoringService.resolve_source("rtsp", "rtsp://cam/1") == "rtsp://cam/1"
 
 
+def test_file_sources_do_not_loop_by_default():
+    payload = CameraCreate(name="Clip", source_type="upload", source="clip.mp4")
+    assert payload.loop_source is False
+
+
+def test_replay_replaces_an_ended_worker_without_removing_the_camera(service, monkeypatch):
+    """Replay keeps the configured tile/id and starts a fresh finite-source worker."""
+    camera = monitoring_module.CameraInfo(
+        id="cam_clip",
+        name="Clip",
+        source_type="upload",
+        source="clip.mp4",
+        resolved_source="data/uploads/clip.mp4",
+        intrusion_enabled=False,
+        active_labels=["fall_detection", "abandoned_object"],
+        target_fps=12.0,
+    )
+    service._cameras[camera.id] = camera
+    monkeypatch.setattr(
+        service.manager,
+        "get_status",
+        lambda: {"cameras": [{"camera_id": camera.id, "running": False, "stopped_reason": "end_of_source"}]},
+    )
+
+    class Worker:
+        def __init__(self):
+            self.started = False
+            self.pipeline = type("Pipeline", (), {})()
+
+        def start(self):
+            self.started = True
+
+    worker = Worker()
+    calls = []
+
+    def add_camera(**kwargs):
+        calls.append(kwargs)
+        return worker
+
+    monkeypatch.setattr(service.manager, "add_camera", add_camera)
+    replayed = service.replay_camera(camera.id)
+
+    assert replayed is camera
+    assert service.get_camera(camera.id) is camera
+    assert worker.started is True
+    assert calls == [{
+        "camera_id": camera.id,
+        "rtsp_url": camera.resolved_source,
+        "target_fps": 12.0,
+        "autostart": False,
+        "loop_finite_sources": False,
+    }]
+    assert camera.running is True
+    assert camera.stopped_reason is None
+
+
 # ------------------------------------------------------------------ alerts
 def test_alert_carries_the_frame_and_the_rule_reason(service):
     """An event must publish immediately, carrying its own evidence.
