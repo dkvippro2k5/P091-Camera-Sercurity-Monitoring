@@ -22,9 +22,18 @@ class Settings(BaseSettings):
     # this API with an opaque CORS error that looks like the backend is down.
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     allowed_hosts: str = "localhost,127.0.0.1,test,testserver"
+    # Whether startup re-adds the cameras saved in the registry. On by default, because a
+    # deployment that restarts must come back watching what it was watching. Turn it off for
+    # local work, where the saved set is whatever the last experiment left behind and having
+    # it start itself means every `--reload` re-opens six video files and floods the alert
+    # queue before anyone has asked for a camera at all.
+    restore_cameras_on_start: bool = True
 
     # LLM
     openai_api_key: str = ""
+    # Empty keeps the official OpenAI endpoint. Set to point the same OpenAI-compatible
+    # client at a proxy/alternate provider (e.g. an internal gateway) without touching code.
+    openai_base_url: str = ""
     model_name: str = "gpt-4o-mini"
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 

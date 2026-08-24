@@ -70,7 +70,12 @@ class CameraCreate(BaseModel):
         ),
     )
     target_fps: float | None = Field(default=None, gt=0.0, le=60.0)
-    loop_source: bool = Field(default=False, description="Restart file sources at EOF. Disabled by default.")
+    # Off by default. Looping a demo clip means the same few seconds of footage are analysed
+    # forever, so one 40-second file raises the same handful of incidents again and again —
+    # a queue of duplicate alerts to dismiss, and, with VLM triage on, a paid model call for
+    # each one. A file that has been watched to the end has nothing further to say; RTSP is
+    # unaffected either way, since a live camera has no EOF.
+    loop_source: bool = Field(default=False, description="Restart file sources at EOF instead of stopping.")
     fall_perspective: FallPerspectiveConfig | None = Field(
         default=None,
         description="Optional bbox/optical-flow thresholds calibrated for this camera view.",
@@ -192,6 +197,22 @@ class AlertVerdict(BaseModel):
     verdict: OperatorVerdict
     operator_note: str | None = Field(default=None, max_length=2000)
     actual_event_type: str | None = Field(default=None, max_length=64)
+
+
+class SimilarIncident(BaseModel):
+    """One neighbor from `MonitoringService.similar_incidents` (PLANNED, see
+    docs/database/schema.sql): a past *judged* incident whose rule-engine reason embedded
+    close to the alert being looked at, used both by the guard-facing "similar past events"
+    panel and as VLM few-shot context.
+    """
+
+    alert_id: str
+    camera_name: str
+    label: str
+    operator_verdict: OperatorVerdict | None = None
+    evidence_url: str | None = None
+    similarity: float
+    created_at: str
 
 
 class SystemStatus(BaseModel):

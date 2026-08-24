@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { api } from '../api'
 import { useFocusTrap } from '../useFocusTrap'
 import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incidents'
 
@@ -40,6 +41,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
           <EvidenceFrames alert={alert} meta={meta} />
 
           <TriagePanel alert={alert} />
+          <SimilarIncidents alertId={alert.id} />
           {!alert.operator_verdict && (
             <div className="operator-feedback">
               <label htmlFor="actual-event-type">
@@ -143,6 +145,56 @@ function TriagePanel({ alert }) {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Past guard-judged incidents whose rule-engine reason read similarly to this one's
+ * (PLANNED feature, docs/database/schema.sql). Renders nothing rather than an empty-state
+ * message when the list comes back empty -- that is the common case (feature off, or
+ * nothing judged yet to compare against) and a guard mid-shift does not need a panel
+ * explaining that.
+ */
+function SimilarIncidents({ alertId }) {
+  const [items, setItems] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    setItems([])
+    api
+      .similarIncidents(alertId)
+      .then((rows) => {
+        if (!cancelled) setItems(rows)
+      })
+      .catch(() => {
+        /* Feature is best-effort: a lookup failure should look like "nothing similar", not
+           an error the guard has to deal with while judging a live alert. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [alertId])
+
+  if (items.length === 0) return null
+
+  return (
+    <section className="similar-incidents" aria-label="Similar past incidents">
+      <span className="fact-label">Similar past events</span>
+      <ul>
+        {items.map((item) => (
+          <li key={item.alert_id}>
+            {item.evidence_url && <img src={item.evidence_url} alt={`${item.label} on ${item.camera_name}`} />}
+            <div className="similar-incident-text">
+              <strong>{item.camera_name}</strong>
+              <span>
+                {Math.round(item.similarity * 100)}% similar - recorded as{' '}
+                {item.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

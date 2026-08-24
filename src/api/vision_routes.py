@@ -14,6 +14,7 @@ WebSocket would need its own keepalive and retry logic for no gain.
 import asyncio
 import json
 import os
+import time
 import uuid
 
 import cv2
@@ -21,16 +22,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from src.api.deps import (
-    current_user,
     current_websocket_manager,
     require_guard,
     require_manager,
     require_operator,
     session_is_live,
 )
-from src.models.camera_schemas import Alert, AlertVerdict, CameraCreate, CameraInfo, DemoVideo, SystemStatus
+from src.models.camera_schemas import (
+    Alert,
+    AlertVerdict,
+    CameraCreate,
+    CameraInfo,
+    DemoVideo,
+    SimilarIncident,
+    SystemStatus,
+)
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
+from src.services.user_store import User
 
 # Every route here requires a signed-in operator, manager or guard. The dependency is on the
 # router rather than per route, so an endpoint added later is protected because of where it
@@ -42,6 +51,11 @@ router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_guard)])
 manager_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_manager)])
 operator_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_operator)])
 manager_ws_router = APIRouter(tags=["monitoring"])
+
+# How often a long-lived stream re-reads its session from the store, rather than on every
+# wake. Bounds how long a revoked session can keep a stream open, traded against a database
+# round trip per event — see the comment in `event_stream`'s generator.
+_SESSION_RECHECK_SECONDS = 15.0
 
 _ALLOWED_UPLOAD_EXT = {".mp4", ".avi", ".mov", ".mkv"}
 # Keep the application limit explicit even though nginx also rejects oversized requests:
@@ -258,7 +272,12 @@ async def acknowledge_alert(alert_id: str, request: Request) -> Response:
 
 
 @router.post("/alerts/{alert_id}/verdict", status_code=204)
-async def submit_verdict(alert_id: str, payload: AlertVerdict, request: Request) -> Response:
+async def submit_verdict(
+    alert_id: str,
+    payload: AlertVerdict,
+    request: Request,
+    guard: User = Depends(require_guard),
+) -> Response:
     """The guard's HITL judgement (PRD §3.2), which also becomes training context.
 
     This is the only path that appends to the labelled history, so it is both the
@@ -266,20 +285,46 @@ async def submit_verdict(alert_id: str, payload: AlertVerdict, request: Request)
     signed-in operator: a labelled dataset whose labels have no author cannot be audited
     when two guards disagree about what a false alarm looks like.
     """
-    judged_by = current_user(request).username
-    if not get_service(request).record_operator_verdict(
+    # Taken from the router's own `require_guard` rather than calling `current_user` again:
+    # FastAPI caches a dependency's result per request, so declaring the *same* callable as a
+    # parameter reuses the gate that already ran instead of re-authenticating. Resolving a
+    # session means two Postgres round trips, and this route was paying for them twice.
+    judged_by = guard.username
+    # Writes to the incident/history store, which is a real network round trip on Postgres
+    # (see auth_routes.login's identical concern for scrypt) -- run off the event loop so a
+    # slow or stalled database connection cannot freeze every other camera/SSE connection.
+    recorded = await asyncio.to_thread(
+        get_service(request).record_operator_verdict,
         alert_id,
         payload.verdict,
         judged_by=judged_by,
         operator_note=payload.operator_note,
         actual_event_type=payload.actual_event_type,
-    ):
+    )
+    if not recorded:
         raise HTTPException(status_code=404, detail=f"No alert '{alert_id}'")
     return Response(status_code=204)
 
 
+@router.get("/alerts/{alert_id}/similar", response_model=list[SimilarIncident])
+async def similar_incidents(
+    alert_id: str, request: Request, limit: int = Query(default=5, ge=1, le=20)
+) -> list[SimilarIncident]:
+    """Past guard-judged incidents whose rule-engine reason reads similarly to this one's.
+
+    PLANNED feature (docs/database/schema.sql): empty until EMBEDDINGS_ENABLED and
+    DATABASE_URL is Postgres, and until at least one alert has been judged since -- the
+    comparison library only contains incidents a guard has already confirmed, so a fresh
+    deployment starts with nothing to compare against. Never a 404/500 for "not configured
+    yet" or "no matches" -- both read as an empty list, the same way a search with zero
+    results is not an error.
+    """
+    rows = await asyncio.to_thread(get_service(request).similar_incidents, alert_id, limit)
+    return [SimilarIncident(**row) for row in rows]
+
+
 @router.get("/events")
-async def event_stream(request: Request) -> StreamingResponse:
+async def event_stream(request: Request, guard: User = Depends(require_guard)) -> StreamingResponse:
     """Server-sent events: alert created / triage verdict ready / acknowledged / auth revoked.
 
     This is what makes the modal interruptive without the frontend polling for it.
@@ -293,21 +338,36 @@ async def event_stream(request: Request) -> StreamingResponse:
     and then failed would become an endless reconnect loop.
     """
     service = get_service(request)
-    username = current_user(request).username
+    # Reuses the router's `require_guard` result rather than re-resolving the session — see
+    # `submit_verdict` for why that is two round trips nobody needs to pay twice.
+    username = guard.username
     queue = service.subscribe()
 
     async def generate():
+        # The loop below wakes once per *event*, not once per interval, so during an alert
+        # storm across several cameras it can spin many times a second. Re-reading the
+        # session from Postgres on each of those wakes was costing a ~0.3 s round trip and a
+        # worker thread every time, which is what saturated the threadpool and made the whole
+        # dashboard stop responding. The revocation check is a safety net on a timescale of
+        # seconds, not milliseconds, so pacing it is free: a logout still tears this stream
+        # down within `_SESSION_RECHECK_SECONDS`, and `auth.revoked` below usually gets there
+        # first anyway.
+        next_session_check = 0.0
         try:
             while True:
                 if await request.is_disconnected():
                     break
 
-                # Re-checked on every wake, not just at connect. This response can stay open
+                # Re-checked periodically, not just at connect. This response can stay open
                 # for hours, so without it logging out would leave the alert stream running
                 # until the browser felt like closing it — "logout ends the session" has to
                 # be something the server enforces, not something the client cooperates with.
-                if not session_is_live(request):
-                    break
+                # Off the event loop: on PostgresSessionStore this is a real network call.
+                now = time.monotonic()
+                if now >= next_session_check:
+                    if not await asyncio.to_thread(session_is_live, request):
+                        break
+                    next_session_check = now + _SESSION_RECHECK_SECONDS
 
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -379,7 +439,7 @@ async def statistics(request: Request) -> dict:
 @manager_ws_router.websocket("/manager/live")
 async def manager_live(websocket: WebSocket) -> None:
     """Push manager dashboard changes without making the browser poll continuously."""
-    user = current_websocket_manager(websocket)
+    user = await asyncio.to_thread(current_websocket_manager, websocket)
     if user is None:
         await websocket.close(code=1008, reason="Manager authentication required")
         return
@@ -393,10 +453,16 @@ async def manager_live(websocket: WebSocket) -> None:
     queue = service.subscribe()
     try:
         await websocket.send_json({"type": "manager.connected", "data": {"username": user.username}})
+        # Paced for the same reason as the SSE stream: this loop wakes on every published
+        # event, and a session read is a database round trip, not a dict lookup.
+        next_session_check = 0.0
         while True:
-            if not session_is_live(websocket):
-                await websocket.close(code=1008, reason="Session expired")
-                return
+            now = time.monotonic()
+            if now >= next_session_check:
+                if not await asyncio.to_thread(session_is_live, websocket):
+                    await websocket.close(code=1008, reason="Session expired")
+                    return
+                next_session_check = now + _SESSION_RECHECK_SECONDS
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=5.0)
                 await websocket.send_json(message)

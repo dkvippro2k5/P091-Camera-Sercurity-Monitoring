@@ -30,9 +30,7 @@ async def lifespan(app: FastAPI):
     # Accounts and sessions, both process singletons like the monitoring service below.
     # Built before it, and cheaply, so that if the roster is missing the log says so before
     # anything spends seconds loading YOLO weights.
-    use_postgres = settings.app_env.lower() == "production" and settings.database_url.startswith(
-        ("postgresql://", "postgres://")
-    )
+    use_postgres = settings.database_url.startswith(("postgresql://", "postgres://"))
     if use_postgres:
         from src.services.postgres_user_store import PostgresUserStore
 
