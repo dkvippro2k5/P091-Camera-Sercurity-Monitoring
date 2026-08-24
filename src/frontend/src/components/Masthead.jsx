@@ -12,12 +12,12 @@
  * renders nothing.
  */
 const NAV = {
-  grid: 'Live grid',
-  setup: 'Cameras',
-  stats: 'Statistics',
+  grid: 'Giám sát',
+  setup: 'Camera',
+  stats: 'Báo cáo',
 }
 
-const ROLE_LABEL = { guard: 'Guard', manager: 'Manager' }
+const ROLE_LABEL = { guard: 'Bảo vệ', manager: 'Quản lý' }
 
 export default function Masthead({ screen, onNavigate, status, unackedCount, user, screens, onLogout }) {
   const attention = unackedCount > 0
@@ -35,7 +35,7 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
     <header className="masthead">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">CM</span>
-        <span className="brand-copy"><strong>Camera Monitor</strong><small>Operations</small></span>
+        <span className="brand-copy"><strong>A-eyes</strong><small>Trung tâm vận hành</small></span>
       </div>
 
       <nav aria-label="Views">
@@ -50,7 +50,7 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
         {showBacklog && (
           <div className={attention ? 'vital attention' : 'vital'} aria-live="polite">
             <span className="vital-value">{unackedCount}</span>
-            <span className="vital-label">{unackedCount === 1 ? 'Needs review' : 'Need review'}</span>
+            <span className="vital-label">Chờ xử lý</span>
           </div>
         )}
 
@@ -60,11 +60,11 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
               <span className="vital-value">
                 {status.active_cameras}/{status.total_cameras}
               </span>
-              <span className="vital-label">Cameras live</span>
+              <span className="vital-label">Camera đang chạy</span>
             </div>
             <div className="vital">
               <span className="vital-value">{status.average_inference_capacity_fps.toFixed(1)}</span>
-              <span className="vital-label">fps capacity</span>
+              <span className="vital-label">Năng lực FPS</span>
             </div>
           </>
         )}
@@ -83,7 +83,7 @@ export default function Masthead({ screen, onNavigate, status, unackedCount, use
         )}
         {user && (
           <button className="compact" onClick={onLogout}>
-            Sign out
+            Đăng xuất
           </button>
         )}
       </div>

@@ -13,31 +13,31 @@
 
 export const INCIDENTS = {
   fall_detection: {
-    short: 'Fall',
-    headline: 'Fall detected',
+    short: 'Ngã',
+    headline: 'Phát hiện té ngã',
     rank: 0,
     severity: 'critical',
     // Shown under the headline so the operator knows what the alert is asking of them.
     // The label alone doesn't say "go now" vs "review later".
-    action: 'Possible medical emergency — check on the person now.',
+    action: 'Có thể là cấp cứu — hãy kiểm tra ngay.',
   },
   intrusion: {
-    short: 'Intrusion',
-    headline: 'Intrusion',
+    short: 'Xâm nhập',
+    headline: 'Phát hiện xâm nhập',
     rank: 1,
     severity: 'high',
-    action: 'Someone entered a restricted zone.',
+    action: 'Có người đã vào khu vực hạn chế.',
   },
   abandoned_object: {
-    short: 'Abandoned object',
-    headline: 'Abandoned object',
+    short: 'Vật bị bỏ lại',
+    headline: 'Phát hiện vật bị bỏ lại',
     rank: 2,
     severity: 'medium',
-    action: 'An item was left unattended. Inspect when free.',
+    action: 'Có vật không có người trông coi. Hãy kiểm tra khi có thể.',
   },
 }
 
-const FALLBACK = { short: 'Incident', headline: 'Incident', rank: 9, severity: 'medium', action: '' }
+const FALLBACK = { short: 'Sự cố', headline: 'Sự cố', rank: 9, severity: 'medium', action: '' }
 
 export function incidentMeta(label) {
   return INCIDENTS[label] ?? { ...FALLBACK, short: label, headline: label }
@@ -66,9 +66,9 @@ export function triageOrder(alerts) {
  * verdict would visually downgrade a real emergency.
  */
 const TRIAGE = {
-  real: { text: 'Appears to be a real incident', tone: 'triage-real' },
-  false_positive: { text: 'Looks like a false alarm', tone: 'triage-false' },
-  uncertain: { text: 'Inconclusive', tone: 'triage-uncertain' },
+  real: { text: 'Có vẻ là sự cố thật', tone: 'triage-real' },
+  false_positive: { text: 'Có vẻ là báo động giả', tone: 'triage-false' },
+  uncertain: { text: 'Chưa thể kết luận', tone: 'triage-uncertain' },
 }
 
 export function triageMeta(verdict) {
@@ -82,17 +82,18 @@ export function triageMeta(verdict) {
  */
 export function relativeTime(iso, now = Date.now()) {
   const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
-  if (seconds < 10) return 'just now'
-  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 10) return 'vừa xong'
+  if (seconds < 60) return `${seconds} giây trước`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return `${minutes} phút trước`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
+  if (hours < 24) return `${hours} giờ trước`
+  return `${Math.floor(hours / 24)} ngày trước`
 }
 
 export function formatClock(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const date = new Date(iso)
+  return `${date.getHours()}h${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 /**

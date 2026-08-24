@@ -165,6 +165,19 @@ async def delete_camera(camera_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
+@router.post("/cameras/{camera_id}/replay", response_model=CameraInfo)
+async def replay_camera(camera_id: str, request: Request) -> CameraInfo:
+    """Replay an uploaded or prepared video after it reaches EOF."""
+    service = get_service(request)
+    try:
+        camera = await asyncio.to_thread(service.replay_camera, camera_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
+    return camera
+
+
 @router.get("/cameras/{camera_id}/snapshot")
 async def camera_snapshot(camera_id: str, request: Request) -> Response:
     """Latest analysed frame as a single JPEG — the polling fallback for MJPEG."""

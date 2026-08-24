@@ -71,6 +71,7 @@ export const api = {
   listAlerts: () => request('/alerts'),
 
   deleteCamera: (id) => request(`/cameras/${id}`, { method: 'DELETE' }),
+  replayCamera: (id) => request(`/cameras/${id}/replay`, { method: 'POST' }),
   acknowledge: (id) => request(`/alerts/${id}/acknowledge`, { method: 'POST' }),
 
   // The HITL judgement (PRD §3.2). Distinct from acknowledge: this one records whether the
