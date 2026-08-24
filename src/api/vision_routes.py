@@ -44,8 +44,9 @@ operator_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_o
 manager_ws_router = APIRouter(tags=["monitoring"])
 
 _ALLOWED_UPLOAD_EXT = {".mp4", ".avi", ".mov", ".mkv"}
-# Uploads are read into memory by the frame-probe below, and this is a demo box.
-_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+# Keep the application limit explicit even though nginx also rejects oversized requests:
+# direct backend traffic must enforce the same boundary.
+_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 
 # 1x1 grey JPEG, served when a camera has not produced a frame yet. An empty body makes
 # the browser render a broken-image icon, which reads as a crash rather than "starting".
@@ -105,7 +106,7 @@ async def upload_video(file: UploadFile) -> dict[str, str]:
             if size > _MAX_UPLOAD_BYTES:
                 handle.close()
                 os.remove(destination)
-                raise HTTPException(status_code=413, detail="Video exceeds the 200 MB limit")
+                raise HTTPException(status_code=413, detail="Video exceeds the 500 MB limit")
             handle.write(chunk)
 
     return {"filename": stored_name, "original_name": file.filename or stored_name}

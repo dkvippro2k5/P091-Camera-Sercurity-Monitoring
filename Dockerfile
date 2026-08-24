@@ -1,17 +1,11 @@
-# ---- Stage 1: Build ----
-FROM python:3.11-slim AS builder
+# CUDA, cuDNN, PyTorch and Python are pinned together for the Tesla T4 deployment.
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
 
 WORKDIR /app
+ENV YOLO_CONFIG_DIR=/tmp/Ultralytics \
+    PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# ---- Stage 2: Production ----
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# opencv-python links against libGL and glib, neither of which ships in -slim, so
+# opencv-python links against libGL and glib, neither of which ships in the base image, so
 # `import cv2` aborts at startup without these. They are kept (rather than switching the
 # requirement to opencv-python-headless) so scripts/demo_rtsp_simulation.py --show still
 # works from a local checkout using the same requirements.txt.
@@ -19,9 +13,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -c "import torch, torchvision; assert torch.__version__.startswith('2.7.1'); assert torchvision.__version__.startswith('0.22.1')"
 
 # Security: run as non-root user
 RUN useradd -m appuser
@@ -29,8 +23,10 @@ RUN useradd -m appuser
 # Copy application code
 COPY . .
 
-# Runtime state is writable; application code remains root-owned and read-only to appuser.
-RUN mkdir -p /app/data /app/models && chown -R appuser:appuser /app/data
+# Runtime state and Ultralytics' settings directory are writable; application code remains
+# root-owned and read-only.
+RUN mkdir -p /app/data /app/models /tmp/Ultralytics \
+    && chown -R appuser:appuser /app/data /tmp/Ultralytics
 
 USER appuser
 
