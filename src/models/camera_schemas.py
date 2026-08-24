@@ -121,6 +121,7 @@ class CameraInfo(BaseModel):
     active_labels: list[str] = Field(default_factory=list)
     target_fps: float
     running: bool = False
+    stopped_reason: str | None = None
     processed_frames: int = 0
     inference_capacity_fps: float = 0.0
     latency_p50_ms: float = 0.0

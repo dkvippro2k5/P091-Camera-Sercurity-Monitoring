@@ -11,7 +11,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
   const submit = (verdict) => onVerdict(alert.id, verdict, note, actualEventType)
 
   return (
-    <div className="overlay">
+    <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div
         className={`modal ${meta.severity}`}
         ref={dialogRef}
@@ -23,7 +23,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
         <div className="modal-head">
           <p className="modal-eyebrow">
             <span aria-hidden="true">!</span>
-            {isHistory ? 'Reviewed incident' : `${meta.severity} priority`}
+            {isHistory ? 'Sự cố đã xử lý' : 'Cảnh báo ưu tiên'}
           </p>
           <h2 id="alert-heading">{meta.headline}</h2>
           <p className="modal-action" id="alert-action">
@@ -33,40 +33,31 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
 
         <div className="modal-facts">
           <Fact label="Camera" value={alert.camera_name} />
-          {alert.zone_name && <Fact label="Zone" value={alert.zone_name} />}
-          <Fact label="Time" value={formatClock(alert.created_at)} />
-          <Fact label="Detected" value={relativeTime(alert.created_at)} />
-          <Fact label="Confidence" value={`${(alert.confidence * 100).toFixed(0)}%`} />
+          {alert.zone_name && <Fact label="Khu vực" value={alert.zone_name} />}
+          <Fact label="Thời gian" value={`${formatClock(alert.created_at)} (${relativeTime(alert.created_at)})`} />
         </div>
 
         <div className="modal-body">
           <EvidenceFrames alert={alert} meta={meta} />
-
-          {alert.reason && (
-            <p className="reason">
-              <span className="fact-label">Rule</span>
-              <code>{alert.reason}</code>
-            </p>
-          )}
 
           <TriagePanel alert={alert} />
           <SimilarIncidents alertId={alert.id} />
           {!alert.operator_verdict && (
             <div className="operator-feedback">
               <label htmlFor="actual-event-type">
-                What actually happened?
+                Thực tế đã xảy ra điều gì?
                 <select id="actual-event-type" value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
-                  <option value="">Select if known</option>
-                  <option value="real_incident">Real incident</option>
-                  <option value="false_alarm">False alarm</option>
-                  <option value="normal_activity">Normal activity</option>
-                  <option value="maintenance">Maintenance / service activity</option>
-                  <option value="other">Other</option>
+                  <option value="">Chọn nếu đã xác định</option>
+                  <option value="real_incident">Sự cố thật</option>
+                  <option value="false_alarm">Báo động giả</option>
+                  <option value="normal_activity">Hoạt động bình thường</option>
+                  <option value="maintenance">Bảo trì / dịch vụ</option>
+                  <option value="other">Khác</option>
                 </select>
               </label>
               <label htmlFor="guard-note">
-                Guard note
-                <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Describe what happened..." />
+                Ghi chú của bảo vệ
+                <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Mô tả sự việc…" />
               </label>
             </div>
           )}
@@ -78,24 +69,24 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
               {alert.operator_verdict ? (
                 <>
                   <span className="queued">
-                    Recorded as {alert.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
+                    Đã ghi nhận là {alert.operator_verdict === 'real' ? 'sự cố thật' : 'báo động giả'}
                   </span>
                   <button data-autofocus onClick={onClose}>
-                    Close
+                    Đóng
                   </button>
                 </>
               ) : (
                 <>
                   <span className="queued">
                     {alert.triage_verdict === 'false_positive'
-                      ? 'AI Filtered — Override AI verdict:'
-                      : 'Past alert — Record verdict:'}
+                      ? 'AI đã lọc — ghi đè kết luận:'
+                      : 'Cảnh báo cũ — ghi nhận kết luận:'}
                   </span>
                   <button className="verdict-false" onClick={() => submit('false')}>
-                    False alarm
+                    Báo động giả
                   </button>
                   <button className="primary" data-autofocus onClick={() => submit('real')}>
-                    Confirm real
+                    Xác nhận sự cố
                   </button>
                 </>
               )}
@@ -104,14 +95,14 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
             <>
               {queued > 0 && (
                 <span className="queued">
-                  {queued} more {queued === 1 ? 'incident' : 'incidents'} waiting
+                  Còn {queued} sự cố đang chờ
                 </span>
               )}
               <button className="verdict-false" onClick={() => submit('false')}>
-                False alarm
+                Báo động giả
               </button>
               <button className="primary" data-autofocus onClick={() => submit('real')}>
-                Confirm real
+                Xác nhận sự cố
               </button>
             </>
           )}
@@ -127,8 +118,8 @@ function TriagePanel({ alert }) {
   if (alert.triage_status === 'pending') {
     return (
       <p className="triage triage-pending" aria-live="polite">
-        <span className="fact-label">AI assessment</span>
-        <span className="triage-text">Assessing...</span>
+        <span className="fact-label">Đánh giá của AI</span>
+        <span className="triage-text">Đang phân tích…</span>
       </p>
     )
   }
@@ -138,15 +129,12 @@ function TriagePanel({ alert }) {
 
   return (
     <div className={`triage ${meta.tone}`} aria-live="polite">
-      <span className="fact-label">AI assessment</span>
+      <span className="fact-label">Đánh giá của AI</span>
       <div className="triage-text">
         <strong>{meta.text}</strong>
-        {typeof alert.triage_confidence === 'number' && alert.triage_verdict !== 'uncertain' && (
-          <span className="triage-confidence"> ({(alert.triage_confidence * 100).toFixed(0)}% confident)</span>
-        )}
         {alert.triage_rationale && <span className="triage-rationale"> - {alert.triage_rationale}</span>}
         {!alert.triage_rationale && alert.triage_error && (
-          <span className="triage-rationale"> - assessment unavailable</span>
+          <span className="triage-rationale"> - không thể đánh giá</span>
         )}
         {observations.length > 0 && (
           <ol className="triage-observations" aria-label="Frame observations">
@@ -228,8 +216,8 @@ function EvidenceFrames({ alert, meta }) {
   return (
     <section className="evidence-strip" aria-label="VLM evidence frames">
       <div className="evidence-head">
-        <span className="fact-label">Evidence clip</span>
-        <span>{frames.length} chronological frames</span>
+          <span className="fact-label">Chuỗi bằng chứng</span>
+        <span>{frames.length} khung hình theo thời gian</span>
       </div>
       <div className="evidence-grid">
         {frames.map((frame) => (

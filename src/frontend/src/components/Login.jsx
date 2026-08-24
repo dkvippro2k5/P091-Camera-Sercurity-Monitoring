@@ -36,22 +36,22 @@ export default function Login({ onLogin }) {
       <div className="login-shell">
         <div className="login-visual" aria-hidden="true">
           <div className="login-radar"><span /><span /><span /></div>
-          <div className="login-visual-label">P-091 · Vision operations</div>
+          <div className="login-visual-label">P-091 · Giám sát hình ảnh</div>
         </div>
 
         <form className="login-card" onSubmit={handleSubmit}>
           <div className="brand login-brand">
             <span className="brand-mark" aria-hidden="true">CM</span>
-            <span className="brand-copy"><strong>Camera Monitor</strong><small>Secure workspace</small></span>
+            <span className="brand-copy"><strong>A-eyes</strong><small>Khu vực bảo mật</small></span>
           </div>
 
           <div className="login-heading">
-            <p className="eyebrow">Authorized access</p>
-            <h1>Sign in to continue</h1>
+            <p className="eyebrow">Truy cập được cấp phép</p>
+            <h1>Đăng nhập để tiếp tục</h1>
           </div>
 
           <label className="field">
-            <span>Username</span>
+            <span>Tên đăng nhập</span>
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -62,7 +62,7 @@ export default function Login({ onLogin }) {
           </label>
 
           <label className="field">
-            <span>Password</span>
+            <span>Mật khẩu</span>
             <input
               type="password"
               value={password}
@@ -83,7 +83,7 @@ export default function Login({ onLogin }) {
 
           <div className="actions">
             <button type="submit" className="primary" disabled={busy || !username.trim() || !password}>
-              {busy ? 'Signing in…' : 'Sign in'}
+              {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
             </button>
           </div>
         </form>

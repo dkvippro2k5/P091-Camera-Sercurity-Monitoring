@@ -3,6 +3,30 @@
 
 @import './tokens.css';
 
+:root {
+  scrollbar-color: #52606f #0b1118;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0b1118;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid #0b1118;
+  border-radius: var(--r-full);
+  background: #52606f;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #718096;
+}
+
 *,
 *::before,
 *::after {
@@ -24,6 +48,12 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 code, pre, kbd, .mono-font {
@@ -227,7 +257,7 @@ input[type='file'] {
 .vital {
   display: flex;
   flex-direction: row;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-2);
   line-height: 1;
 }
@@ -258,6 +288,13 @@ input[type='file'] {
 
 .vital.attention .vital-label {
   color: var(--danger-text);
+}
+
+/* Keep the live metrics optically centered in the masthead rather than riding the
+   text baseline beside the larger brand and account controls. */
+.masthead .vitals {
+  position: relative;
+  top: 2px;
 }
 
 .workspace {
@@ -400,6 +437,29 @@ input[type='file'] {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.feed.ended {
+  filter: blur(8px) brightness(0.5);
+  transform: scale(1.025);
+}
+
+.feed-ended {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  color: #fff;
+  background: rgb(0 0 0 / 0.2);
+  text-align: center;
+}
+
+.feed-ended strong {
+  font-size: var(--fs-lg);
+  text-shadow: 0 2px 8px rgb(0 0 0 / 0.8);
 }
 
 .feed-badge {
@@ -680,7 +740,7 @@ input[type='file'] {
   justify-content: center;
   padding: var(--sp-5);
   background: rgb(3 5 8 / 0.82);
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
 }
 
 .modal {
@@ -768,6 +828,7 @@ input[type='file'] {
 
 .modal-body {
   padding: 0 var(--sp-5);
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -1172,6 +1233,53 @@ legend {
   background: var(--surface-2);
   cursor: pointer;
   font-size: var(--fs-sm);
+}
+
+.source-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.source-choices .choice {
+  align-items: flex-start;
+  min-height: 76px;
+  padding: var(--sp-3);
+}
+
+.source-choices .choice-primary {
+  grid-column: 1 / -1;
+}
+
+.choice-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.choice-copy strong {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.choice-copy small {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+}
+
+.source-choices .choice-primary {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.source-choices .choice-secondary {
+  opacity: 0.82;
+}
+
+.source-choices .choice-secondary:hover,
+.source-choices .choice-secondary:has(input:checked) {
+  opacity: 1;
 }
 
 .choice:hover {
@@ -3665,4 +3773,291 @@ legend {
   font-size: 11px;
   background: hsl(calc(8 - (var(--intensity) * 8)), 82%, 48%);
   box-shadow: 0 0 0 8px hsla(8, 82%, 48%, calc(var(--intensity) * .16)), 0 4px 12px rgba(15, 23, 42, .18);
+}
+
+/* Guard workspace: two true columns with independent scroll regions. */
+.app {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Keep the verdict controls reachable even when evidence or AI notes are tall. The body
+   is the only scrolling region; the footer remains visible so an active alert cannot make
+   the entire application appear frozen behind an unreachable action. */
+.modal-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+}
+
+.workspace:not(.no-rail) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+  height: calc(100vh - 64px);
+  min-height: 0;
+  transition: grid-template-columns 220ms ease;
+}
+
+.workspace:not(.no-rail).rail-collapsed {
+  grid-template-columns: minmax(0, 1fr) 0;
+}
+
+.workspace.no-rail {
+  height: calc(100vh - 64px);
+  overflow: hidden;
+}
+
+.workspace .stage {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rail.drawer-rail {
+  position: relative;
+  inset: auto;
+  width: 372px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transform: none;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.22);
+}
+
+.rail.drawer-rail.collapsed {
+  transform: translateX(100%);
+}
+
+.rail-list {
+  min-height: 0;
+  flex: 1;
+  overscroll-behavior: contain;
+}
+
+.screen-grid .grid-stage-head {
+  position: relative;
+  overflow: hidden;
+  min-height: 126px;
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(circle at 78% 20%, rgb(37 99 235 / 0.18), transparent 34%),
+    linear-gradient(135deg, #131c27, #0e151e);
+  box-shadow: var(--shadow-raised);
+}
+
+.screen-grid .grid-stage-head::after {
+  content: '';
+  position: absolute;
+  right: -48px;
+  bottom: -72px;
+  width: 220px;
+  height: 220px;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 50%;
+}
+
+.screen-grid .stage-subtitle {
+  max-width: 62ch;
+  margin: var(--sp-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.screen-grid .tile {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 42%, var(--surface-1)), var(--surface-1));
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.2);
+}
+
+.screen-grid .tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 38px rgb(0 0 0 / 0.3);
+}
+
+@media (max-width: 1100px) {
+  .workspace:not(.no-rail) {
+    display: block;
+  }
+
+  .rail.drawer-rail {
+    position: fixed;
+    top: 64px;
+    right: 0;
+    bottom: 0;
+    width: min(372px, calc(100vw - 40px));
+    height: calc(100vh - 64px);
+  }
+
+  .workspace .stage {
+    height: calc(100vh - 64px);
+  }
+}
+
+/* Final guard-feed treatment: the image is the card. Metadata and controls float over it,
+   with no separate header/footer chrome or outer border. */
+.screen-grid .tile {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-md);
+  background: #000;
+  box-shadow: none;
+}
+
+.screen-grid .tile:hover {
+  transform: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.screen-grid .tile.alerting {
+  box-shadow: inset 0 0 0 3px var(--danger);
+}
+
+.screen-grid .feed-wrap {
+  border: 0;
+}
+
+.feed-meta {
+  position: absolute;
+  top: var(--sp-3);
+  left: var(--sp-3);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: calc(100% - 108px);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: rgb(3 7 12 / 0.7);
+  color: #fff;
+  backdrop-filter: blur(6px);
+}
+
+.feed-meta strong {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-status {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--offline);
+}
+
+.feed-status.live {
+  background: var(--live);
+  box-shadow: 0 0 0 4px rgb(16 185 129 / 0.18);
+}
+
+.feed-action,
+.feed-replay {
+  position: absolute;
+  z-index: 4;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-color: rgb(255 255 255 / 0.2);
+  border-radius: 50%;
+  background: rgb(3 7 12 / 0.72);
+  color: #fff;
+  font-size: 22px;
+}
+
+.feed-action.delete {
+  top: var(--sp-3);
+  right: var(--sp-3);
+}
+
+.feed-replay {
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  transform: translate(-50%, -50%);
+  font-size: 30px;
+}
+
+.feed-replay:hover:not(:disabled) {
+  transform: translate(-50%, -50%);
+}
+
+.modal-open .feed {
+  visibility: hidden;
+}
+
+.overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* The drawer handle is a sibling, not a child of the translated rail, so closing the rail
+   can never carry the handle off-screen with it. */
+.rail-drawer-handle {
+  position: fixed;
+  top: 50%;
+  right: 372px;
+  left: auto;
+  transform: translateY(-50%);
+  z-index: 90;
+}
+
+.rail-drawer-handle.collapsed {
+  right: 0;
+}
+
+.rail-drawer-handle:active:not(:disabled) {
+  transform: translateY(-50%);
+}
+
+/* SVG icons avoid font baseline and descender metrics inside icon-only controls. */
+.rail-drawer-handle,
+.feed-action,
+.feed-replay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rail-drawer-handle .handle-icon,
+.feed-action svg,
+.feed-replay svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feed-replay svg {
+  width: 28px;
+  height: 28px;
+}
+
+@media (max-width: 1100px) {
+  .rail-drawer-handle {
+    right: min(372px, calc(100vw - 40px));
+  }
+
+  .rail-drawer-handle.collapsed {
+    right: 0;
+  }
 }

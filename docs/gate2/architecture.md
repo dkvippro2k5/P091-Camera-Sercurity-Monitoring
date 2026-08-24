@@ -1,142 +1,170 @@
-# Kiến trúc hệ thống
+# P-091 Security Monitor Architecture
 
-## Sơ đồ thành phần và luồng dữ liệu
+## Scope
+
+P-091 is a multi-camera security monitoring system. It accepts uploaded videos,
+local files, simulated RTSP streams, and IP-camera RTSP streams. Computer vision
+detects incident candidates on the camera path. An asynchronous VLM workflow
+reviews evidence after an incident is created; it is not required for every frame.
+
+## System Diagram
 
 ```mermaid
 flowchart LR
-    subgraph Input[Nguồn camera]
-        FILE[Video mẫu hoặc video tải lên]
-        RTSP[Camera IP hoặc MediaMTX RTSP]
+    subgraph Sources[Camera sources]
+        FILE[Uploaded video or local file]
+        RTSP[IP camera or MediaMTX RTSP]
     end
 
-    subgraph UI[React dashboard]
-        SETUP[Thêm camera và vẽ vùng cấm]
-        GRID[Lưới camera trực tiếp]
-        ALERT[Thông báo và xác nhận của guard]
-        STATS[Màn hình thống kê manager]
+    subgraph Public[Optional public access]
+        CF[Cloudflare Tunnel or reverse proxy]
     end
 
-    subgraph Backend[FastAPI]
-        AUTH[Đăng nhập, session và phân quyền]
-        API[REST API]
-        SERVICE[MonitoringService]
-        MJPEG[Luồng hình MJPEG]
-        SSE[Sự kiện cảnh báo SSE]
+    subgraph Web[Web tier]
+        NGINX[Nginx frontend]
+        UI[React/Vite dashboard]
     end
 
-    subgraph Worker[Worker riêng cho từng camera]
+    subgraph API[FastAPI backend]
+        AUTH[Cookie sessions and role checks]
+        ROUTES[REST API]
+        MONITOR[MonitoringService]
+        MJPEG[Authenticated MJPEG streams]
+        SSE[Guard alert SSE]
+        WS[Manager live WebSocket]
+    end
+
+    subgraph Vision[Per-camera processing]
         CAPTURE[OpenCV VideoCapture]
-        MOTION[Motion gate]
-        YOLO[YOLO detect và tracking]
-        RULES[RuleEngine theo thời gian]
-        FALL[Model tư thế té ngã bổ sung]
-        FRAME[Ảnh có bbox và vùng cấm]
+        GATE[MotionGate]
+        YOLO[YOLO yolo26l.pt + tracking]
+        RULES[Temporal RuleEngine]
+        OVERLAY[Annotated frame and ring buffer]
     end
 
-    subgraph Review[Kiểm tra cảnh báo]
-        BUFFER[Buffer hình trước và sau sự kiện]
+    subgraph Review[Asynchronous review]
+        BUFFER[Pre/post evidence sampler]
+        GRAPH[LangGraph incident workflow]
         VLM[OpenAI VLM]
-        OLD[Lịch sử đã được guard gán nhãn]
     end
 
-    subgraph Data[Dữ liệu local]
-        CAMERAS[data/cameras.json]
-        INCIDENTS[data/incidents.jsonl]
-        VLMHISTORY[data/vlm_history.jsonl]
-        USERS[data/users.json]
-        UPLOADS[data/uploads]
+    subgraph Data[Durable services]
+        PG[(PostgreSQL)]
+        REDIS[(Redis event relay)]
+        EVIDENCE[Local or S3-compatible evidence storage]
     end
 
     FILE --> CAPTURE
     RTSP --> CAPTURE
-    SETUP --> API
-    API --> AUTH --> SERVICE
-    CAPTURE --> MOTION --> YOLO --> RULES
-    YOLO --> FALL
-    RULES --> FRAME
-    FALL --> FRAME
-    FRAME --> MJPEG --> GRID
-    RULES -->|Tạo incident| SERVICE
-    SERVICE --> SSE --> ALERT
-    SERVICE --> BUFFER --> VLM
-    OLD --> VLM
-    VLM -->|real, false_positive hoặc uncertain| SERVICE
-    ALERT -->|Guard xác nhận thật hoặc giả| API
-    STATS -->|Lấy báo cáo| API
-    SERVICE --> CAMERAS
-    SERVICE --> INCIDENTS
-    SERVICE --> VLMHISTORY
-    AUTH --> USERS
-    API --> UPLOADS
+    CF --> NGINX
+    NGINX --> UI
+    UI -->|REST and cookie session| ROUTES
+    ROUTES --> AUTH --> MONITOR
+    CAPTURE --> GATE --> YOLO --> RULES --> OVERLAY
+    OVERLAY --> MJPEG --> UI
+    RULES -->|incident| MONITOR
+    MONITOR --> SSE --> UI
+    MONITOR --> WS --> UI
+    MONITOR --> BUFFER --> GRAPH --> VLM
+    VLM -->|advisory verdict| MONITOR
+    MONITOR --> PG
+    MONITOR --> EVIDENCE
+    MONITOR <-->|optional cross-process events| REDIS
 ```
 
-## Các thành phần đang chạy
+## Runtime Components
 
-| Thành phần            | Vai trò trong hệ thống                                                |
-| --------------------- | --------------------------------------------------------------------- |
-| React/Vite            | Giao diện đăng nhập, camera, cảnh báo và thống kê                     |
-| FastAPI               | API, phân quyền, MJPEG, SSE và quản lý vòng đời camera                |
-| `MonitoringService`   | Nối API với vision pipeline, giữ buffer hình và chạy VLM ở background |
-| `MultiStreamManager`  | Tạo worker, tracker và rule state riêng cho từng camera               |
-| OpenCV                | Đọc video/RTSP, resize và mã hóa ảnh JPEG                             |
-| YOLO                  | Nhận diện và bám theo `person`, `backpack`, `handbag`, `suitcase`     |
-| `RuleEngine`          | Đánh giá té ngã, xâm nhập, đồ vật bỏ quên và cooldown cảnh báo        |
-| `FallPostureDetector` | Model té ngã bổ sung; không tham gia phát hiện xâm nhập               |
-| OpenAI VLM            | Xem bằng chứng hình ảnh và đánh giá lại cảnh báo                      |
-| JSON/JSONL            | Lưu camera, tài khoản, incident và kết quả guard/VLM                  |
-| MediaMTX              | Thành phần ngoài hệ thống, chỉ dùng khi cần giả lập RTSP              |
+| Component | Responsibility |
+| --- | --- |
+| React/Vite | Login, camera setup, zone polygons, live grid, alerts, and manager statistics |
+| Nginx | Serves the compiled frontend and proxies API/stream requests |
+| FastAPI/Uvicorn | Authentication, REST routes, MJPEG, SSE, manager WebSocket, and lifecycle APIs |
+| `MonitoringService` | Camera registry, worker lifecycle, alert state, evidence collection, triage, and persistence |
+| `MultiStreamManager` | Maintains independent capture, tracker, and rule state per camera |
+| OpenCV | Reads file/RTSP sources, resizes inference frames, and encodes JPEG output |
+| `MotionGate` | Skips inference on unchanged frames while preserving heartbeat updates |
+| `IncidentDetector` | Runs `models/yolo26l.pt` with object tracking for configured labels |
+| `RuleEngine` | Applies intrusion, fall, abandoned-object, temporal, and cooldown rules |
+| LangGraph workflow | Runs post-alert evidence review asynchronously |
+| OpenAI VLM | Reviews a bounded sequence of evidence frames and returns an advisory verdict |
+| PostgreSQL | Production source of truth for users, sessions, camera configs, incidents, and reviewed alert history |
+| Redis | Optional event relay for multiple backend/worker processes; it is not the history database |
+| Evidence store | Stores alert JPEG evidence locally in `data/evidence` by default, or in S3-compatible storage when configured |
+| Cloudflare Tunnel | Optional public ingress for demos; a named tunnel or VPS reverse proxy is required for reliable 24/7 hosting |
 
-## Luồng xử lý một cảnh báo
+## Data Persistence
 
-1. `StreamWorker` đọc frame từ video hoặc RTSP.
-2. `MotionGate` bỏ qua một số frame khi cảnh không thay đổi và không có track đang hoạt động.
-3. YOLO nhận diện vật thể với ngưỡng `DETECTOR_CONFIDENCE`, hiện là `0.40`, đồng thời cấp
-   `track_id` để theo dõi cùng một người hoặc đồ vật qua nhiều frame.
-4. `RuleEngine` nhận detection và kiểm tra điều kiện của từng sự kiện:
-   - Intrusion: điểm chân hoặc phần thân dưới đi vào polygon đang hoạt động.
-   - Fall: thay đổi chuyển động/hình dạng kéo dài đủ thời gian, hoặc model tư thế té ngã xác nhận.
-   - Abandoned object: đồ vật đứng yên và không còn người ở gần trong thời gian quy định.
-5. Khi rule phát cảnh báo, backend gửi `alert.created` qua SSE để giao diện hiện thông báo ngay.
-6. Backend đợi đủ phần hình sau sự kiện, lấy tối đa 6 frame từ ring buffer rồi gọi OpenAI.
-7. VLM trả verdict, confidence, lý do và nhận xét cho từng frame. Kết quả được gửi lại qua
-   `alert.verdict`.
-8. Guard chọn sự kiện thật hoặc báo động giả. Dòng kết quả này được ghi vào
-   `data/vlm_history.jsonl` và được dùng làm ví dụ cho những lần đánh giá sau.
+Production uses PostgreSQL when `APP_ENV=production` and `DATABASE_URL` is a
+PostgreSQL URL. The important tables are:
 
-## Phát hiện xâm nhập
+- `users`: guard and manager accounts.
+- `sessions`: server-side authenticated sessions.
+- `camera_configs`: registered cameras and zone/rule configuration.
+- `incidents`: every alert emitted by the rule engine, including evidence URL and review fields.
+- `alert_history`: guard-reviewed/VLM-labelled alert history used for feedback and evaluation.
 
-Intrusion không phải là một class riêng của YOLO. YOLO chỉ nhận diện `person`. Rule chỉ chạy
-khi camera đã bật Intrusion và có polygon hợp lệ.
+Alert evidence is stored separately from relational metadata. The default
+production configuration uses the bind-mounted `./data` directory, with files in
+`data/evidence`. For a cloud deployment, configure an S3-compatible backend and
+keep PostgreSQL as the metadata source of truth.
 
-Điều kiện hiện tại:
+Redis carries event notifications between processes when `REDIS_URL` is set. It
+does not replace PostgreSQL and should not be treated as durable incident history.
+
+## Incident Flow
+
+1. A `StreamWorker` reads a file or RTSP frame.
+2. `MotionGate` skips unchanged frames when no active track requires inference.
+3. YOLO tracking runs on the configured inference size (default `640x640`) and emits detections and track IDs.
+4. `RuleEngine` evaluates temporal state for intrusion, fall, and abandoned-object conditions.
+5. When a rule fires, `MonitoringService` writes the incident to PostgreSQL, stores evidence asynchronously, and publishes `alert.created` through SSE.
+6. The worker keeps a bounded ring buffer. The asynchronous LangGraph workflow samples pre/post frames and calls the OpenAI VLM when enabled.
+7. The VLM returns `real`, `false_positive`, or `uncertain` as an advisory result. It cannot suppress the deterministic incident record.
+8. The guard records the final verdict. The incident and labelled history remain queryable after a page refresh or backend restart.
+
+## Transport and Authentication
+
+- REST API: `/api/v1/*`.
+- Live video: authenticated MJPEG at `/api/v1/cameras/{camera_id}/stream`.
+- Guard alerts: authenticated Server-Sent Events at `/api/v1/events`.
+- Manager live updates: authenticated WebSocket at `/api/v1/manager/live`.
+- Sessions: HttpOnly cookie with guard/manager role enforcement.
+- Health check: `GET /health`.
+
+The browser activity rail is initially loaded from `GET /api/v1/alerts`; it is not
+only an in-memory frontend list. New events are then merged through SSE.
+
+## Intrusion Rule
+
+Intrusion is a rule decision, not a YOLO class. YOLO detects `person`; the rule
+checks the person's bottom-center foot point, with a lower-body overlap fallback,
+against an enabled polygon and time window. A cooldown prevents repeated alerts
+for the same camera and incident type.
+
+## Deployment Topology
+
+Local production currently runs with Docker Compose:
 
 ```text
-YOLO thấy person và có track_id
-AND vùng cấm đang trong giờ hoạt động
-AND điểm chân nằm trong polygon
-    OR ít nhất 25% số điểm mẫu ở thân dưới nằm trong polygon
-THEN tạo cảnh báo intrusion
+frontend (Nginx) -> backend (FastAPI/Uvicorn) -> PostgreSQL
+                                      |          -> Redis
+                                      |          -> local/S3 evidence
+                                      -> NVIDIA GPU when available
 ```
 
-Cảnh báo có thể xuất hiện ngay ở frame đầu tiên người được nhìn thấy trong vùng. Không bắt buộc
-phải thấy họ ở ngoài trước. Khi người rời vùng, track đó được mở lại để có thể cảnh báo nếu họ
-đi vào lần nữa. Cooldown mặc định là 30 giây cho cùng một loại cảnh báo trên cùng camera.
+The backend and frontend are separate containers. PostgreSQL and Redis use
+persistent host volumes. The model is mounted read-only at
+`/app/models/detector.pt`. A public Cloudflare Quick Tunnel can expose the
+frontend for testing, but it depends on the local host remaining online and its
+URL is not permanent.
 
-Confidence hiển thị trên cảnh báo intrusion là confidence của detection `person`, không phải
-xác suất "đây chắc chắn là hành vi xâm nhập".
+For 24/7 deployment, move the Compose stack to an always-on VPS or GPU cloud
+instance, use a named tunnel or HTTPS reverse proxy, configure a fixed domain,
+and place evidence in durable object storage.
 
-## VLM nằm ở đâu trong luồng
+## Known Constraints
 
-VLM không xem camera liên tục. Nó chỉ được gọi sau khi vision rule đã tạo incident. Input gồm:
-
-- Tên camera và loại sự kiện
-- Lý do rule đã kích hoạt
-- Tối đa 6 frame theo thứ tự thời gian, có cả trước và sau cảnh báo
-- Các ví dụ cũ cùng camera và cùng loại sự kiện đã được guard xác nhận
-
-Output gồm verdict `real`, `false_positive` hoặc `uncertain`, confidence, một câu giải thích và
-nhận xét quan sát được ở từng frame.
-
-Với kết quả `false_positive` có confidence từ 85% trở lên, frontend không mở popup lớn. Cảnh
-báo vẫn còn trong lịch sử, không bị xóa. Các kết quả thật, chưa chắc chắn hoặc false positive
-dưới 85% vẫn cần guard xem lại.
+- CPU-only instances can run the stack but have limited YOLO throughput.
+- `yolo26l.pt` is unchanged; performance improvements come from inference resizing, motion gating, and concurrency configuration.
+- RTSP sources must be reachable from the deployment host, usually through a VPN when cameras are on a private network.
+- MJPEG preview bandwidth grows quickly with camera count and viewer count; production deployments should consider lower preview FPS or HLS/WebRTC.

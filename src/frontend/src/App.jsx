@@ -36,7 +36,9 @@ export default function App() {
   // Set when the operator opens a past alert from the rail, so re-reading a resolved
   // incident does not require a new one to fire.
   const [inspectingId, setInspectingId] = useState(null)
+  const [dismissedAlertIds, setDismissedAlertIds] = useState(() => new Set())
   // Whether the guard has collapsed the activity rail sidebar on the live grid page (defaults to true so grid is un-obscured).
+  // Always start closed on a fresh page load; the handle remains available to pull it out.
   const [railCollapsed, setRailCollapsed] = useState(true)
 
   // The alert half of the app — modal, rail, backlog badge, incident stream — is the guard's.
@@ -48,7 +50,7 @@ export default function App() {
   // Only a guard gets interrupted. A manager reading statistics cannot action a fall — the
   // verdict route is the guard's — so a modal over their dashboard would be an interruption
   // whose only available response is to dismiss it, training them to dismiss alerts.
-  const active = isGuard ? (inspecting ?? unacked[0] ?? null) : null
+  const active = isGuard ? (inspecting ?? unacked.find((alert) => !dismissedAlertIds.has(alert.id)) ?? null) : null
 
   // Everything authenticated hangs off this, so signing out clears the screen rather than
   // leaving the last shift's cameras and incidents painted behind the login form.
@@ -58,6 +60,7 @@ export default function App() {
     setStatus(null)
     setAlerts([])
     setInspectingId(null)
+    setDismissedAlertIds(new Set())
     setScreen('grid')
   }, [])
 
@@ -118,7 +121,10 @@ export default function App() {
       loadAlerts()
     }
     loadStatus()
-    const interval = setInterval(loadStatus, 3000)
+    const interval = setInterval(() => {
+      loadStatus()
+      if (isGuard) loadCameras()
+    }, 3000)
     return () => clearInterval(interval)
   }, [user, isGuard, loadCameras, loadStatus, loadAlerts])
 
@@ -167,6 +173,7 @@ export default function App() {
 
     events.addEventListener('camera.added', loadCameras)
     events.addEventListener('camera.removed', loadCameras)
+    events.addEventListener('camera.updated', loadCameras)
     events.onerror = () => console.warn('Alert stream interrupted; EventSource will retry')
 
     return () => events.close()
@@ -218,9 +225,18 @@ export default function App() {
   }
 
   async function handleDeleteCamera(id) {
-    if (!window.confirm('Remove this camera? Its live feed and zone configuration are deleted.')) return
+    if (!window.confirm('Xóa camera này? Luồng trực tiếp và cấu hình vùng giám sát cũng sẽ bị xóa.')) return
     await api.deleteCamera(id)
     await loadCameras()
+  }
+
+  async function handleReplayCamera(id) {
+    try {
+      await api.replayCamera(id)
+      await loadCameras()
+    } catch (err) {
+      window.alert(`Không thể phát lại video: ${err.message}`)
+    }
   }
 
   async function handleVerdict(id, verdict, operatorNote = '', actualEventType = '') {
@@ -243,17 +259,29 @@ export default function App() {
         actual_event_type: actualEventType || null,
       } : a)))
       setInspectingId(null)
+      setDismissedAlertIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       loadStatus()
     }
-    if (failure) window.alert(`That judgement was not recorded: ${failure.message}`)
+    if (failure) window.alert(`Không thể ghi nhận kết luận: ${failure.message}`)
   }
 
   const alertingCameras = useMemo(() => new Set(unacked.map((a) => a.camera_id)), [unacked])
 
+  function handleCloseAlert() {
+    if (active) {
+      setDismissedAlertIds((prev) => new Set(prev).add(active.id))
+    }
+    setInspectingId(null)
+  }
+
   if (user === undefined) {
     return (
       <div className="login-page">
-        <p className="hint">Checking your session…</p>
+        <p className="hint">Đang kiểm tra phiên đăng nhập…</p>
       </div>
     )
   }
@@ -268,7 +296,7 @@ export default function App() {
   const current = allowed.includes(screen) ? screen : allowed[0]
 
   return (
-    <div className={`app role-${user.role}`}>
+    <div className={`app role-${user.role} ${active ? 'modal-open' : ''}`}>
       <Masthead
         screen={current}
         onNavigate={setScreen}
@@ -292,6 +320,7 @@ export default function App() {
                 cameras={cameras}
                 alertingCameras={alertingCameras}
                 onDelete={isGuard ? handleDeleteCamera : null}
+                onReplay={isGuard ? handleReplayCamera : null}
                 onAddClick={isGuard ? () => setScreen('setup') : null}
               />
             )}
@@ -329,7 +358,7 @@ export default function App() {
           queued={unacked.filter((a) => a.id !== active.id).length}
           isHistory={active.acknowledged || isAutoSuppressed(active)}
           onVerdict={handleVerdict}
-          onClose={() => setInspectingId(null)}
+          onClose={handleCloseAlert}
         />
       )}
     </div>

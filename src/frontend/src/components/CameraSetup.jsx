@@ -15,7 +15,7 @@ import { incidentMeta } from '../incidents'
  */
 export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [], onDelete }) {
   const [name, setName] = useState('')
-  const [sourceType, setSourceType] = useState('demo')
+  const [sourceType, setSourceType] = useState('rtsp')
   const [source, setSource] = useState('')
   const [demos, setDemos] = useState([])
   const [intrusionEnabled, setIntrusionEnabled] = useState(false)
@@ -38,7 +38,6 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
       .listDemoVideos()
       .then((videos) => {
         setDemos(videos)
-        if (videos.length) setSource(videos[0].id)
       })
       .catch((err) => setError(err.message))
   }, [])
@@ -123,18 +122,18 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
     setError(null)
 
     if (intrusionEnabled && polygon.length < 3) {
-      setError('Draw at least 3 points on the preview to define the restricted zone.')
+      setError('Hãy vẽ ít nhất 3 điểm trên ảnh xem trước để xác định khu vực hạn chế.')
       return
     }
     if (intrusionEnabled && hoursEnabled && startTime === endTime) {
-      setError('Zone hours start and end are the same time. Pick a different end time, or switch to always armed.')
+      setError('Giờ bắt đầu và kết thúc trùng nhau. Hãy chọn giờ khác hoặc bật giám sát 24/7.')
       return
     }
 
     setBusy(true)
     try {
       await onAdd({
-        name: name.trim() || 'Camera',
+        name: name.trim() || 'Camera mới',
         source_type: sourceType,
         source,
         intrusion_enabled: intrusionEnabled,
@@ -150,7 +149,7 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
     }
   }
 
-  const SOURCE_LABELS = { demo: 'Prepared demo', upload: 'Upload video', rtsp: 'RTSP stream' }
+  const SOURCE_LABELS = { demo: 'Video mẫu', upload: 'Tải video lên', rtsp: 'Luồng RTSP' }
   // Recomputed on render rather than memoized: it reads the current clock, and the whole
   // point is that it reflects the moment the operator is looking at it.
   const windowNote = describeWindow(startTime, endTime)
@@ -159,11 +158,11 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
     <div className="setup">
       <header className="setup-page-head">
         <div>
-          <p className="eyebrow">Camera configuration</p>
-          <h1>Manage cameras</h1>
-          <p>Sources, detection rules, and monitoring zones.</p>
+          <p className="eyebrow">Cấu hình camera</p>
+          <h1>Quản lý camera</h1>
+          <p>Nguồn phát, quy tắc phát hiện và vùng giám sát.</p>
         </div>
-        <button type="button" onClick={onCancel}>Return to live grid</button>
+        <button type="button" onClick={onCancel}>Quay lại màn hình giám sát</button>
       </header>
 
       <CameraList cameras={cameras} onDelete={onDelete} />
@@ -199,21 +198,20 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
         {/* Left Column: Form Fields */}
         <div className="setup-col-form">
           <div className="setup-form-head">
-            <span className="setup-step">01</span>
-            <div><h2>Add a camera</h2><p>Choose a source and detection policy.</p></div>
+            <div><h2>Thêm camera</h2><p>Chọn nguồn phát và chính sách phát hiện.</p></div>
           </div>
           <label className="field">
-            <span>Camera name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Lobby north" />
-            <span className="hint">Shown on the live tile and in every alert from this camera.</span>
+            <span>Tên camera</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sảnh phía Bắc" />
+            <span className="hint">Hiển thị trên thẻ trực tiếp và mọi cảnh báo của camera này.</span>
           </label>
 
           <fieldset>
-            <legend>Video source</legend>
+            <legend>Nguồn video</legend>
 
-            <div className="choices">
-              {['demo', 'upload', 'rtsp'].map((type) => (
-                <label key={type} className="choice">
+            <div className="choices source-choices">
+              {['rtsp', 'demo', 'upload'].map((type) => (
+                <label key={type} className={`choice ${type === 'rtsp' ? 'choice-primary' : 'choice-secondary'}`}>
                   <input
                     type="radio"
                     name="source_type"
@@ -224,19 +222,26 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                       setSource(type === 'demo' && demos.length ? demos[0].id : '')
                     }}
                   />
-                  {SOURCE_LABELS[type]}
+                  <span className="choice-copy">
+                    <strong>{SOURCE_LABELS[type]}</strong>
+                    <small>
+                      {type === 'rtsp' && 'Kết nối camera an ninh trực tiếp'}
+                      {type === 'demo' && 'Dùng video mẫu để thử nghiệm'}
+                      {type === 'upload' && 'Phân tích một tệp video một lần'}
+                    </small>
+                  </span>
                 </label>
               ))}
             </div>
 
             {sourceType === 'demo' && (
               <label className="field">
-                <span className="visually-hidden">Demo clip</span>
+                <span className="visually-hidden">Video mẫu</span>
                 <select value={source} onChange={(e) => setSource(e.target.value)}>
                   {demos.map((demo) => (
                     <option key={demo.id} value={demo.id}>
                       {demo.name}
-                      {demo.suggested_label ? ` — shows ${demo.suggested_label.replace('_', ' ')}` : ''}
+                      {demo.suggested_label ? ` — minh họa ${incidentMeta(demo.suggested_label).short.toLowerCase()}` : ''}
                     </option>
                   ))}
                 </select>
@@ -246,7 +251,7 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
             {sourceType === 'upload' && (
               <div className="field">
                 <input type="file" accept="video/mp4,video/x-matroska,video/quicktime" onChange={handleUpload} />
-                {source && <small className="ok">Uploaded as {source}</small>}
+                {source && <small className="ok">Đã tải lên với tên {source}</small>}
               </div>
             )}
 
@@ -263,11 +268,11 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
           </fieldset>
 
           <fieldset>
-            <legend>Detection rules</legend>
+            <legend>Quy tắc phát hiện</legend>
             <p className="always-on">
-              <span className="tag">Fall detection</span>
-              <span className="tag">Abandoned object</span>
-              <span>always active</span>
+              <span className="tag">Phát hiện té ngã</span>
+              <span className="tag">Vật bị bỏ lại</span>
+              <span>luôn hoạt động</span>
             </p>
 
             <label className="toggle">
@@ -277,14 +282,14 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                 onChange={(e) => setIntrusionEnabled(e.target.checked)}
               />
               <span className="toggle-text">
-                <strong>Intrusion detection</strong>
-                <span className="hint">Alerts when a person stands inside a zone you draw on the preview.</span>
+                <strong>Phát hiện xâm nhập</strong>
+                <span className="hint">Cảnh báo khi có người đi vào vùng được vẽ trên ảnh xem trước.</span>
               </span>
             </label>
 
             {intrusionEnabled && (
               <div className="zone-hours">
-                <span className="fact-label">Active monitoring hours</span>
+                <span className="fact-label">Khung giờ giám sát</span>
 
                 <div className="choices">
                   <label className="choice">
@@ -294,7 +299,7 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                       checked={!hoursEnabled}
                       onChange={() => setHoursEnabled(false)}
                     />
-                    Always armed
+                    Giám sát 24/7
                   </label>
                   <label className="choice">
                     <input
@@ -303,18 +308,18 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                       checked={hoursEnabled}
                       onChange={() => setHoursEnabled(true)}
                     />
-                    Set hours only
+                    Chỉ trong khung giờ
                   </label>
                 </div>
 
                 {hoursEnabled && (
                   <div className="time-range">
                     <label className="field compact-field">
-                      <span>From</span>
+                      <span>Từ</span>
                       <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
                     </label>
                     <label className="field compact-field">
-                      <span>To</span>
+                      <span>Đến</span>
                       <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
                     </label>
                   </div>
@@ -323,26 +328,26 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                 {/* Real-time Status Feedback Card */}
                 <div className="active-hours-status-card" aria-live="polite">
                   <div className="status-header">
-                    <span className="status-label">Monitoring status</span>
+                    <span className="status-label">Trạng thái giám sát</span>
                     {!hoursEnabled ? (
                       <span className="status-badge armed">
                         <span className="pulse-dot green" aria-hidden="true" />
-                        Armed
+                        Đang bật
                       </span>
                     ) : windowNote.armed ? (
                       <span className="status-badge armed">
                         <span className="pulse-dot green" aria-hidden="true" />
-                        Armed
+                        Đang bật
                       </span>
                     ) : (
                       <span className="status-badge disarmed">
                         <span className="badge-dot amber" aria-hidden="true" />
-                        Disarmed
+                        Đang tắt
                       </span>
                     )}
                   </div>
                   <small className={!hoursEnabled || windowNote.armed ? 'ok' : 'warn'}>
-                    {!hoursEnabled ? 'Always armed — 24/7 active monitoring enabled.' : windowNote.text}
+                    {!hoursEnabled ? 'Luôn bật — giám sát liên tục 24/7.' : windowNote.text}
                   </small>
                 </div>
               </div>
@@ -358,9 +363,9 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
 
           <div className="actions">
             <button type="submit" className="primary" disabled={busy || !source}>
-              {busy ? 'Starting…' : 'Add camera'}
+              {busy ? 'Đang khởi động…' : 'Thêm camera'}
             </button>
-            {!source && !busy && <span className="hint">Choose a video source to continue.</span>}
+            {!source && !busy && <span className="hint">Chọn nguồn video để tiếp tục.</span>}
           </div>
         </div>
 
@@ -368,19 +373,19 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
         <div className="setup-col-preview">
           <div className="setup-preview-card">
             <div className="setup-preview-head">
-              <div><span className="setup-step">02</span><h2>Preview and zone</h2></div>
+              <div><span className="setup-step">02</span><h2>Xem trước và vùng giám sát</h2></div>
               {previewUrl && intrusionEnabled && (
                 <span className={polygon.length < 3 ? 'zone-points-badge warning' : 'zone-points-badge active'}>
                   <span className={polygon.length < 3 ? 'badge-dot amber' : 'badge-dot green'} aria-hidden="true" />
                   {polygon.length < 3
-                    ? `${polygon.length}/3 points drawn`
-                    : `${polygon.length} points active`}
+                    ? `Đã vẽ ${polygon.length}/3 điểm`
+                    : `${polygon.length} điểm đang hoạt động`}
                 </span>
               )}
               {previewUrl && !intrusionEnabled && (
                 <span className="status-badge disarmed">
                   <span className="badge-dot amber" aria-hidden="true" />
-                  Zone off
+                  Vùng đang tắt
                 </span>
               )}
             </div>
@@ -394,7 +399,7 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                 ) : (
                   <div className="preview-image-wrap">
                     <div className="polygon-stage">
-                      <img src={previewUrl} alt="Camera preview frame" onError={() => setImageError(true)} />
+                      <img src={previewUrl} alt="Ảnh xem trước camera" onError={() => setImageError(true)} />
                     </div>
                   </div>
                 )}
@@ -402,14 +407,14 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
             ) : imageError ? (
               <div className="preview-placeholder">
                 <span className="preview-placeholder-icon error" aria-hidden="true">!</span>
-                <h4>RTSP connection failed</h4>
-                <p>Check the stream URL, credentials, and camera network connection.</p>
+                <h4>Kết nối RTSP thất bại</h4>
+                <p>Kiểm tra URL luồng, thông tin đăng nhập và kết nối mạng của camera.</p>
               </div>
             ) : (
               <div className="preview-placeholder">
                 <span className="preview-placeholder-icon" aria-hidden="true">+</span>
-                <h4>No source selected</h4>
-                <p>The preview will appear when a video source is ready.</p>
+                <h4>Chưa chọn nguồn</h4>
+                <p>Ảnh xem trước sẽ xuất hiện khi nguồn video sẵn sàng.</p>
               </div>
             )}
           </div>
@@ -433,10 +438,9 @@ function CameraList({ cameras, onDelete }) {
   return (
     <section className="camera-list">
       <div className="setup-head">
-        <h2>Configured cameras</h2>
+        <h2>Camera đã cấu hình</h2>
         <p>
-          {cameras.length} camera{cameras.length === 1 ? '' : 's'}, {cameras.filter((c) => c.running).length} currently
-          streaming. These are the feeds on your live grid.
+          Có {cameras.length} camera, {cameras.filter((c) => c.running).length} camera đang phát trực tiếp trên màn hình giám sát.
         </p>
       </div>
 
@@ -445,7 +449,7 @@ function CameraList({ cameras, onDelete }) {
           <li key={camera.id} className="camera-row">
             <span className={camera.running ? 'status-chip live' : 'status-chip offline'}>
               <span className="dot" aria-hidden="true" />
-              {camera.running ? 'Live' : 'Offline'}
+              {camera.running ? 'Trực tiếp' : 'Ngoại tuyến'}
             </span>
 
             <span className="camera-row-name" title={camera.name}>
@@ -468,8 +472,8 @@ function CameraList({ cameras, onDelete }) {
             <button
               className="icon compact danger"
               onClick={() => onDelete(camera.id)}
-              aria-label={`Remove camera ${camera.name}`}
-              title={`Remove ${camera.name}`}
+              aria-label={`Xóa camera ${camera.name}`}
+              title={`Xóa ${camera.name}`}
             >
               <span aria-hidden="true">✕</span>
             </button>
