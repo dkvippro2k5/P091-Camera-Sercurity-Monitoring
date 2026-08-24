@@ -48,6 +48,8 @@ from src.models.camera_schemas import (
     SystemStatus,
 )
 from src.services.alert_history import AlertHistory
+from src.services.embedding_store import create_embedding_store
+from src.services.embeddings import build_embedder
 from src.services.camera_registry import create_camera_registry
 from src.services.event_bus import build_event_relay
 from src.services.evidence_store import EvidenceStore
@@ -145,6 +147,7 @@ class MonitoringService:
         triage: VLMTriage | None = None,
         history: AlertHistory | None = None,
         incident_log: IncidentLog | None = None,
+        embedding_store=None,
     ) -> None:
         settings = get_settings()
         os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -205,6 +208,11 @@ class MonitoringService:
         # Every alert, reviewed or not. `history` holds only judged alerts by design, so it
         # cannot answer "how many did this camera raise" — see incident_log.py.
         self.incidents = incident_log or IncidentLog()
+        # Optional: None unless EMBEDDINGS_ENABLED and DATABASE_URL is Postgres. Every call
+        # site below checks for None rather than assuming a store, the same way self.triage
+        # degrades to NullVLMTriage instead of assuming a real client.
+        self.embeddings = embedding_store if embedding_store is not None else create_embedding_store()
+        self._embed_text = build_embedder(settings)
         self.notifier = ZaloNotifier(settings.zalo_enabled, settings.zalo_access_token, settings.zalo_recipients)
         self.evidence_store = EvidenceStore(
             backend=settings.evidence_storage_backend,
@@ -218,6 +226,13 @@ class MonitoringService:
         # small enough that a burst cannot spawn threads without bound.
         self._triage_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vlm-triage")
         self._evidence_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evidence-store")
+        # Same reasoning as _triage_pool: record_operator_verdict is what a guard's
+        # "Confirm real"/"False alarm" click is waiting on, and embedding the reason text is
+        # an annotation on top of that judgement, not part of it. Even with the 10s client
+        # timeout, a guard should not feel an embeddings hiccup as a slow button -- storing
+        # it here, off the response path, is what makes the timeout a background-retry
+        # concern instead of a foreground wait.
+        self._embedding_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embeddings")
         self._triage_in_flight = 0
         self._incident_workflow = build_incident_workflow(
             wait_for_post_roll=self._wait_for_post_roll,
@@ -238,7 +253,10 @@ class MonitoringService:
             backoff_sec=settings.notification_backoff_sec,
         )
 
-        self._restore_registry()
+        if settings.restore_cameras_on_start:
+            self._restore_registry()
+        else:
+            logger.info("RESTORE_CAMERAS_ON_START is off; starting with no cameras running.")
 
     # ------------------------------------------------------------------ lifecycle
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -253,6 +271,7 @@ class MonitoringService:
         self._triage_pool.shutdown(wait=False)
         self._notification_worker.close()
         self._evidence_pool.shutdown(wait=False)
+        self._embedding_pool.shutdown(wait=False)
         self._event_relay.close()
 
     # ------------------------------------------------------------------ sources
@@ -736,8 +755,61 @@ class MonitoringService:
             operator_note=operator_note,
             actual_event_type=actual_event_type,
         )
+        # Stores this judged incident for the "similar past incidents" lookup (see
+        # docs/database/schema.sql's PLANNED section). Only ever embeds a *judged* alert --
+        # the comparison library must be guard-confirmed cases only, never a raw unjudged
+        # one -- and only if both the store and the embedder are actually configured.
+        # Submitted to a pool rather than called inline: this method is what a guard's
+        # "Confirm real"/"False alarm" click is waiting on (see submit_verdict's
+        # asyncio.to_thread call), and an embeddings API call has no business making that
+        # click feel slow. The 10s client timeout in embeddings.py bounds it either way, but
+        # off the response path a slow embeddings call costs nothing the guard can feel.
+        if self.embeddings is not None and self._embed_text is not None and alert.reason:
+            try:
+                self._embedding_pool.submit(self._store_embedding, alert.id, alert.camera_id, alert.reason)
+            except RuntimeError:
+                pass  # pool is shut down (process exiting); losing one embedding is fine
         self._publish("alert.acknowledged", snapshot)
         return True
+
+    def _store_embedding(self, alert_id: str, camera_id: str, reason: str) -> None:
+        """Runs on `_embedding_pool`, off the HITL response path -- see the call site.
+
+        Broad except: a flaky embeddings call or a Postgres blip here must not raise on a
+        pool worker thread, where nothing would catch it, and must never turn into a failed
+        HITL verdict -- that response was already sent before this ever runs.
+        """
+        try:
+            embedded = self._embed_text(reason)
+            if embedded is not None:
+                vector, model = embedded
+                self.embeddings.upsert(alert_id, reason, vector, model)
+        except Exception:  # noqa: BLE001
+            logger.exception(f"[{camera_id}] could not store incident embedding for {alert_id}")
+
+    def similar_incidents(self, alert_id: str, limit: int = 5) -> list[dict]:
+        """Past judged incidents whose rule-engine reason reads similarly to this one's.
+
+        Works on *any* alert, judged or not -- a guard staring at a brand-new alert is
+        exactly who this is for, so the alert being looked up does not need a verdict yet.
+        Its embedding is computed here and thrown away rather than stored (see
+        `record_operator_verdict`: only judged alerts join the comparison library).
+        """
+        if self.embeddings is None or self._embed_text is None:
+            return []
+        with self._lock:
+            alert = next((a for a in self._alerts if a.id == alert_id), None)
+        if alert is None or not alert.reason:
+            return []
+        embedded = self._embed_text(alert.reason)
+        if embedded is None:
+            return []
+        vector, _ = embedded
+        try:
+            return self.embeddings.search(vector, limit=limit, exclude_alert_id=alert_id)
+        except Exception:  # noqa: BLE001 - a lookup failure should read as "no similar incidents", not 500
+            logger.exception(f"[{alert.camera_id}] could not search for similar incidents to {alert_id}")
+            return []
 
     def list_alerts(self, unacknowledged_only: bool = False) -> list[Alert]:
         with self._lock:

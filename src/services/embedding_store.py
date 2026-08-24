@@ -7,9 +7,12 @@ this repository for durable storage and similarity search.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from src.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresEmbeddingStore:
@@ -62,32 +65,61 @@ class PostgresEmbeddingStore:
                 (alert_id, content, vector, model),
             )
 
-    def search(self, embedding: list[float], limit: int = 10) -> list[dict]:
+    def search(self, embedding: list[float], limit: int = 10, exclude_alert_id: str | None = None) -> list[dict]:
+        """Nearest confirmed incidents by cosine similarity, joined with the fields the UI needs.
+
+        Joins `incidents` rather than returning just `content`+`similarity`: the caller (the
+        guard looking at a live alert, or the VLM prompt) needs to know *what happened* with
+        each neighbor -- which camera, what the guard decided -- not just that it was similar.
+        `exclude_alert_id` matters once this alert's own embedding is later stored: without
+        it, an alert judged and then queried immediately after would find itself as its own
+        nearest (identical) neighbor.
+        """
         if len(embedding) != self.dimensions:
             raise ValueError(f"Expected {self.dimensions} dimensions, got {len(embedding)}")
         vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """SELECT alert_id, content, model, created_at,
-                          1 - (embedding <=> %s::vector) AS similarity
-                   FROM incident_embeddings ORDER BY embedding <=> %s::vector LIMIT %s""",
-                (vector, vector, max(1, min(limit, 100))),
+                """SELECT e.alert_id, e.content, i.camera_id, i.camera_name, i.label,
+                          i.operator_verdict, i.evidence_url, e.created_at,
+                          1 - (e.embedding <=> %s::vector) AS similarity
+                   FROM incident_embeddings e
+                   JOIN incidents i ON i.alert_id = e.alert_id
+                   WHERE %s::text IS NULL OR e.alert_id != %s
+                   ORDER BY e.embedding <=> %s::vector
+                   LIMIT %s""",
+                (vector, exclude_alert_id, exclude_alert_id, vector, max(1, min(limit, 100))),
             )
             return [
-                {"alert_id": row[0], "content": row[1], "model": row[2],
-                 "created_at": row[3].isoformat() if isinstance(row[3], datetime) else row[3],
-                 "similarity": float(row[4])}
+                {
+                    "alert_id": row[0],
+                    "content": row[1],
+                    "camera_id": row[2],
+                    "camera_name": row[3],
+                    "label": row[4],
+                    "operator_verdict": row[5],
+                    "evidence_url": row[6],
+                    "created_at": row[7].isoformat() if isinstance(row[7], datetime) else row[7],
+                    "similarity": float(row[8]),
+                }
                 for row in cursor.fetchall()
             ]
 
 
 def create_embedding_store() -> PostgresEmbeddingStore | None:
-    """Build the production repository only when embeddings are explicitly enabled."""
+    """Build the repository only when embeddings are enabled and the DB is Postgres.
+
+    Selected by DATABASE_URL, not APP_ENV -- the same fix applied to `event_store.py` and
+    `main.py`'s `use_postgres` for the same reason: gating persistence on which environment
+    string happens to be set, rather than on what the configured database actually is, means
+    a fully-configured Postgres URL in a non-"production" environment gets silently ignored.
+    pgvector is Postgres-only, so unlike the other stores there is no local-file fallback to
+    degrade to -- if the URL is not Postgres, this feature is simply off.
+    """
     settings = get_settings()
     if not settings.embeddings_enabled:
         return None
-    if settings.app_env.lower() != "production":
-        return None
     if not settings.database_url.startswith(("postgresql://", "postgres://")):
-        raise RuntimeError("Embeddings in production require a PostgreSQL DATABASE_URL")
+        logger.warning("EMBEDDINGS_ENABLED is true but DATABASE_URL is not Postgres; similar-incident lookup is disabled.")
+        return None
     return PostgresEmbeddingStore(settings.database_url, settings.embedding_dimensions)

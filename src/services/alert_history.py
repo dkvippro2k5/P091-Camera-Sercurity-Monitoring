@@ -62,7 +62,8 @@ class AlertHistory:
         if self.store is None and path == DEFAULT_HISTORY_PATH:
             try:
                 self.store = create_event_store()
-            except (OSError, ValueError):
+            except Exception:  # noqa: BLE001 - an unreachable database must not stop startup
+                logger.exception("Could not open the event store; falling back to the JSONL log")
                 self.store = None
         # Writes happen on the request thread and reads on a triage worker thread, so the
         # two need to be kept off each other's toes.
@@ -106,8 +107,11 @@ class AlertHistory:
             try:
                 self.store.insert_history(row)
                 return
-            except (OSError, sqlite3.Error):
-                logger.exception("Could not write alert history to SQLite")
+            # Broad by intent, for the reason spelled out in `incident_log`: the JSONL file is
+            # the fallback for the database being unusable, and naming today's driver's
+            # exception type is what let a Postgres error escape instead of falling back.
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not write alert history to the event store")
         try:
             with self._lock:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)

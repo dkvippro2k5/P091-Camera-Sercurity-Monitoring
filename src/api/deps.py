@@ -15,10 +15,14 @@ They are used two ways, which is not redundancy:
   whether an `auth.revoked` broadcast is about it.
 """
 
+import logging
+
 from fastapi import HTTPException, Request, WebSocket
 
 from src.services.sessions import COOKIE_NAME, SessionStore
 from src.services.user_store import User, UserStore
+
+logger = logging.getLogger(__name__)
 
 # 401 tells the browser "log in"; 403 tells it "you are logged in but this is not yours".
 # The frontend branches on exactly this difference: 401 returns to the login screen, 403
@@ -117,5 +121,15 @@ def session_is_live(request: Request) -> bool:
         # deployment problem the operator cannot do anything about.
         return True
 
-    session = sessions.resolve(request.cookies.get(COOKIE_NAME), touch=False)
-    return session is not None and users.get(session.username) is not None
+    try:
+        session = sessions.resolve(request.cookies.get(COOKIE_NAME), touch=False)
+        return session is not None and users.get(session.username) is not None
+    except Exception:  # noqa: BLE001 - "never raises" has to hold for the callers to be safe
+        # Same judgement as the branch above, for the same reason: this runs inside the alert
+        # stream's and the manager WebSocket's loops, where an exception does not become a
+        # 500 — it tears the connection down mid-flight and the operator's alert feed simply
+        # stops. A database that is briefly unreachable or a connection pool that is briefly
+        # saturated is an infrastructure problem, not evidence that this session was revoked,
+        # so the stream stays up and the next poll re-checks.
+        logger.exception("Could not re-check the session; leaving the stream open")
+        return True
