@@ -13,7 +13,7 @@ import { incidentMeta } from '../incidents'
  * shown the current roster next to the form is how you notice a camera is already configured
  * before adding it twice.
  */
-export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete }) {
+export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [], onDelete }) {
   const [name, setName] = useState('')
   const [sourceType, setSourceType] = useState('demo')
   const [source, setSource] = useState('')
@@ -29,6 +29,9 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [imageError, setImageError] = useState(false)
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchStatus, setBatchStatus] = useState(null)
+  const [batchError, setBatchError] = useState(null)
 
   useEffect(() => {
     api
@@ -64,6 +67,54 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
       setError(err.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  // One camera per selected file, with defaults suited to quickly standing up a multi-camera
+  // grid to test streaming/scale — not a replacement for the single-camera form above, which
+  // is still what you want for a real zone/polygon/schedule setup. Uploads run sequentially
+  // (one big multi-part POST per file is simpler than a fan-out, and this is a testing tool,
+  // not a path that needs to be fast) so `batchStatus` can report which file is in flight.
+  async function handleBatchAdd(event) {
+    const files = Array.from(event.target.files || [])
+    if (!files.length) return
+
+    setBatchBusy(true)
+    setBatchError(null)
+    const payloads = []
+    const failures = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      setBatchStatus(`Uploading ${i + 1}/${files.length}: ${file.name}`)
+      try {
+        const { filename } = await api.uploadVideo(file)
+        payloads.push({
+          name: file.name.replace(/\.[^/.]+$/, '').slice(0, 64) || `Camera ${i + 1}`,
+          source_type: 'upload',
+          source: filename,
+          intrusion_enabled: false,
+          zone_polygon: null,
+          zone_active_hours: null,
+          // Batch-added cameras are for exercising the multi-stream grid, not a one-shot
+          // clip review — without this each file source stops dead at EOF, which for a
+          // scale test would look like cameras dying rather than the stream just ending.
+          loop_source: true,
+        })
+      } catch (err) {
+        failures.push(`${file.name}: ${err.message}`)
+      }
+    }
+
+    setBatchStatus(null)
+    try {
+      if (payloads.length) await onAddBatch(payloads)
+    } catch (err) {
+      failures.push(err.message)
+    } finally {
+      setBatchBusy(false)
+      event.target.value = ''
+      setBatchError(failures.length ? failures.join('; ') : null)
     }
   }
 
@@ -116,6 +167,33 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
       </header>
 
       <CameraList cameras={cameras} onDelete={onDelete} />
+
+      <section className="batch-upload">
+        <div className="setup-head">
+          <h2>Batch add for testing</h2>
+          <p>
+            Upload several clips at once to stand up a multi-camera grid quickly. Each file
+            becomes its own camera (fall + abandoned-object only, looping, no zone) — use the
+            form below instead when you need intrusion detection or a real schedule.
+          </p>
+        </div>
+        <div className="field">
+          <input
+            type="file"
+            multiple
+            accept="video/mp4,video/x-matroska,video/quicktime"
+            onChange={handleBatchAdd}
+            disabled={batchBusy}
+          />
+          {batchBusy && batchStatus && <small className="hint">{batchStatus}</small>}
+          {batchError && (
+            <p className="err" role="alert">
+              <span aria-hidden="true">▲</span>
+              {batchError}
+            </p>
+          )}
+        </div>
+      </section>
 
       <form onSubmit={handleSubmit} className="setup-split">
         {/* Left Column: Form Fields */}

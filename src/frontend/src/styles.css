@@ -3310,12 +3310,17 @@ legend {
   border-top: 1px solid var(--border-subtle);
 }
 
-.camera-list {
+.camera-list,
+.batch-upload {
   margin-bottom: var(--sp-5);
   padding: var(--sp-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-lg);
   background: var(--surface-1);
+}
+
+.batch-upload .setup-head {
+  margin-bottom: var(--sp-3);
 }
 
 .camera-list .setup-head {

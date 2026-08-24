@@ -198,6 +198,25 @@ export default function App() {
     setScreen('setup')
   }
 
+  // Sequential, not Promise.all: `MultiStreamManager` starts each worker (RTSP/file open +
+  // model load) synchronously in `add_camera`, so firing every request at once would just
+  // queue them behind each other on the server anyway while looking like a burst of failures
+  // if one is slow. One partial failure should not lose the cameras that did succeed, so
+  // failures are collected and reported together after every payload has been tried.
+  async function handleAddCameraBatch(payloads) {
+    const failures = []
+    for (const payload of payloads) {
+      try {
+        await api.addCamera(payload)
+      } catch (err) {
+        failures.push(`${payload.name}: ${err.message}`)
+      }
+    }
+    await loadCameras()
+    setScreen('grid')
+    if (failures.length) throw new Error(failures.join('; '))
+  }
+
   async function handleDeleteCamera(id) {
     if (!window.confirm('Remove this camera? Its live feed and zone configuration are deleted.')) return
     await api.deleteCamera(id)
@@ -279,6 +298,7 @@ export default function App() {
             {current === 'setup' && (
               <CameraSetup
                 onAdd={handleAddCamera}
+                onAddBatch={handleAddCameraBatch}
                 onCancel={() => setScreen('grid')}
                 cameras={cameras}
                 onDelete={handleDeleteCamera}
