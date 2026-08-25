@@ -361,6 +361,11 @@ export default function App() {
 
       {active && (
         <AlertModal
+          // Keyed so a fresh AlertModal instance mounts per alert: without this, switching
+          // from one queued alert to the next reuses the same component instance, and its
+          // local state (note, actualEventType, the submitting flag below) would leak from
+          // the alert just judged onto the one that replaces it.
+          key={active.id}
           alert={active}
           queued={unacked.filter((a) => a.id !== active.id).length}
           isHistory={active.acknowledged || isAutoSuppressed(active)}
