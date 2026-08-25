@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     camera_max_concurrent_inferences: int = Field(default=0, ge=0, le=32)
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
-    model_weights_path: str = "src/vision/weights/yolo26l.pt"
+    model_weights_path: str = "src/vision/weights/yolo26n.pt"
     detector_target_labels: str = "person,backpack,handbag,suitcase"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
