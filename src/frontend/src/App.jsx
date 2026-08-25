@@ -199,29 +199,37 @@ export default function App() {
     }
   }
 
-  async function handleAddCamera(payload) {
-    await api.addCamera(payload)
-    await loadCameras()
-    setScreen('setup')
-  }
-
   // Sequential, not Promise.all: `MultiStreamManager` starts each worker (RTSP/file open +
   // model load) synchronously in `add_camera`, so firing every request at once would just
   // queue them behind each other on the server anyway while looking like a burst of failures
   // if one is slow. One partial failure should not lose the cameras that did succeed, so
   // failures are collected and reported together after every payload has been tried.
+  //
+  // Navigation only follows success: this is the only add path now (the setup screen queues
+  // every source — one RTSP camera or twenty uploads — through this same call), so throwing
+  // after navigating away would mean CameraSetup unmounts before it can show the error it was
+  // just handed. On a total failure the screen stays put and the queue survives; on a partial
+  // failure the grid is still where the cameras that *did* start actually show up, so the
+  // miss is surfaced with an alert instead of trapping the operator behind an error banner
+  // for cameras that are already running.
   async function handleAddCameraBatch(payloads) {
     const failures = []
+    let addedCount = 0
     for (const payload of payloads) {
       try {
         await api.addCamera(payload)
+        addedCount += 1
       } catch (err) {
         failures.push(`${payload.name}: ${err.message}`)
       }
     }
     await loadCameras()
-    setScreen('grid')
-    if (failures.length) throw new Error(failures.join('; '))
+    if (addedCount > 0) {
+      setScreen('grid')
+      if (failures.length) window.alert(`Một số camera không thể thêm được:\n${failures.join('\n')}`)
+    } else if (failures.length) {
+      throw new Error(failures.join('; '))
+    }
   }
 
   async function handleDeleteCamera(id) {
@@ -326,7 +334,6 @@ export default function App() {
             )}
             {current === 'setup' && (
               <CameraSetup
-                onAdd={handleAddCamera}
                 onAddBatch={handleAddCameraBatch}
                 onCancel={() => setScreen('grid')}
                 cameras={cameras}

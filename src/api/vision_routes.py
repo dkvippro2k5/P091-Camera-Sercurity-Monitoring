@@ -40,6 +40,7 @@ from src.models.camera_schemas import (
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
 from src.services.user_store import User
+from src.vision.stream_worker import _FFMPEG_OPTS_LOCK, _RTSP_FFMPEG_OPTIONS
 
 # Every route here requires a signed-in operator, manager or guard. The dependency is on the
 # router rather than per route, so an endpoint added later is protected because of where it
@@ -126,6 +127,43 @@ async def upload_video(file: UploadFile) -> dict[str, str]:
     return {"filename": stored_name, "original_name": file.filename or stored_name}
 
 
+_PREVIEW_OPEN_TIMEOUT_SEC = 8.0
+_PREVIEW_READ_TIMEOUT_SEC = 8.0
+
+
+def _read_preview_frame(resolved: str):
+    """Blocking cv2 open+read for one preview frame.
+
+    Mirrors CameraStreamWorker._open_capture (src/vision/stream_worker.py): passing open/read
+    timeouts requires the explicit cv2.CAP_FFMPEG backend argument, which is why both are
+    always passed together for RTSP sources — without a bound, a source that never answers
+    would hang whichever thread calls this forever.
+    """
+    source = int(resolved) if resolved.isdigit() else resolved
+    is_rtsp = isinstance(source, str) and source.lower().startswith("rtsp://")
+
+    if is_rtsp:
+        params = [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+            int(_PREVIEW_OPEN_TIMEOUT_SEC * 1000),
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+            int(_PREVIEW_READ_TIMEOUT_SEC * 1000),
+        ]
+        with _FFMPEG_OPTS_LOCK:
+            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _RTSP_FFMPEG_OPTIONS)
+            capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+    else:
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
+    try:
+        if not capture.isOpened():
+            return None
+        ok, frame = capture.read()
+    finally:
+        capture.release()
+    return frame if ok else None
+
+
 @router.get("/preview-frame")
 async def preview_frame(
     source_type: str = Query(..., pattern="^(demo|upload|rtsp)$"),
@@ -135,15 +173,15 @@ async def preview_frame(
 
     The zone canvas needs a still of the actual camera view — drawing on a blank rectangle
     would produce a polygon that means nothing in the scene.
+
+    Runs off the event loop via asyncio.to_thread, same reasoning as create_camera below: the
+    multi-source setup screen fires one of these per pending video, and without this a single
+    slow RTSP handshake would stall every other request on the process.
     """
     resolved = MonitoringService.resolve_source(source_type, source)
-    capture = cv2.VideoCapture(int(resolved) if resolved.isdigit() else resolved)
-    try:
-        ok, frame = capture.read()
-    finally:
-        capture.release()
+    frame = await asyncio.to_thread(_read_preview_frame, resolved)
 
-    if not ok or frame is None:
+    if frame is None:
         raise HTTPException(status_code=404, detail=f"Could not read a frame from '{source}'")
 
     encoded, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])

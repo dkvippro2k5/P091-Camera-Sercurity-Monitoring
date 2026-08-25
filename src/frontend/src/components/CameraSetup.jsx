@@ -1,11 +1,28 @@
-import { useState, useEffect } from 'react'
-import PolygonCanvas from './PolygonCanvas'
+import { useState, useEffect, useRef } from 'react'
+import PendingSourceTile from './PendingSourceTile'
 import { api } from '../api'
-import { describeWindow, toWindowString } from '../activeHours'
+import { toWindowString } from '../activeHours'
 import { incidentMeta } from '../incidents'
 
+const SOURCE_LABELS = { demo: 'Video mẫu', upload: 'Tải video lên', rtsp: 'Luồng RTSP' }
+
+function deriveRtspName(url) {
+  try {
+    return new URL(url).hostname || 'Luồng RTSP'
+  } catch {
+    return 'Luồng RTSP'
+  }
+}
+
 /**
- * The guard's camera screen: what exists, plus the form to add another.
+ * The guard's camera screen: what exists, plus the form to add more.
+ *
+ * Adding is queue-then-submit rather than one-shot: the operator builds up a list of
+ * sources — any mix of RTSP streams, sample clips, and uploaded files — each with its own
+ * name, zone and schedule, then adds them all at once. This replaced two separate paths (a
+ * single-source form and a no-zone "batch upload for testing" section) that did the same
+ * job through different doors; the batch path in particular could never draw a zone; folding
+ * multi-upload into the same queue removes that gap instead of caging it off in a toggle.
  *
  * The existing-camera list here is now convenience rather than the only route to a delete —
  * the guard owns both this screen and the live grid, whose tiles carry their own delete
@@ -13,146 +30,145 @@ import { incidentMeta } from '../incidents'
  * shown the current roster next to the form is how you notice a camera is already configured
  * before adding it twice.
  */
-export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [], onDelete }) {
-  const [name, setName] = useState('')
+export default function CameraSetup({ onAddBatch, onCancel, cameras = [], onDelete }) {
+  const [pendingSources, setPendingSources] = useState([])
   const [sourceType, setSourceType] = useState('rtsp')
-  const [source, setSource] = useState('')
+  const [rtspInput, setRtspInput] = useState('')
+  const [demoSelection, setDemoSelection] = useState('')
   const [demos, setDemos] = useState([])
-  const [intrusionEnabled, setIntrusionEnabled] = useState(false)
-  const [polygon, setPolygon] = useState([])
-  // Always-armed is the default. The PRD's example window is 22:00-05:00, but defaulting to
-  // it would mean a camera added at 14:00 silently watches nothing for eight hours — the
-  // failure has to be opted into, not inherited.
-  const [hoursEnabled, setHoursEnabled] = useState(false)
-  const [startTime, setStartTime] = useState('22:00')
-  const [endTime, setEndTime] = useState('05:00')
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [imageError, setImageError] = useState(false)
-  const [batchBusy, setBatchBusy] = useState(false)
-  const [batchStatus, setBatchStatus] = useState(null)
-  const [batchError, setBatchError] = useState(null)
+  const nextKeyRef = useRef(0)
 
   useEffect(() => {
     api
       .listDemoVideos()
       .then((videos) => {
         setDemos(videos)
+        if (videos.length) setDemoSelection(videos[0].id)
       })
       .catch((err) => setError(err.message))
   }, [])
 
-  // The polygon is drawn on a still from *this* source, so switching source invalidates
-  // whatever was drawn — keeping it would place the zone against a different scene.
-  useEffect(() => {
-    setPolygon([])
-    setImageError(false)
-  }, [sourceType, source])
-
-  const canPreview = Boolean(source) && (sourceType !== 'rtsp' || source.startsWith('rtsp://'))
-  const previewUrl = canPreview ? api.previewFrameUrl(sourceType, source) : null
-
-  async function handleUpload(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    setBusy(true)
-    setError(null)
-    try {
-      const { filename } = await api.uploadVideo(file)
-      // The server-generated name is what the backend can resolve; the original filename
-      // is never used as a path.
-      setSource(filename)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
+  function addEntry({ source_type, source, name }) {
+    setPendingSources((prev) => [
+      ...prev,
+      {
+        key: `src-${nextKeyRef.current++}`,
+        name,
+        source_type,
+        source,
+        intrusion_enabled: false,
+        polygon: [],
+        // Always-armed is the default. The PRD's example window is 22:00-05:00, but
+        // defaulting to it would mean a camera added at 14:00 silently watches nothing
+        // for eight hours — the failure has to be opted into, not inherited.
+        hours_enabled: false,
+        start_time: '22:00',
+        end_time: '05:00',
+        image_error: false,
+      },
+    ])
   }
 
-  // One camera per selected file, with defaults suited to quickly standing up a multi-camera
-  // grid to test streaming/scale — not a replacement for the single-camera form above, which
-  // is still what you want for a real zone/polygon/schedule setup. Uploads run sequentially
-  // (one big multi-part POST per file is simpler than a fan-out, and this is a testing tool,
-  // not a path that needs to be fast) so `batchStatus` can report which file is in flight.
-  async function handleBatchAdd(event) {
+  function addRtspEntry() {
+    const url = rtspInput.trim()
+    if (!url.startsWith('rtsp://')) {
+      setError('Nhập URL RTSP hợp lệ, bắt đầu bằng rtsp://')
+      return
+    }
+    setError(null)
+    addEntry({ source_type: 'rtsp', source: url, name: deriveRtspName(url) })
+    setRtspInput('')
+  }
+
+  function addDemoEntry() {
+    if (!demoSelection) return
+    const demo = demos.find((d) => d.id === demoSelection)
+    addEntry({ source_type: 'demo', source: demoSelection, name: demo?.name ?? 'Video mẫu' })
+  }
+
+  // Every selected file becomes its own queued camera. Uploads run sequentially (one big
+  // multi-part POST per file is simpler than a fan-out, and this is an interactive add
+  // flow, not a path that needs to race itself) so `uploadStatus` can report which file is
+  // in flight.
+  async function handleUploadFiles(event) {
     const files = Array.from(event.target.files || [])
     if (!files.length) return
 
-    setBatchBusy(true)
-    setBatchError(null)
-    const payloads = []
+    setUploadBusy(true)
+    setError(null)
     const failures = []
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      setBatchStatus(`Uploading ${i + 1}/${files.length}: ${file.name}`)
+      setUploadStatus(`Đang tải ${i + 1}/${files.length}: ${file.name}`)
       try {
         const { filename } = await api.uploadVideo(file)
-        payloads.push({
-          name: file.name.replace(/\.[^/.]+$/, '').slice(0, 64) || `Camera ${i + 1}`,
+        addEntry({
           source_type: 'upload',
           source: filename,
-          intrusion_enabled: false,
-          zone_polygon: null,
-          zone_active_hours: null,
-          // Batch-added cameras are for exercising the multi-stream grid, not a one-shot
-          // clip review — without this each file source stops dead at EOF, which for a
-          // scale test would look like cameras dying rather than the stream just ending.
-          loop_source: true,
+          name: file.name.replace(/\.[^/.]+$/, '').slice(0, 64) || `Camera ${i + 1}`,
         })
       } catch (err) {
         failures.push(`${file.name}: ${err.message}`)
       }
     }
 
-    setBatchStatus(null)
-    try {
-      if (payloads.length) await onAddBatch(payloads)
-    } catch (err) {
-      failures.push(err.message)
-    } finally {
-      setBatchBusy(false)
-      event.target.value = ''
-      setBatchError(failures.length ? failures.join('; ') : null)
-    }
+    setUploadStatus(null)
+    setUploadBusy(false)
+    event.target.value = ''
+    if (failures.length) setError(failures.join('; '))
+  }
+
+  function updateEntry(key, patch) {
+    setPendingSources((prev) => prev.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)))
+  }
+
+  function removeEntry(key) {
+    setPendingSources((prev) => prev.filter((entry) => entry.key !== key))
   }
 
   async function handleSubmit(event) {
     event.preventDefault()
     setError(null)
 
-    if (intrusionEnabled && polygon.length < 3) {
-      setError('Hãy vẽ ít nhất 3 điểm trên ảnh xem trước để xác định khu vực hạn chế.')
-      return
-    }
-    if (intrusionEnabled && hoursEnabled && startTime === endTime) {
-      setError('Giờ bắt đầu và kết thúc trùng nhau. Hãy chọn giờ khác hoặc bật giám sát 24/7.')
+    const invalid = pendingSources.filter((entry) => {
+      if (!entry.intrusion_enabled) return false
+      if (entry.polygon.length < 3) return true
+      if (entry.hours_enabled && entry.start_time === entry.end_time) return true
+      return false
+    })
+    if (invalid.length) {
+      setError(
+        `Hoàn tất vùng giám sát cho: ${invalid.map((e) => e.name || 'camera chưa đặt tên').join(', ')}. ` +
+          'Cần ít nhất 3 điểm trên ảnh xem trước, và giờ bắt đầu/kết thúc phải khác nhau.'
+      )
       return
     }
 
     setBusy(true)
     try {
-      await onAdd({
-        name: name.trim() || 'Camera mới',
-        source_type: sourceType,
-        source,
-        intrusion_enabled: intrusionEnabled,
-        zone_polygon: intrusionEnabled ? polygon : null,
-        // Only meaningful alongside a zone, so it rides with the polygon rather than
-        // being sent for a camera that has intrusion switched off.
-        zone_active_hours: intrusionEnabled ? toWindowString(hoursEnabled, startTime, endTime) : null,
-      })
+      await onAddBatch(
+        pendingSources.map((entry) => ({
+          name: entry.name.trim() || 'Camera mới',
+          source_type: entry.source_type,
+          source: entry.source,
+          intrusion_enabled: entry.intrusion_enabled,
+          zone_polygon: entry.intrusion_enabled ? entry.polygon : null,
+          zone_active_hours: entry.intrusion_enabled
+            ? toWindowString(entry.hours_enabled, entry.start_time, entry.end_time)
+            : null,
+        }))
+      )
     } catch (err) {
       setError(err.message)
     } finally {
       setBusy(false)
     }
   }
-
-  const SOURCE_LABELS = { demo: 'Video mẫu', upload: 'Tải video lên', rtsp: 'Luồng RTSP' }
-  // Recomputed on render rather than memoized: it reads the current clock, and the whole
-  // point is that it reflects the moment the operator is looking at it.
-  const windowNote = describeWindow(startTime, endTime)
 
   return (
     <div className="setup">
@@ -167,44 +183,12 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
 
       <CameraList cameras={cameras} onDelete={onDelete} />
 
-      <section className="batch-upload">
-        <div className="setup-head">
-          <h2>Batch add for testing</h2>
-          <p>
-            Upload several clips at once to stand up a multi-camera grid quickly. Each file
-            becomes its own camera (fall + abandoned-object only, looping, no zone) — use the
-            form below instead when you need intrusion detection or a real schedule.
-          </p>
-        </div>
-        <div className="field">
-          <input
-            type="file"
-            multiple
-            accept="video/mp4,video/x-matroska,video/quicktime"
-            onChange={handleBatchAdd}
-            disabled={batchBusy}
-          />
-          {batchBusy && batchStatus && <small className="hint">{batchStatus}</small>}
-          {batchError && (
-            <p className="err" role="alert">
-              <span aria-hidden="true">▲</span>
-              {batchError}
-            </p>
-          )}
-        </div>
-      </section>
-
       <form onSubmit={handleSubmit} className="setup-split">
-        {/* Left Column: Form Fields */}
+        {/* Left Column: add-source controls */}
         <div className="setup-col-form">
           <div className="setup-form-head">
-            <div><h2>Thêm camera</h2><p>Chọn nguồn phát và chính sách phát hiện.</p></div>
+            <div><h2>Thêm camera</h2><p>Thêm một hoặc nhiều nguồn video, rồi cấu hình từng nguồn ở bên phải.</p></div>
           </div>
-          <label className="field">
-            <span>Tên camera</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sảnh phía Bắc" />
-            <span className="hint">Hiển thị trên thẻ trực tiếp và mọi cảnh báo của camera này.</span>
-          </label>
 
           <fieldset>
             <legend>Nguồn video</legend>
@@ -217,17 +201,14 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
                     name="source_type"
                     value={type}
                     checked={sourceType === type}
-                    onChange={() => {
-                      setSourceType(type)
-                      setSource(type === 'demo' && demos.length ? demos[0].id : '')
-                    }}
+                    onChange={() => setSourceType(type)}
                   />
                   <span className="choice-copy">
                     <strong>{SOURCE_LABELS[type]}</strong>
                     <small>
                       {type === 'rtsp' && 'Kết nối camera an ninh trực tiếp'}
                       {type === 'demo' && 'Dùng video mẫu để thử nghiệm'}
-                      {type === 'upload' && 'Phân tích một tệp video một lần'}
+                      {type === 'upload' && 'Tải lên một hoặc nhiều tệp video'}
                     </small>
                   </span>
                 </label>
@@ -235,124 +216,59 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
             </div>
 
             {sourceType === 'demo' && (
-              <label className="field">
+              <div className="field">
                 <span className="visually-hidden">Video mẫu</span>
-                <select value={source} onChange={(e) => setSource(e.target.value)}>
-                  {demos.map((demo) => (
-                    <option key={demo.id} value={demo.id}>
-                      {demo.name}
-                      {demo.suggested_label ? ` — minh họa ${incidentMeta(demo.suggested_label).short.toLowerCase()}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div className="inline-add">
+                  <select value={demoSelection} onChange={(e) => setDemoSelection(e.target.value)}>
+                    {demos.map((demo) => (
+                      <option key={demo.id} value={demo.id}>
+                        {demo.name}
+                        {demo.suggested_label ? ` — minh họa ${incidentMeta(demo.suggested_label).short.toLowerCase()}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="compact" onClick={addDemoEntry} disabled={!demoSelection}>
+                    Thêm vào danh sách
+                  </button>
+                </div>
+              </div>
             )}
 
             {sourceType === 'upload' && (
               <div className="field">
-                <input type="file" accept="video/mp4,video/x-matroska,video/quicktime" onChange={handleUpload} />
-                {source && <small className="ok">Đã tải lên với tên {source}</small>}
+                <input
+                  type="file"
+                  multiple
+                  accept="video/mp4,video/x-matroska,video/quicktime"
+                  onChange={handleUploadFiles}
+                  disabled={uploadBusy}
+                />
+                {uploadBusy && uploadStatus && <small className="hint">{uploadStatus}</small>}
               </div>
             )}
 
             {sourceType === 'rtsp' && (
-              <label className="field">
+              <div className="field">
                 <span className="visually-hidden">RTSP URL</span>
-                <input
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
-                />
-              </label>
-            )}
-          </fieldset>
-
-          <fieldset>
-            <legend>Quy tắc phát hiện</legend>
-            <p className="always-on">
-              <span className="tag">Phát hiện té ngã</span>
-              <span className="tag">Vật bị bỏ lại</span>
-              <span>luôn hoạt động</span>
-            </p>
-
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={intrusionEnabled}
-                onChange={(e) => setIntrusionEnabled(e.target.checked)}
-              />
-              <span className="toggle-text">
-                <strong>Phát hiện xâm nhập</strong>
-                <span className="hint">Cảnh báo khi có người đi vào vùng được vẽ trên ảnh xem trước.</span>
-              </span>
-            </label>
-
-            {intrusionEnabled && (
-              <div className="zone-hours">
-                <span className="fact-label">Khung giờ giám sát</span>
-
-                <div className="choices">
-                  <label className="choice">
-                    <input
-                      type="radio"
-                      name="zone_hours"
-                      checked={!hoursEnabled}
-                      onChange={() => setHoursEnabled(false)}
-                    />
-                    Giám sát 24/7
-                  </label>
-                  <label className="choice">
-                    <input
-                      type="radio"
-                      name="zone_hours"
-                      checked={hoursEnabled}
-                      onChange={() => setHoursEnabled(true)}
-                    />
-                    Chỉ trong khung giờ
-                  </label>
-                </div>
-
-                {hoursEnabled && (
-                  <div className="time-range">
-                    <label className="field compact-field">
-                      <span>Từ</span>
-                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-                    </label>
-                    <label className="field compact-field">
-                      <span>Đến</span>
-                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-                    </label>
-                  </div>
-                )}
-
-                {/* Real-time Status Feedback Card */}
-                <div className="active-hours-status-card" aria-live="polite">
-                  <div className="status-header">
-                    <span className="status-label">Trạng thái giám sát</span>
-                    {!hoursEnabled ? (
-                      <span className="status-badge armed">
-                        <span className="pulse-dot green" aria-hidden="true" />
-                        Đang bật
-                      </span>
-                    ) : windowNote.armed ? (
-                      <span className="status-badge armed">
-                        <span className="pulse-dot green" aria-hidden="true" />
-                        Đang bật
-                      </span>
-                    ) : (
-                      <span className="status-badge disarmed">
-                        <span className="badge-dot amber" aria-hidden="true" />
-                        Đang tắt
-                      </span>
-                    )}
-                  </div>
-                  <small className={!hoursEnabled || windowNote.armed ? 'ok' : 'warn'}>
-                    {!hoursEnabled ? 'Luôn bật — giám sát liên tục 24/7.' : windowNote.text}
-                  </small>
+                <div className="inline-add">
+                  <input
+                    value={rtspInput}
+                    onChange={(e) => setRtspInput(e.target.value)}
+                    placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
+                  />
+                  <button type="button" className="compact" onClick={addRtspEntry} disabled={!rtspInput.trim()}>
+                    Thêm vào danh sách
+                  </button>
                 </div>
               </div>
             )}
           </fieldset>
+
+          <p className="always-on">
+            <span className="tag">Phát hiện té ngã</span>
+            <span className="tag">Vật bị bỏ lại</span>
+            <span>luôn hoạt động cho mọi camera</span>
+          </p>
 
           {error && (
             <p className="err" role="alert">
@@ -362,59 +278,46 @@ export default function CameraSetup({ onAdd, onAddBatch, onCancel, cameras = [],
           )}
 
           <div className="actions">
-            <button type="submit" className="primary" disabled={busy || !source}>
-              {busy ? 'Đang khởi động…' : 'Thêm camera'}
+            <button type="submit" className="primary" disabled={busy || uploadBusy || pendingSources.length === 0}>
+              {busy ? 'Đang khởi động…' : pendingSources.length ? `Thêm ${pendingSources.length} camera` : 'Thêm camera'}
             </button>
-            {!source && !busy && <span className="hint">Chọn nguồn video để tiếp tục.</span>}
+            {uploadBusy && <span className="hint">Đang tải video lên…</span>}
+            {!uploadBusy && pendingSources.length === 0 && !busy && (
+              <span className="hint">Thêm ít nhất một nguồn video để tiếp tục.</span>
+            )}
           </div>
         </div>
 
-        {/* Right Column: Visual Live Canvas Sticky Card */}
-        <div className="setup-col-preview">
+        {/* Right Column: preview grid, one tile per queued source */}
+        <div className={pendingSources.length > 1 ? 'setup-col-preview multi' : 'setup-col-preview'}>
           <div className="setup-preview-card">
             <div className="setup-preview-head">
               <div><span className="setup-step">02</span><h2>Xem trước và vùng giám sát</h2></div>
-              {previewUrl && intrusionEnabled && (
-                <span className={polygon.length < 3 ? 'zone-points-badge warning' : 'zone-points-badge active'}>
-                  <span className={polygon.length < 3 ? 'badge-dot amber' : 'badge-dot green'} aria-hidden="true" />
-                  {polygon.length < 3
-                    ? `Đã vẽ ${polygon.length}/3 điểm`
-                    : `${polygon.length} điểm đang hoạt động`}
-                </span>
-              )}
-              {previewUrl && !intrusionEnabled && (
-                <span className="status-badge disarmed">
-                  <span className="badge-dot amber" aria-hidden="true" />
-                  Vùng đang tắt
+              {pendingSources.length > 0 && (
+                <span className="zone-points-badge active">
+                  <span className="badge-dot green" aria-hidden="true" />
+                  {pendingSources.length} nguồn đã thêm
                 </span>
               )}
             </div>
 
-            {previewUrl && !imageError ? (
-              <div className="preview-container">
-                {intrusionEnabled ? (
-                  <div className="preview-canvas-wrap">
-                    <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} onError={() => setImageError(true)} />
-                  </div>
-                ) : (
-                  <div className="preview-image-wrap">
-                    <div className="polygon-stage">
-                      <img src={previewUrl} alt="Ảnh xem trước camera" onError={() => setImageError(true)} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : imageError ? (
-              <div className="preview-placeholder">
-                <span className="preview-placeholder-icon error" aria-hidden="true">!</span>
-                <h4>Kết nối RTSP thất bại</h4>
-                <p>Kiểm tra URL luồng, thông tin đăng nhập và kết nối mạng của camera.</p>
-              </div>
-            ) : (
+            {pendingSources.length === 0 ? (
               <div className="preview-placeholder">
                 <span className="preview-placeholder-icon" aria-hidden="true">+</span>
-                <h4>Chưa chọn nguồn</h4>
-                <p>Ảnh xem trước sẽ xuất hiện khi nguồn video sẵn sàng.</p>
+                <h4>Chưa có nguồn nào</h4>
+                <p>Thêm luồng RTSP, video mẫu hoặc tải video lên ở bên trái để xem trước và vẽ vùng giám sát.</p>
+              </div>
+            ) : (
+              <div className="pending-grid">
+                {pendingSources.map((entry) => (
+                  <PendingSourceTile
+                    key={entry.key}
+                    entry={entry}
+                    onChange={updateEntry}
+                    onRemove={removeEntry}
+                    disabled={busy}
+                  />
+                ))}
               </div>
             )}
           </div>
