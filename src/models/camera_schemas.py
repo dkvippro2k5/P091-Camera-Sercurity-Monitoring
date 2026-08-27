@@ -215,6 +215,15 @@ class SimilarIncident(BaseModel):
     created_at: str
 
 
+class NotificationSettings(BaseModel):
+    enabled: bool
+    configured: bool
+
+
+class NotificationToggle(BaseModel):
+    enabled: bool
+
+
 class SystemStatus(BaseModel):
     total_cameras: int = 0
     active_cameras: int = 0

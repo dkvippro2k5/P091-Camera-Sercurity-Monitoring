@@ -69,6 +69,8 @@ export const api = {
   listCameras: () => request('/cameras'),
   status: () => request('/monitoring/status'),
   listAlerts: () => request('/alerts'),
+  notificationSettings: () => request('/notifications'),
+  setNotificationEnabled: (enabled) => request('/notifications', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }),
 
   deleteCamera: (id) => request(`/cameras/${id}`, { method: 'DELETE' }),
   replayCamera: (id) => request(`/cameras/${id}/replay`, { method: 'POST' }),

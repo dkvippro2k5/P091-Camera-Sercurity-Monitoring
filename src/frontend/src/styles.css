@@ -198,6 +198,31 @@ input[type='file'] {
   padding: var(--sp-2);
 }
 
+/* ---------------------------------------------------------------- notifications */
+.notification-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
+}
+.notification-copy { display: flex; align-items: center; gap: var(--sp-3); }
+.notification-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface-3); color: var(--text-secondary); }
+.notification-card.is-on .notification-icon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.notification-card h2 { font-size: var(--fs-md); }
+.notification-card p { margin: 3px 0 0; color: var(--text-secondary); font-size: var(--fs-sm); }
+.notification-switch { min-width: 112px; justify-content: space-between; gap: var(--sp-2); }
+.notification-switch i { width: 30px; height: 18px; border-radius: 99px; background: var(--border-strong); position: relative; }
+.notification-switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-primary); transition: transform 120ms ease; }
+.notification-card.is-on .notification-switch { border-color: var(--accent); }
+.notification-card.is-on .notification-switch i { background: var(--accent); }
+.notification-card.is-on .notification-switch i::after { transform: translateX(12px); background: var(--accent-text); }
+.notification-error { display: block; color: var(--danger-text); }
+
 /* ---------------------------------------------------------------- shell */
 .app {
   display: grid;

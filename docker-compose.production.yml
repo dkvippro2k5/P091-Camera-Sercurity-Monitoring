@@ -27,6 +27,8 @@ services:
       retries: 10
 
   backend:
+    # Production runs the detector/VLM on the host NVIDIA GPU (Tesla T4).
+    gpus: all
     build:
       context: .
       dockerfile: Dockerfile
