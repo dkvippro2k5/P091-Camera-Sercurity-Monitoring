@@ -2511,27 +2511,14 @@ legend {
 }
 
 .manager-metric {
-  position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 152px;
+  min-height: 128px;
   padding: var(--sp-4);
-  overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-md);
   background: var(--surface-1);
   box-shadow: var(--shadow-sm);
-}
-
-.manager-metric::after {
-  content: '';
-  position: absolute;
-  right: -24px;
-  bottom: -36px;
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: rgb(255 255 255 / 0.025);
 }
 
 .manager-metric.good { border-top-color: rgb(16 185 129 / 0.7); }
@@ -2613,9 +2600,11 @@ legend {
 .trend-chart svg {
   display: block;
   width: 100%;
-  height: 220px;
+  height: 180px;
   overflow: visible;
 }
+
+.chart-label-muted { visibility: hidden; }
 
 .chart-gridline { stroke: rgb(255 255 255 / 0.07); stroke-width: 1; }
 .chart-area { fill: rgb(244 244 245 / 0.05); }
@@ -2675,6 +2664,37 @@ legend {
 
 .mix-list,
 .hotspot-list { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+/* Keep long lists inside their panel so they do not stretch the dashboard. */
+.mix-panel .mix-list,
+.camera-panel .hotspot-list {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--sp-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.mix-panel .mix-list::-webkit-scrollbar,
+.camera-panel .hotspot-list::-webkit-scrollbar { width: 6px; }
+.mix-panel .mix-list::-webkit-scrollbar-track,
+.camera-panel .hotspot-list::-webkit-scrollbar-track { background: transparent; }
+.mix-panel .mix-list::-webkit-scrollbar-thumb,
+.camera-panel .hotspot-list::-webkit-scrollbar-thumb {
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+
+@media (max-width: 620px) {
+  .mix-panel .mix-list,
+  .camera-panel .hotspot-list { max-height: min(360px, 50vh); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mix-panel .mix-list,
+  .camera-panel .hotspot-list { scroll-behavior: auto; }
+}
 .mix-row,
 .hotspot-row { display: flex; flex-direction: column; gap: var(--sp-2); }
 .mix-row-top,
@@ -2702,7 +2722,33 @@ legend {
 .triage-summary { display: flex; flex-direction: column; align-items: flex-end; }
 .triage-summary strong { font-size: var(--fs-xl); }
 .triage-summary span { color: var(--text-tertiary); font-size: var(--fs-2xs); }
-.policy-grid { display: flex; flex-direction: column; }
+
+/* Keep policy details contained while leaving the summary visible above them. */
+.policy-grid {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--sp-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.policy-grid::-webkit-scrollbar { width: 6px; }
+.policy-grid::-webkit-scrollbar-track { background: transparent; }
+.policy-grid::-webkit-scrollbar-thumb {
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+
+@media (max-width: 620px) {
+  .policy-grid { max-height: min(360px, 52vh); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .policy-grid { scroll-behavior: auto; }
+}
 
 .policy-row {
   display: grid;
@@ -2715,6 +2761,7 @@ legend {
 }
 
 .policy-row > strong { font-size: var(--fs-sm); }
+.policy-row > span { min-width: 0; }
 .policy-row i { padding: 0 var(--sp-1); color: var(--text-tertiary); font-style: normal; }
 .delta { justify-self: start; padding: 3px 8px; border-radius: var(--r-full); background: var(--surface-2); font-weight: var(--fw-semibold); }
 .delta.positive { color: var(--live); background: rgb(16 185 129 / 0.1); }
@@ -2726,9 +2773,25 @@ legend {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--sp-2) var(--sp-3);
-  padding: var(--sp-3) 0 var(--sp-5);
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
+  padding: var(--sp-2) 0 var(--sp-4);
+  color: var(--text-tertiary);
+  font-size: var(--fs-2xs);
+}
+
+.manager-footer strong { font-size: var(--fs-xs); }
+
+.manager-footer .footer-muted {
+  max-width: 34ch;
+}
+
+@media (max-width: 620px) {
+  .manager-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
+
+  .manager-footer .footer-separator { display: none; }
 }
 
 .manager-footer strong { color: var(--text-primary); font-weight: var(--fw-medium); }
@@ -2748,11 +2811,16 @@ legend {
   .manager-kpis { grid-template-columns: minmax(0, 1fr); }
   .manager-metric { min-height: 132px; }
   .pulse-main { align-items: flex-start; flex-direction: column; }
-  .policy-row { grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); }
+  .policy-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--sp-2);
+    padding: var(--sp-4) 0;
+  }
+  .policy-row > span:nth-child(2) { grid-column: 1 / -1; }
   .policy-result { grid-column: 1 / -1; }
   .triage-summary { align-items: flex-start; }
   .panel-heading { flex-direction: column; }
-  .chart-labels span:nth-child(even) { display: none; }
+  .chart-labels span.chart-label-muted { display: none; }
 }
 
 /* ---------------------------------------------------------------- product-wide operations refactor */
