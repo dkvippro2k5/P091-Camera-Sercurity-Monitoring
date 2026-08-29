@@ -28,7 +28,11 @@ class EvidenceStore:
             self._s3.upload_fileobj(io.BytesIO(jpeg), self.bucket, key, ExtraArgs={"ContentType": "image/jpeg"})
             if self.public_base_url:
                 return f"{self.public_base_url}/{key}"
-            return f"s3://{self.bucket}/{key}"
+            # No public base URL configured, so the object is not reachable from a browser
+            # directly. Hand back the same authenticated API path the local backend uses and
+            # let `fetch` below stream it — an `s3://` URL here would reach the frontend as an
+            # `<img src>` no browser can load.
+            return f"/api/v1/evidence/{evidence_id}"
 
         destination = self.local_dir / key
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -39,3 +43,28 @@ class EvidenceStore:
 
     def local_path(self, evidence_id: str) -> Path:
         return self.local_dir / "evidence" / f"{evidence_id}.jpg"
+
+    def fetch(self, evidence_id: str) -> bytes | None:
+        """Read one stored evidence JPEG back, or None when it is not there.
+
+        Exists so the API can serve S3-backed evidence through its own authenticated route
+        rather than requiring a public bucket. Without it, a deployment with
+        `EVIDENCE_STORAGE_BACKEND=s3` and no `EVIDENCE_S3_PUBLIC_BASE_URL` has no way to show
+        an operator the frame at all.
+        """
+        if self.backend == "s3":
+            try:
+                response = self._s3.get_object(Bucket=self.bucket, Key=f"evidence/{evidence_id}.jpg")
+                return response["Body"].read()
+            except Exception as exc:  # noqa: BLE001 - a missing key and a transport error both mean "cannot show it"
+                logger.warning(f"Could not fetch evidence {evidence_id} from S3: {exc}")
+                return None
+
+        path = self.local_path(evidence_id)
+        if not path.is_file():
+            return None
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            logger.warning(f"Could not read evidence {evidence_id}: {exc}")
+            return None

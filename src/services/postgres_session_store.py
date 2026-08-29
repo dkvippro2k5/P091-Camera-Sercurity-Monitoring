@@ -4,6 +4,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from src.services import db_pool
 from src.services.sessions import _SESSION_ID_BYTES, Session
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class PostgresSessionStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        return db_pool.connection(self.database_url)
 
     def _initialize(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:

@@ -129,24 +129,41 @@ class CameraInfo(BaseModel):
     latency_p99_ms: float = 0.0
     inference_wait_p95_ms: float = 0.0
     processing_errors: int = 0
+    # MJPEG. Still populated for every camera: it is the fallback the grid uses when the
+    # browser has no MediaSource support or the H.264 socket cannot be served.
     stream_url: str = ""
+    # H.264/fMP4 over a WebSocket — the path the grid prefers. Relative like `stream_url`,
+    # so the client resolves the scheme (ws vs wss) against its own origin rather than the
+    # server guessing it from behind a proxy.
+    video_url: str = ""
     fall_perspective: FallPerspectiveConfig | None = None
 
 
 class AlertEvidenceFrame(BaseModel):
-    """One sampled still from the VLM clip, in chronological order."""
+    """One sampled still from the VLM clip, in chronological order.
+
+    Carries a URL, not the image. These frames used to travel as base64 data URLs embedded in
+    the alert, which meant up to six full JPEGs rode along inside every SSE payload for that
+    alert — re-serialised on each of the four events an alert publishes, and then held in
+    browser memory for as long as the alert stayed in the client's list. `image_url` points at
+    the authenticated `/api/v1/evidence/{id}` route instead, so the browser fetches a frame
+    only when it actually renders one and can evict it like any other image.
+    """
 
     index: int
     phase: EvidencePhase
-    image_data_url: str
+    image_url: str
 
 
 class Alert(BaseModel):
     """One incident, from rule-engine event to operator judgement.
 
-    `image_data_url` carries the captured frame, annotated with zones and tracks. Face
-    blurring was removed on 2026-08-10, so faces in it are identifiable — PRD §3.3 asks
-    for anonymization and this no longer satisfies it.
+    `evidence_url` points at the captured frame, annotated with zones and tracks, served by
+    the authenticated `/api/v1/evidence/{id}` route. Face blurring was removed on 2026-08-10,
+    so faces in it are identifiable — PRD §3.3 asks for anonymization and this no longer
+    satisfies it. The frame is deliberately *not* inlined as base64: doing so put a full JPEG
+    inside every SSE payload for the alert, four times over its lifetime, and kept it resident
+    in browser memory for every alert the client had ever seen.
 
     `reason` is the rule engine's own evidence string. The `triage_*` fields are the second
     stage's reading of it (PRD §1.2) and are strictly **advisory**: a `false_positive`
@@ -167,7 +184,6 @@ class Alert(BaseModel):
     reason: str | None = None
     zone_name: str | None = None
     track_id: str | None = None
-    image_data_url: str = ""
     evidence_url: str | None = None
     acknowledged: bool = False
 

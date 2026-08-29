@@ -15,7 +15,9 @@ export default function VerifyingCard({ pendingAlerts }) {
         {count > 1 && <span className="verifying-count">+{count - 1} more</span>}
       </div>
       <div className="verifying-card-body">
-        {alert.image_data_url && <img className="verifying-thumb" src={alert.image_data_url} alt="" />}
+        {alert.evidence_url && (
+          <img className="verifying-thumb" src={alert.evidence_url} alt="" decoding="async" />
+        )}
         <div className="verifying-info">
           <strong>{meta.headline}</strong>
           <span>

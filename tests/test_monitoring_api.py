@@ -180,7 +180,9 @@ def test_alert_carries_the_frame_and_the_rule_reason(service):
     alerts = service.list_alerts()
     assert len(alerts) == 1
     assert alerts[0].label == "fall_detection"
-    assert alerts[0].image_data_url.startswith("data:image/jpeg;base64,")
+    # A URL, not the image: the frame is stored and referenced so it never rides along in the
+    # SSE payload. Present on the very first alert because `_emit_alert` stores it inline.
+    assert alerts[0].evidence_url == f"/api/v1/evidence/{alerts[0].id}"
     assert alerts[0].reason == "person_3 collapsed for 3.1s"
 
 

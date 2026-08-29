@@ -23,7 +23,6 @@ advisory — it annotates the alert and never suppresses it (see `src/services/v
 """
 
 import asyncio
-import base64
 import logging
 import os
 import threading
@@ -124,15 +123,31 @@ def encode_frame_to_jpeg(frame: np.ndarray, max_edge: int = 1024) -> bytes:
     return buffer.tobytes()
 
 
-def _evidence_frames(frames: list[bytes], pre_count: int) -> list[AlertEvidenceFrame]:
-    """Convert the sampled VLM clip into frontend-ready data URLs."""
+def _evidence_frames(
+    frames: list[bytes], pre_count: int, alert_id: str, store: EvidenceStore
+) -> list[AlertEvidenceFrame]:
+    """Persist the sampled VLM clip and describe it by URL rather than by value.
+
+    Runs on a triage worker thread, never on the camera's processor thread, so the extra
+    writes here cannot stall detection. A frame that fails to store is dropped from the strip
+    rather than aborting the whole set: a partial evidence strip is still useful to the guard,
+    and triage itself has already finished by the time this is called.
+    """
     evidence: list[AlertEvidenceFrame] = []
     for index, jpeg in enumerate(frames):
+        # Namespaced by alert so one alert's frames can never collide with another's, and so
+        # they sort next to the alert's own key in the bucket / directory listing.
+        evidence_id = f"{alert_id}-f{index + 1}"
+        try:
+            url = store.put(evidence_id, jpeg)
+        except Exception:  # noqa: BLE001 - a storage failure must not lose the verdict itself
+            logger.exception(f"Could not store evidence frame {evidence_id}")
+            continue
         evidence.append(
             AlertEvidenceFrame(
                 index=index + 1,
                 phase="before" if index < pre_count else "after",
-                image_data_url="data:image/jpeg;base64," + base64.standard_b64encode(jpeg).decode("utf-8"),
+                image_url=url,
             )
         )
     return evidence
@@ -225,7 +240,6 @@ class MonitoringService:
         # Two workers: enough to overlap a slow API call with a second camera's alert,
         # small enough that a burst cannot spawn threads without bound.
         self._triage_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vlm-triage")
-        self._evidence_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evidence-store")
         # Same reasoning as _triage_pool: record_operator_verdict is what a guard's
         # "Confirm real"/"False alarm" click is waiting on, and embedding the reason text is
         # an annotation on top of that judgement, not part of it. Even with the 10s client
@@ -278,7 +292,6 @@ class MonitoringService:
         # verdict is advisory and the alert it belongs to has already been shown.
         self._triage_pool.shutdown(wait=False)
         self._notification_worker.close()
-        self._evidence_pool.shutdown(wait=False)
         self._embedding_pool.shutdown(wait=False)
         self._event_relay.close()
 
@@ -365,6 +378,7 @@ class MonitoringService:
             active_labels=labels,
             target_fps=payload.target_fps or settings.camera_target_fps,
             stream_url=f"/api/v1/cameras/{camera_id}/stream",
+            video_url=f"/api/v1/cameras/{camera_id}/video",
             fall_perspective=payload.fall_perspective,
         )
 
@@ -468,7 +482,20 @@ class MonitoringService:
 
     # ------------------------------------------------------------------ frames
     def latest_jpeg(self, camera_id: str) -> bytes | None:
-        return self._frames.get(camera_id)
+        # The display thread's high-cadence buffer (see CameraStreamWorker._display_loop) is
+        # what a viewer should actually see; self._frames (populated by _on_frame below, at
+        # target_fps) is only a fallback for the brief window before the display thread has
+        # encoded its first frame.
+        return self.manager.latest_display_jpeg(camera_id) or self._frames.get(camera_id)
+
+    def h264_encoder(self, camera_id: str):
+        """The camera's H.264/fMP4 encoder for the video WebSocket, or None.
+
+        MJPEG (`latest_jpeg` above) remains the fallback: it is what the snapshot endpoint
+        serves and what the grid uses on a browser without MediaSource, or when this returns
+        None or an encoder whose `.available` is False.
+        """
+        return self.manager.h264_encoder(camera_id)
 
     def _on_frame(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
         """Every analysed frame: refresh the preview buffer and the triage ring.
@@ -554,8 +581,17 @@ class MonitoringService:
             reason=reason,
             zone_name=zone_name,
             track_id=track_id,
-            image_data_url="data:image/jpeg;base64," + base64.standard_b64encode(jpeg).decode("utf-8"),
         )
+
+        # Stored before the alert is published so `evidence_url` is already on the very first
+        # SSE payload and the operator's image resolves immediately. This is a local file
+        # write (or one small S3 PUT) on the processor thread — measured in single-digit
+        # milliseconds, against the alternative of publishing an alert whose image 404s until
+        # a background thread happens to finish.
+        try:
+            alert.evidence_url = self.evidence_store.put(alert.id, jpeg)
+        except Exception:  # noqa: BLE001 - evidence failure must not stop detection
+            logger.exception("Could not persist evidence for alert %s", alert.id)
 
         with self._lock:
             self._alerts.insert(0, alert)
@@ -571,27 +607,17 @@ class MonitoringService:
             camera_name=alert.camera_name,
             label=alert.label,
             confidence=alert.confidence,
+            evidence_url=alert.evidence_url,
         )
 
         queued_for_triage = self._queue_triage(alert)
         self._publish("alert.created", alert.model_dump())
-        self._evidence_pool.submit(self._store_evidence, alert, jpeg)
-        # Telegram is intentionally deferred until VLM triage confirms a real incident.
+        if self.notifier.enabled:
+            self._notification_worker.submit(alert.model_dump())
         # Only after the operator already has the alert. Everything below this line happens
         # on another thread and can take seconds.
         if queued_for_triage:
             self._submit_triage(alert)
-
-    def _store_evidence(self, alert: Alert, jpeg: bytes) -> None:
-        try:
-            url = self.evidence_store.put(alert.id, jpeg)
-            with self._lock:
-                alert.evidence_url = url
-                snapshot = alert.model_dump()
-            self.incidents.record_evidence(alert.id, url)
-            self._publish("alert.evidence", snapshot)
-        except Exception:  # noqa: BLE001 - evidence failure must not stop detection
-            logger.exception("Could not persist evidence for alert %s", alert.id)
 
     # ------------------------------------------------------------------ triage
     def _queue_triage(self, alert: Alert) -> bool:
@@ -667,7 +693,7 @@ class MonitoringService:
         return (
             frames,
             pre_count,
-            _evidence_frames(frames, pre_count),
+            _evidence_frames(frames, pre_count, alert.id, self.evidence_store),
             self.history.recent_examples(alert.camera_id, alert.label, limit=self._history_examples),
         )
 

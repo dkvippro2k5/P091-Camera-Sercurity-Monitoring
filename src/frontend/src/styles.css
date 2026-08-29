@@ -451,9 +451,10 @@ input[type='file'] {
 .feed-wrap {
   position: relative;
   background: #000;
-  /* Reserving the aspect ratio stops the grid reflowing as each MJPEG stream delivers
-     its first frame — otherwise every tile jumps once at load and the operator's
-     click lands on whatever slid underneath. */
+  /* Reserving the aspect ratio stops the grid reflowing as each feed delivers its first
+     frame — otherwise every tile jumps once at load and the operator's click lands on
+     whatever slid underneath. It also covers the moment a tile swaps its <video> for the
+     MJPEG <img> fallback, which would otherwise resize the tile mid-shift. */
   aspect-ratio: 16 / 9;
 }
 
@@ -3454,6 +3455,98 @@ textarea:focus {
 .preview-placeholder-icon.error {
   border-color: rgb(239 68 68 / 0.5);
   color: var(--danger-text);
+}
+
+/* ---------------------------------------------------------------- pending source grid (setup) */
+/* Multiple queued sources outgrow a sidebar pinned to the viewport — dropped only once
+   there is more than one tile, so the single-source case still feels exactly like before. */
+.setup-col-preview.multi {
+  position: static;
+}
+
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  /* No fixed row height: PolygonCanvas stacks an image+canvas stage above its own Undo/Clear
+     controls, so cropping a tile to a fixed aspect ratio would either hide those controls or
+     put part of a drawn zone outside the visible, clickable image. */
+  align-items: start;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+}
+
+.pending-tile {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.pending-tile-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 56px;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pending-tile-name {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap-compact);
+  font-size: var(--fs-sm);
+}
+
+.pending-tile-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+}
+
+.pending-tile-body {
+  padding: var(--sp-3);
+}
+
+.pending-tile-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 160px;
+  padding: var(--sp-4);
+  border-radius: var(--r-sm);
+  background: #0b1016;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+
+.pending-tile-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+
+.inline-add {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.inline-add input,
+.inline-add select {
+  flex: 1;
+}
+
+.inline-add button {
+  flex: none;
+  white-space: nowrap;
 }
 
 fieldset {

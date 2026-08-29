@@ -8,7 +8,27 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
   const dialogRef = useFocusTrap(true)
   const [note, setNote] = useState(alert.operator_note || '')
   const [actualEventType, setActualEventType] = useState(alert.actual_event_type || '')
-  const submit = (verdict) => onVerdict(alert.id, verdict, note, actualEventType)
+  // The verdict write is a real network round trip to the database (recording history and
+  // training context, not just an in-memory flag), so it is not instant. Without this, the
+  // guard gets no feedback for that whole span and a slow response reads as the click not
+  // having registered — the next queued alert *does* still appear once it resolves, but a
+  // frozen-looking modal invites a second click (a duplicate submission) or the guard
+  // wrongly concluding the queue is stuck.
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (verdict) => {
+    if (submitting) return
+    setSubmitting(true)
+    try {
+      await onVerdict(alert.id, verdict, note, actualEventType)
+    } finally {
+      // No reset-to-false-then-leave-mounted case to worry about here: a successful verdict
+      // acknowledges this alert, which drops it out of the queue and unmounts this instance
+      // (see the `key={active.id}` at the call site) — so `submitting` only needs to revert
+      // on the failure path, where the guard stays on this same alert and must be able to
+      // retry.
+      setSubmitting(false)
+    }
+  }
 
   return (
     <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -78,14 +98,16 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
               ) : (
                 <>
                   <span className="queued">
-                    {alert.triage_verdict === 'false_positive'
-                      ? 'AI đã lọc — ghi đè kết luận:'
-                      : 'Cảnh báo cũ — ghi nhận kết luận:'}
+                    {submitting
+                      ? 'Đang ghi nhận…'
+                      : alert.triage_verdict === 'false_positive'
+                        ? 'AI đã lọc — ghi đè kết luận:'
+                        : 'Cảnh báo cũ — ghi nhận kết luận:'}
                   </span>
-                  <button className="verdict-false" onClick={() => submit('false')}>
+                  <button className="verdict-false" onClick={() => submit('false')} disabled={submitting}>
                     Báo động giả
                   </button>
-                  <button className="primary" data-autofocus onClick={() => submit('real')}>
+                  <button className="primary" data-autofocus onClick={() => submit('real')} disabled={submitting}>
                     Xác nhận sự cố
                   </button>
                 </>
@@ -93,16 +115,20 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
             </>
           ) : (
             <>
-              {queued > 0 && (
-                <span className="queued">
-                  Còn {queued} sự cố đang chờ
-                </span>
+              {submitting ? (
+                <span className="queued" aria-live="polite">Đang ghi nhận…</span>
+              ) : (
+                queued > 0 && (
+                  <span className="queued">
+                    Còn {queued} sự cố đang chờ
+                  </span>
+                )
               )}
-              <button className="verdict-false" onClick={() => submit('false')}>
+              <button className="verdict-false" onClick={() => submit('false')} disabled={submitting}>
                 Báo động giả
               </button>
-              <button className="primary" data-autofocus onClick={() => submit('real')}>
-                Xác nhận sự cố
+              <button className="primary" data-autofocus onClick={() => submit('real')} disabled={submitting}>
+                {submitting ? 'Đang xử lý…' : 'Xác nhận sự cố'}
               </button>
             </>
           )}
@@ -202,10 +228,13 @@ function EvidenceFrames({ alert, meta }) {
   const frames = Array.isArray(alert.evidence_frames) ? alert.evidence_frames : []
 
   if (frames.length === 0) {
+    // Rendered only while this modal is open, so the fetch happens on open rather than when
+    // the alert arrived — the images are no longer carried in the alert payload itself.
+    if (!alert.evidence_url) return null
     return (
       <img
         className="shot"
-        src={alert.image_data_url}
+        src={alert.evidence_url}
         width="640"
         height="360"
         alt={`${meta.headline} on ${alert.camera_name}`}
@@ -222,7 +251,12 @@ function EvidenceFrames({ alert, meta }) {
       <div className="evidence-grid">
         {frames.map((frame) => (
           <figure key={`${frame.phase}-${frame.index}`} className="evidence-frame">
-            <img src={frame.image_data_url} alt={`${frame.phase} frame ${frame.index} for ${meta.headline}`} />
+            <img
+              src={frame.image_url}
+              alt={`${frame.phase} frame ${frame.index} for ${meta.headline}`}
+              loading="lazy"
+              decoding="async"
+            />
             <figcaption>
               <span>{frame.phase}</span>
               <strong>#{frame.index}</strong>

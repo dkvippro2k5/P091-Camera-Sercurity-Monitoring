@@ -27,12 +27,20 @@ accelerate>=1.2.0
 safetensors>=0.4.5
 Pillow>=10.0.0
 num2words>=0.5.14
+# H.264 encoding for the live grid's WebSocket video transport (src/vision/h264_encoder.py).
+# Binary wheels bundle FFmpeg, so no system FFmpeg is required; the encoder falls back to
+# MJPEG at runtime if no usable H.264 encoder is present.
+av>=13.0.0
 # ByteTrack's linear assignment. Ultralytics pip-installs this at runtime on the
 # first model.track() call if it is absent, which stalls or fails offline.
 lap>=0.5.12
 
 # Database
 psycopg[binary]>=3.2.0
+# Connection pooling for the Postgres repositories (src/services/db_pool.py). Separate
+# distribution from psycopg itself; without it the stores fall back to one connection
+# per query, which is slow against a managed database.
+psycopg-pool>=3.2.0
 pgvector>=0.3.6
 redis>=5.2.0
 boto3>=1.35.0

@@ -4,11 +4,22 @@ Kept in its own router rather than bolted onto `routes.py` because it has nothin
 with the template's chat agent — it is the camera product, and mixing them would make both
 harder to read.
 
-Two streaming choices worth stating. Video goes out as **MJPEG** (`multipart/x-mixed-replace`),
-which an `<img src>` renders natively — no player, no WebSocket, no codec negotiation, and
-it degrades to "the last frame" instead of erroring when a camera stalls. Alerts go out as
-**SSE**, because they are one-directional server→client and reconnect automatically; a
-WebSocket would need its own keepalive and retry logic for no gain.
+Three streaming choices worth stating.
+
+Video goes out as **H.264 in fragmented MP4 over a WebSocket** (`/cameras/{id}/video`), which
+the browser feeds to MediaSource Extensions and decodes on the GPU. MJPEG sent every frame as
+a standalone JPEG — ~10 Mbps per 480p camera on this footage — and the browser's per-frame CPU
+decode is what held the grid to 10-14fps while the server was producing 20. H.264 sends
+keyframes rarely and deltas in between (~1.3 Mbps for the same feed, ~8x less across the
+project's four sample clips) and renders at the full rate.
+
+**MJPEG** (`multipart/x-mixed-replace`, `/cameras/{id}/stream`) is kept as the fallback, not as
+dead code: it is what a browser without MediaSource gets, what the client falls back to if the
+socket fails or the host has no usable H.264 encoder, and what `/snapshot` serves. It needs no
+player and degrades to "the last frame" instead of erroring when a camera stalls.
+
+Alerts go out as **SSE**, because they are one-directional server→client and reconnect
+automatically; a WebSocket would need its own keepalive and retry logic for no gain.
 """
 
 import asyncio
@@ -22,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from src.api.deps import (
+    current_websocket_guard,
     current_websocket_manager,
     require_guard,
     require_manager,
@@ -42,6 +54,7 @@ from src.models.camera_schemas import (
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
 from src.services.user_store import User
+from src.vision.stream_worker import _FFMPEG_OPTS_LOCK, _RTSP_FFMPEG_OPTIONS
 
 # Every route here requires a signed-in operator, manager or guard. The dependency is on the
 # router rather than per route, so an endpoint added later is protected because of where it
@@ -53,6 +66,10 @@ router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_guard)])
 manager_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_manager)])
 operator_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_operator)])
 manager_ws_router = APIRouter(tags=["monitoring"])
+# WebSocket routes cannot reuse `router`'s `Depends(require_guard)`: a dependency that raises
+# HTTPException has no response to raise it into on a socket. They authenticate explicitly in
+# the handler and close with a policy code instead, so they live on their own router.
+guard_ws_router = APIRouter(tags=["monitoring"])
 
 # How often a long-lived stream re-reads its session from the store, rather than on every
 # wake. Bounds how long a revoked session can keep a stream open, traded against a database
@@ -128,6 +145,43 @@ async def upload_video(file: UploadFile) -> dict[str, str]:
     return {"filename": stored_name, "original_name": file.filename or stored_name}
 
 
+_PREVIEW_OPEN_TIMEOUT_SEC = 8.0
+_PREVIEW_READ_TIMEOUT_SEC = 8.0
+
+
+def _read_preview_frame(resolved: str):
+    """Blocking cv2 open+read for one preview frame.
+
+    Mirrors CameraStreamWorker._open_capture (src/vision/stream_worker.py): passing open/read
+    timeouts requires the explicit cv2.CAP_FFMPEG backend argument, which is why both are
+    always passed together for RTSP sources — without a bound, a source that never answers
+    would hang whichever thread calls this forever.
+    """
+    source = int(resolved) if resolved.isdigit() else resolved
+    is_rtsp = isinstance(source, str) and source.lower().startswith("rtsp://")
+
+    if is_rtsp:
+        params = [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+            int(_PREVIEW_OPEN_TIMEOUT_SEC * 1000),
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+            int(_PREVIEW_READ_TIMEOUT_SEC * 1000),
+        ]
+        with _FFMPEG_OPTS_LOCK:
+            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _RTSP_FFMPEG_OPTIONS)
+            capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+    else:
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
+    try:
+        if not capture.isOpened():
+            return None
+        ok, frame = capture.read()
+    finally:
+        capture.release()
+    return frame if ok else None
+
+
 @router.get("/preview-frame")
 async def preview_frame(
     source_type: str = Query(..., pattern="^(demo|upload|rtsp)$"),
@@ -137,15 +191,15 @@ async def preview_frame(
 
     The zone canvas needs a still of the actual camera view — drawing on a blank rectangle
     would produce a polygon that means nothing in the scene.
+
+    Runs off the event loop via asyncio.to_thread, same reasoning as create_camera below: the
+    multi-source setup screen fires one of these per pending video, and without this a single
+    slow RTSP handshake would stall every other request on the process.
     """
     resolved = MonitoringService.resolve_source(source_type, source)
-    capture = cv2.VideoCapture(int(resolved) if resolved.isdigit() else resolved)
-    try:
-        ok, frame = capture.read()
-    finally:
-        capture.release()
+    frame = await asyncio.to_thread(_read_preview_frame, resolved)
 
-    if not ok or frame is None:
+    if frame is None:
         raise HTTPException(status_code=404, detail=f"Could not read a frame from '{source}'")
 
     encoded, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
@@ -207,8 +261,14 @@ async def camera_snapshot(camera_id: str, request: Request) -> Response:
 
 
 @router.get("/cameras/{camera_id}/stream")
-async def camera_stream(camera_id: str, request: Request, fps: float = Query(default=10.0, gt=0, le=30)) -> Response:
-    """MJPEG stream of the annotated frames for one camera."""
+async def camera_stream(camera_id: str, request: Request, fps: float = Query(default=20.0, gt=0, le=30)) -> Response:
+    """MJPEG stream of the annotated frames for one camera.
+
+    Default matches CameraStreamWorker's display_fps: the buffer this reads from
+    (MonitoringService.latest_jpeg) now refreshes at that cadence regardless of the camera's
+    (usually much lower) target_fps, so the emission rate here should keep up with it rather
+    than sit at the old inference-cadence default and throw most of those frames away.
+    """
     service = get_service(request)
     if service.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
@@ -243,6 +303,139 @@ async def camera_stream(camera_id: str, request: Request, fps: float = Query(def
     )
 
 
+# How long a viewer waits for the encoder's first output before being told to fall back.
+# The display thread produces a frame within ~50ms of the camera opening, but the camera
+# itself may still be connecting, so this is sized for a slow RTSP handshake.
+_H264_START_TIMEOUT_SEC = 10.0
+# How long a connected viewer tolerates silence before the server gives up on it. Longer
+# than the keyframe interval (~2s) by a wide margin, so a healthy but momentarily stalled
+# camera is not disconnected; short enough that a dead camera does not hold a socket open.
+_H264_IDLE_TIMEOUT_SEC = 30.0
+
+
+@guard_ws_router.websocket("/cameras/{camera_id}/video")
+async def camera_video(websocket: WebSocket, camera_id: str) -> None:
+    """Live H.264 video for one camera, as fMP4 over a WebSocket.
+
+    Wire protocol, deliberately minimal: one JSON text frame first, then binary frames.
+
+      - The **text** frame is `{"type": "init", "codec": ..., "mime": ...}` on success, or
+        `{"type": "fallback", "reason": ...}` when this camera cannot serve H.264. The
+        client uses `mime` verbatim for `MediaSource.addSourceBuffer`, and treats `fallback`
+        as "use the MJPEG `<img>` instead" — the server saying so explicitly is what keeps a
+        client off a socket that will never produce video.
+      - The first **binary** frame is the fMP4 init segment (`ftyp`+`moov`); every one after
+        is a media fragment (`moof`+`mdat`). MSE wants exactly this order, so the framing is
+        just "first binary is init", with no per-message header to parse.
+
+    A viewer joining mid-stream is held by the encoder until the next keyframe (see
+    `H264StreamEncoder.subscribe`), so the first fragment it receives is always decodable.
+    """
+    user = await asyncio.to_thread(current_websocket_guard, websocket)
+    if user is None:
+        await websocket.close(code=1008, reason="Guard authentication required")
+        return
+
+    service = getattr(websocket.app.state, "monitoring", None)
+    if service is None:
+        await websocket.close(code=1013, reason="Monitoring service is not ready")
+        return
+    if service.get_camera(camera_id) is None:
+        await websocket.close(code=1008, reason=f"No camera '{camera_id}'")
+        return
+
+    await websocket.accept()
+
+    encoder = service.h264_encoder(camera_id)
+    if encoder is None or not encoder.available:
+        await websocket.send_json(
+            {"type": "fallback", "reason": "H.264 encoding is unavailable for this camera"}
+        )
+        await websocket.close(code=1000)
+        return
+
+    subscription = encoder.subscribe()
+    queue, ready, state = subscription
+    try:
+        # The init segment only exists once a frame has been encoded. A camera that was just
+        # added has not produced one yet, so wait rather than declaring failure — but bound
+        # the wait, because a camera that never connects would otherwise hold this open.
+        init_segment = encoder.init_segment()
+        waited = 0.0
+        while init_segment is None and waited < _H264_START_TIMEOUT_SEC:
+            await asyncio.sleep(0.1)
+            waited += 0.1
+            if not encoder.available or state["closed"]:
+                break
+            init_segment = encoder.init_segment()
+
+        if init_segment is None:
+            await websocket.send_json(
+                {"type": "fallback", "reason": "Camera produced no video within the timeout"}
+            )
+            await websocket.close(code=1000)
+            return
+
+        await websocket.send_json(
+            {
+                "type": "init",
+                "codec": encoder.codec_name,
+                # Baseline profile, level 3.1 — matches `_codec_options`. MSE rejects a
+                # source buffer whose codec string does not describe the actual bitstream,
+                # so this has to move if the encoder's profile ever does.
+                "mime": 'video/mp4; codecs="avc1.42E01F"',
+            }
+        )
+        await websocket.send_bytes(init_segment)
+
+        next_session_check = time.monotonic() + _SESSION_RECHECK_SECONDS
+        idle_deadline = time.monotonic() + _H264_IDLE_TIMEOUT_SEC
+        while True:
+            # Same reasoning as the SSE stream and the manager socket: a video feed left up
+            # on a control-room screen must stop when its session is revoked, and re-reading
+            # the session is a database round trip, so it is paced rather than per-fragment.
+            now = time.monotonic()
+            if now >= next_session_check:
+                if not await asyncio.to_thread(session_is_live, websocket):
+                    await websocket.close(code=1008, reason="Session expired")
+                    return
+                next_session_check = now + _SESSION_RECHECK_SECONDS
+
+            # The encoder signals on a threading.Event, which cannot be awaited. Waiting on
+            # it in a worker thread keeps the event loop free while this socket is idle —
+            # polling it here instead would burn a wakeup per camera per tick.
+            got_signal = await asyncio.to_thread(ready.wait, 1.0)
+            if state["closed"] or not encoder.available:
+                break
+            if not got_signal:
+                # A camera that has gone quiet without failing outright — unplugged, or
+                # wedged behind an FFmpeg read that has not timed out yet. Drop the socket
+                # so the client can fall back rather than watch a frozen frame forever.
+                if time.monotonic() > idle_deadline:
+                    break
+                continue
+            ready.clear()
+
+            while queue:
+                await websocket.send_bytes(queue.popleft())
+            # Extended on real output only, so the deadline above measures silence from the
+            # camera rather than time since connect.
+            idle_deadline = time.monotonic() + _H264_IDLE_TIMEOUT_SEC
+
+        # Reached when the camera stopped or the encoder failed mid-session. Telling the
+        # client explicitly lets it switch to MJPEG instead of showing a frozen last frame.
+        await websocket.send_json({"type": "fallback", "reason": "Camera stream ended"})
+        await websocket.close(code=1000)
+    except WebSocketDisconnect:
+        return
+    except RuntimeError:
+        # Starlette raises this when the socket is already closed underneath us — a browser
+        # tab closed mid-send. Nothing to clean up beyond the unsubscribe below.
+        return
+    finally:
+        encoder.unsubscribe(subscription)
+
+
 # ---------------------------------------------------------------- alerts
 @router.get("/alerts", response_model=list[Alert])
 async def list_alerts(request: Request, unacknowledged_only: bool = False) -> list[Alert]:
@@ -250,14 +443,32 @@ async def list_alerts(request: Request, unacknowledged_only: bool = False) -> li
 
 
 @router.get("/evidence/{evidence_id}")
-async def incident_evidence(evidence_id: str, request: Request) -> FileResponse:
-    """Serve local evidence only through the authenticated operator surface."""
-    if get_service(request).evidence_store.backend != "local":
-        raise HTTPException(status_code=404, detail="Local evidence storage is disabled")
-    path = get_service(request).evidence_store.local_path(evidence_id)
-    if not path.is_file():
+async def incident_evidence(evidence_id: str, request: Request) -> Response:
+    """Serve one stored evidence frame through the authenticated guard surface.
+
+    This is the only way an alert image reaches the browser — alerts carry a URL, never the
+    image itself. Both storage backends are served here rather than only the local one: an
+    S3 deployment without a public base URL would otherwise have no reachable image at all,
+    and serving it through this route keeps `require_guard` in front of footage that, since
+    face blurring was removed, identifies people.
+
+    `private` keeps proxies and CDNs from caching a frame and handing it to someone else,
+    while still letting the operator's own browser reuse it — which is what makes reopening
+    an alert free.
+    """
+    store = get_service(request).evidence_store
+    if store.backend == "local":
+        # FileResponse streams from disk without reading the whole image into the event loop.
+        path = store.local_path(evidence_id)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Evidence not found")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    # S3 (or S3-compatible): a blocking boto3 get, so off the event loop thread.
+    jpeg = await asyncio.to_thread(store.fetch, evidence_id)
+    if jpeg is None:
         raise HTTPException(status_code=404, detail="Evidence not found")
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.post("/alerts/{alert_id}/acknowledge", status_code=204)

@@ -134,10 +134,10 @@ export default function App() {
     // 401, retry on its own schedule, and keep retrying forever — the reconnect loop this
     // whole path is arranged to avoid.
     //
-    // Guards only, and the reason is not just that a manager renders no modal or rail. Every
-    // `alert.created` payload carries `image_data_url`, a full annotated JPEG, and since the
-    // face anonymizer was removed those frames show identifiable people. Streaming them to a
-    // role with nothing to do with them would be footage leaving the building for no reason.
+    // Guards only. Alert payloads no longer carry the frame itself — just an
+    // `/api/v1/evidence/{id}` URL, which `require_guard` gates on the server, so footage
+    // still never reaches a manager. Keeping the stream guard-only stays correct regardless:
+    // a manager renders no modal and no rail, so the events would have no reader.
     if (!isGuard) return
 
     // SSE rather than polling: the pop-up is meant to interrupt, and EventSource
@@ -154,11 +154,6 @@ export default function App() {
     events.addEventListener('alert.verdict', (e) => {
       const alert = JSON.parse(e.data)
       setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, ...alert } : a)))
-    })
-
-    events.addEventListener('alert.evidence', (e) => {
-      const alert = JSON.parse(e.data)
-      setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, evidence_url: alert.evidence_url } : a)))
     })
 
     // Logout, from this tab or another one. Filtered by username because `_publish` fans out
@@ -200,10 +195,37 @@ export default function App() {
     }
   }
 
-  async function handleAddCamera(payload) {
-    await api.addCamera(payload)
+  // Sequential, not Promise.all: `MultiStreamManager` starts each worker (RTSP/file open +
+  // model load) synchronously in `add_camera`, so firing every request at once would just
+  // queue them behind each other on the server anyway while looking like a burst of failures
+  // if one is slow. One partial failure should not lose the cameras that did succeed, so
+  // failures are collected and reported together after every payload has been tried.
+  //
+  // Navigation only follows success: this is the only add path now (the setup screen queues
+  // every source — one RTSP camera or twenty uploads — through this same call), so throwing
+  // after navigating away would mean CameraSetup unmounts before it can show the error it was
+  // just handed. On a total failure the screen stays put and the queue survives; on a partial
+  // failure the grid is still where the cameras that *did* start actually show up, so the
+  // miss is surfaced with an alert instead of trapping the operator behind an error banner
+  // for cameras that are already running.
+  async function handleAddCameraBatch(payloads) {
+    const failures = []
+    let addedCount = 0
+    for (const payload of payloads) {
+      try {
+        await api.addCamera(payload)
+        addedCount += 1
+      } catch (err) {
+        failures.push(`${payload.name}: ${err.message}`)
+      }
+    }
     await loadCameras()
-    setScreen('setup')
+    if (addedCount > 0) {
+      setScreen('grid')
+      if (failures.length) window.alert(`Một số camera không thể thêm được:\n${failures.join('\n')}`)
+    } else if (failures.length) {
+      throw new Error(failures.join('; '))
+    }
   }
 
   async function handleDeleteCamera(id) {
@@ -311,7 +333,7 @@ export default function App() {
             )}
             {current === 'setup' && (
               <CameraSetup
-                onAdd={handleAddCamera}
+                onAddBatch={handleAddCameraBatch}
                 onCancel={() => setScreen('grid')}
                 cameras={cameras}
                 onDelete={handleDeleteCamera}
@@ -338,6 +360,11 @@ export default function App() {
 
       {active && (
         <AlertModal
+          // Keyed so a fresh AlertModal instance mounts per alert: without this, switching
+          // from one queued alert to the next reuses the same component instance, and its
+          // local state (note, actualEventType, the submitting flag below) would leak from
+          // the alert just judged onto the one that replaces it.
+          key={active.id}
           alert={active}
           queued={unacked.filter((a) => a.id !== active.id).length}
           isHistory={active.acknowledged || isAutoSuppressed(active)}

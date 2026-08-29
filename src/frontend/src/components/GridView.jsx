@@ -1,3 +1,5 @@
+import VideoFeed from './VideoFeed'
+
 /**
  * `onDelete` and `onAddClick` are passed for a guard, who both watches the cameras and
  * configures them. Any other role reaching this screen gets them as `null` and sees the
@@ -45,13 +47,16 @@ function CameraTile({ camera, alerting, onDelete, onReplay }) {
     <article className={alerting ? 'tile alerting' : 'tile'}>
       <div className="feed-wrap">
         {/*
-          MJPEG in a plain <img>. The browser decodes the multipart stream natively, so
-          there is no player to initialise and a stalled camera simply holds its last
-          frame instead of throwing. Frames are annotated with zones/tracks/events by the
-          backend pipeline; face blurring was removed on 2026-08-10, so faces here are
-          identifiable.
+          H.264 over a WebSocket, falling back to the original MJPEG <img> — see VideoFeed
+          for why, and for what the fallback actually covers. Frames are annotated with
+          zones/tracks/events by the backend pipeline; face blurring was removed on
+          2026-08-10, so faces here are identifiable.
         */}
-        <img className={ended ? 'feed ended' : 'feed'} src={camera.stream_url} alt={`Luồng trực tiếp ${camera.name}`} />
+        <VideoFeed
+          camera={camera}
+          className={ended ? 'feed ended' : 'feed'}
+          alt={`Luồng trực tiếp ${camera.name}`}
+        />
 
         <div className="feed-meta">
           <span className={camera.running ? 'feed-status live' : 'feed-status offline'} aria-label={camera.running ? 'Trực tiếp' : 'Ngoại tuyến'} />

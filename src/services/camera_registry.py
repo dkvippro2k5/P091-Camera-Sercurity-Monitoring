@@ -5,6 +5,7 @@ import logging
 import os
 
 from src.config import get_settings
+from src.services import db_pool
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class PostgresCameraRegistry:
             )
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        return db_pool.connection(self.database_url)
 
     def load(self) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:

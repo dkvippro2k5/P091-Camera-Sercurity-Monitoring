@@ -23,6 +23,7 @@ import pytest
 from src.models.camera_schemas import Alert
 from src.services import monitoring as monitoring_module
 from src.services.alert_history import AlertHistory
+from src.services.evidence_store import EvidenceStore
 from src.services.monitoring import MonitoringService, _evenly_spaced, _evidence_frames
 from src.services.vlm import (
     LocalSmolVLMTriage,
@@ -190,7 +191,7 @@ def test_triage_failure_leaves_the_alert_intact(make_service):
     assert alert.triage_verdict == "uncertain"
     assert "upstream is on fire" in (alert.triage_error or "")
     assert alert in service._alerts
-    assert alert.image_data_url.startswith("data:image/jpeg;base64,")
+    assert alert.evidence_url == f"/api/v1/evidence/{alert.id}"
 
 
 def test_saturated_queue_skips_triage_instead_of_queueing(make_service):
@@ -307,12 +308,36 @@ def test_evenly_spaced_keeps_the_ends():
     assert _evenly_spaced(items, 0) == []
 
 
-def test_evidence_frames_are_labelled_for_the_frontend():
-    evidence = _evidence_frames([b"before-a", b"before-b", b"after-a"], pre_count=2)
+def test_evidence_frames_are_labelled_for_the_frontend(tmp_path):
+    store = EvidenceStore(backend="local", local_dir=str(tmp_path))
+    evidence = _evidence_frames([b"before-a", b"before-b", b"after-a"], 2, "alert-1", store)
 
     assert [frame.index for frame in evidence] == [1, 2, 3]
     assert [frame.phase for frame in evidence] == ["before", "before", "after"]
-    assert all(frame.image_data_url.startswith("data:image/jpeg;base64,") for frame in evidence)
+    # URLs into the authenticated evidence route, and the bytes really are on disk — the
+    # frontend has nothing to render if the strip is described but never stored.
+    assert [frame.image_url for frame in evidence] == [
+        "/api/v1/evidence/alert-1-f1",
+        "/api/v1/evidence/alert-1-f2",
+        "/api/v1/evidence/alert-1-f3",
+    ]
+    assert store.fetch("alert-1-f1") == b"before-a"
+    assert store.fetch("alert-1-f3") == b"after-a"
+
+
+def test_evidence_frames_skip_a_frame_the_store_rejects(tmp_path):
+    """A storage failure loses that frame, not the whole evidence strip or the verdict."""
+
+    class HalfBrokenStore(EvidenceStore):
+        def put(self, evidence_id: str, jpeg: bytes) -> str:
+            if evidence_id.endswith("-f2"):
+                raise OSError("disk full")
+            return super().put(evidence_id, jpeg)
+
+    store = HalfBrokenStore(backend="local", local_dir=str(tmp_path))
+    evidence = _evidence_frames([b"a", b"b", b"c"], 1, "alert-2", store)
+
+    assert [frame.index for frame in evidence] == [1, 3]
 
 
 # ------------------------------------------------------------------ HITL + history
