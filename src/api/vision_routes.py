@@ -46,10 +46,10 @@ from src.models.camera_schemas import (
     CameraCreate,
     CameraInfo,
     DemoVideo,
-    SimilarIncident,
-    SystemStatus,
     NotificationSettings,
     NotificationToggle,
+    SimilarIncident,
+    SystemStatus,
 )
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
