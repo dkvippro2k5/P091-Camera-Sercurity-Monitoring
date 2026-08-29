@@ -53,7 +53,7 @@ export default function StatsView({ status }) {
   }
   if (!data) return <div className="stats-loading">Đang chuẩn bị báo cáo…</div>
 
-  const { report, operational, heatmap } = data
+  const { report, operational } = data
   const total = operational.total_alerts || 0
   const reviewed = operational.reviewed_alerts || 0
   const reviewRate = total ? reviewed / total : null
@@ -102,8 +102,6 @@ export default function StatsView({ status }) {
         <CameraHotspots rows={cameraRows} />
       </section>
 
-      <HeatMap points={heatmap?.points || []} />
-
       {report.comparisons?.length > 0 && <TriagePanel rows={report.comparisons} agreement={report.triage_agreement} coverage={report.triage_coverage} />}
 
       <footer className="manager-footer">
@@ -120,14 +118,10 @@ export default function StatsView({ status }) {
   )
 }
 
-function HeatMap({ points }) {
-  const max = Math.max(...points.map((point) => point.total || 0), 1)
-  return <article className="viz-panel heatmap-panel">
-    <div className="panel-heading"><div><p className="eyebrow">Sơ đồ mô phỏng</p><h2>Bản đồ nhiệt sự cố</h2></div><span className="panel-stat">{points.length} camera</span></div>
-    {points.length ? <div className="heatmap-canvas" role="img" aria-label="Simulated incident heat map">
-      {points.map((point) => <span key={point.camera_id} className="heatmap-point" title={`${point.camera_name}: ${point.total} alerts`} style={{ left: `${point.x}%`, top: `${point.y}%`, '--intensity': point.total / max }}><b>{point.total}</b></span>)}
-    </div> : <EmptyState text="Chưa ghi nhận vị trí sự cố" />}
-  </article>
+function shouldShowChartLabel(index, count) {
+  if (count <= 7) return true
+  const step = Math.ceil((count - 1) / 5)
+  return index === 0 || index === count - 1 || index % step === 0
 }
 
 function MetricCard({ label, value, detail, tone }) {
@@ -160,7 +154,7 @@ function TrendChart({ days }) {
       <polygon points={area} className="chart-area" />
       <polyline points={line} className="chart-line" />
       {points.map(([x, y], index) => <circle key={index} cx={x} cy={y} r="4" className="chart-point"><title>{days[index].date}: {days[index].total} alerts</title></circle>)}
-    </svg><div className="chart-labels">{days.map((day) => <span key={day.date}>{day.date}</span>)}</div></div> : <EmptyState text="Không có cảnh báo trong khoảng này" />}
+    </svg><div className="chart-labels">{days.map((day, index) => <span key={day.date} className={shouldShowChartLabel(index, days.length) ? '' : 'chart-label-muted'}>{day.date}</span>)}</div></div> : <EmptyState text="Không có cảnh báo trong khoảng này" />}
   </article>
 }
 

@@ -27,6 +27,8 @@ services:
       retries: 10
 
   backend:
+    # Production runs the detector/VLM on the host NVIDIA GPU (Tesla T4).
+    gpus: all
     build:
       context: .
       dockerfile: Dockerfile
@@ -44,7 +46,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
-      - ${MODEL_WEIGHTS_HOST_PATH:-./models/yolo26l.pt}:/app/models/detector.pt:ro
+      - ${MODEL_WEIGHTS_HOST_PATH:-./models/yolo26n.pt}:/app/models/detector.pt:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,7 +54,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health', headers={'Host': 'c4-cameradetection-091.id.vn'}))"]
       start_period: 90s
       interval: 30s
       timeout: 10s
@@ -69,7 +71,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 30s
       timeout: 5s
       retries: 3

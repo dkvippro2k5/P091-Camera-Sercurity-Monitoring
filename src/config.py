@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     camera_max_concurrent_inferences: int = Field(default=0, ge=0, le=32)
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
-    model_weights_path: str = "src/vision/weights/yolo26l.pt"
+    model_weights_path: str = "src/vision/weights/yolo26n.pt"
     detector_target_labels: str = "person,backpack,handbag,suitcase"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
@@ -106,10 +106,11 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     embedding_model: str = "text-embedding-3-small"
 
-    # Zalo OA notifications. Disabled until an official OA token and recipient IDs exist.
-    zalo_enabled: bool = False
-    zalo_access_token: str = ""
-    zalo_recipients: str = ""
+    # Telegram notifications. Disabled until a bot token and chat IDs exist.
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    # Comma-separated user or group chat IDs. Telegram accepts both in the same list.
+    telegram_chat_ids: str = ""
     notification_max_retries: int = Field(default=3, ge=0, le=10)
     notification_backoff_sec: float = Field(default=2.0, gt=0.0, le=60.0)
 

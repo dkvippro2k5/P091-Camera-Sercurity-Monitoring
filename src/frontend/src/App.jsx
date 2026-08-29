@@ -7,6 +7,7 @@ import Masthead from './components/Masthead'
 import Login from './components/Login'
 import StatsView from './components/StatsView'
 import VerifyingCard from './components/VerifyingCard'
+import NotificationToggle from './components/NotificationToggle'
 import { api, setUnauthorizedHandler } from './api'
 import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview } from './incidents'
 
@@ -319,6 +320,8 @@ export default function App() {
                 statistics. With three branches an unknown screen renders nothing instead,
                 which is why the `allowed[0]` fallback above has to be right. */}
             {current === 'grid' && (
+              <>
+              <NotificationToggle />
               <GridView
                 cameras={cameras}
                 alertingCameras={alertingCameras}
@@ -326,6 +329,7 @@ export default function App() {
                 onReplay={isGuard ? handleReplayCamera : null}
                 onAddClick={isGuard ? () => setScreen('setup') : null}
               />
+              </>
             )}
             {current === 'setup' && (
               <CameraSetup

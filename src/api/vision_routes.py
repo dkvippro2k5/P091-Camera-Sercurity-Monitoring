@@ -48,6 +48,8 @@ from src.models.camera_schemas import (
     DemoVideo,
     SimilarIncident,
     SystemStatus,
+    NotificationSettings,
+    NotificationToggle,
 )
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
@@ -607,6 +609,16 @@ async def event_stream(request: Request, guard: User = Depends(require_guard)) -
         # X-Accel-Buffering off: nginx would otherwise buffer the stream and delay alerts.
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@operator_router.get("/notifications", response_model=NotificationSettings)
+async def notification_settings(request: Request) -> NotificationSettings:
+    return NotificationSettings(**get_service(request).notification_status())
+
+
+@operator_router.patch("/notifications", response_model=NotificationSettings)
+async def toggle_notifications(payload: NotificationToggle, request: Request) -> NotificationSettings:
+    return NotificationSettings(**get_service(request).set_notifications_enabled(payload.enabled))
 
 
 @operator_router.get("/monitoring/status", response_model=SystemStatus)
