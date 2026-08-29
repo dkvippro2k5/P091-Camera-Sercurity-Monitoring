@@ -53,7 +53,7 @@ from src.services.camera_registry import create_camera_registry
 from src.services.event_bus import build_event_relay
 from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
-from src.services.notifications import NotificationWorker, ZaloNotifier
+from src.services.notifications import NotificationWorker, TelegramNotifier, should_notify
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
 from src.vision.detector import IncidentDetector
 from src.vision.pipeline import VisionPipeline
@@ -228,7 +228,7 @@ class MonitoringService:
         # degrades to NullVLMTriage instead of assuming a real client.
         self.embeddings = embedding_store if embedding_store is not None else create_embedding_store()
         self._embed_text = build_embedder(settings)
-        self.notifier = ZaloNotifier(settings.zalo_enabled, settings.zalo_access_token, settings.zalo_recipients)
+        self.notifier = TelegramNotifier(settings.telegram_enabled, settings.telegram_bot_token, settings.telegram_chat_ids)
         self.evidence_store = EvidenceStore(
             backend=settings.evidence_storage_backend,
             local_dir=settings.evidence_storage_dir,
@@ -271,6 +271,14 @@ class MonitoringService:
             self._restore_registry()
         else:
             logger.info("RESTORE_CAMERAS_ON_START is off; starting with no cameras running.")
+
+    # ------------------------------------------------------------------ notifications
+    def notification_status(self) -> dict:
+        return {"enabled": bool(self.notifier.enabled), "configured": bool(self.notifier.chat_ids)}
+
+    def set_notifications_enabled(self, enabled: bool) -> dict:
+        self.notifier.enabled = bool(enabled and self.notifier.bot_token)
+        return self.notification_status()
 
     # ------------------------------------------------------------------ lifecycle
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -667,7 +675,10 @@ class MonitoringService:
                 self._triage_in_flight -= 1
             # Published regardless of outcome: a UI left spinning on a failed assessment is
             # worse than one told the assessment is unavailable.
-            self._publish("alert.verdict", alert.model_dump())
+            snapshot = alert.model_dump()
+            if should_notify(self.notifier, snapshot):
+                self._notification_worker.submit(snapshot)
+            self._publish("alert.verdict", snapshot)
 
     def _wait_for_post_roll(self, alert: Alert) -> None:
         """Wait until the camera ring contains evidence after the alert."""
