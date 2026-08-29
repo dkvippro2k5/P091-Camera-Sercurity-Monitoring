@@ -133,10 +133,10 @@ export default function App() {
     // 401, retry on its own schedule, and keep retrying forever — the reconnect loop this
     // whole path is arranged to avoid.
     //
-    // Guards only, and the reason is not just that a manager renders no modal or rail. Every
-    // `alert.created` payload carries `image_data_url`, a full annotated JPEG, and since the
-    // face anonymizer was removed those frames show identifiable people. Streaming them to a
-    // role with nothing to do with them would be footage leaving the building for no reason.
+    // Guards only. Alert payloads no longer carry the frame itself — just an
+    // `/api/v1/evidence/{id}` URL, which `require_guard` gates on the server, so footage
+    // still never reaches a manager. Keeping the stream guard-only stays correct regardless:
+    // a manager renders no modal and no rail, so the events would have no reader.
     if (!isGuard) return
 
     // SSE rather than polling: the pop-up is meant to interrupt, and EventSource
@@ -153,11 +153,6 @@ export default function App() {
     events.addEventListener('alert.verdict', (e) => {
       const alert = JSON.parse(e.data)
       setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, ...alert } : a)))
-    })
-
-    events.addEventListener('alert.evidence', (e) => {
-      const alert = JSON.parse(e.data)
-      setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, evidence_url: alert.evidence_url } : a)))
     })
 
     // Logout, from this tab or another one. Filtered by username because `_publish` fans out

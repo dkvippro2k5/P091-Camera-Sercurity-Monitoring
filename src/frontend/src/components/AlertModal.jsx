@@ -228,10 +228,13 @@ function EvidenceFrames({ alert, meta }) {
   const frames = Array.isArray(alert.evidence_frames) ? alert.evidence_frames : []
 
   if (frames.length === 0) {
+    // Rendered only while this modal is open, so the fetch happens on open rather than when
+    // the alert arrived — the images are no longer carried in the alert payload itself.
+    if (!alert.evidence_url) return null
     return (
       <img
         className="shot"
-        src={alert.image_data_url}
+        src={alert.evidence_url}
         width="640"
         height="360"
         alt={`${meta.headline} on ${alert.camera_name}`}
@@ -248,7 +251,12 @@ function EvidenceFrames({ alert, meta }) {
       <div className="evidence-grid">
         {frames.map((frame) => (
           <figure key={`${frame.phase}-${frame.index}`} className="evidence-frame">
-            <img src={frame.image_data_url} alt={`${frame.phase} frame ${frame.index} for ${meta.headline}`} />
+            <img
+              src={frame.image_url}
+              alt={`${frame.phase} frame ${frame.index} for ${meta.headline}`}
+              loading="lazy"
+              decoding="async"
+            />
             <figcaption>
               <span>{frame.phase}</span>
               <strong>#{frame.index}</strong>

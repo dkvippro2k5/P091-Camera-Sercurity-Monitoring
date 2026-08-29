@@ -97,7 +97,11 @@ function RailItem({ alert, onInspect, activeId, unacked = false, pending = false
         onClick={() => onInspect(alert.id)}
         aria-current={alert.id === activeId ? 'true' : undefined}
       >
-        <img className="rail-thumb" src={alert.image_data_url} alt="" />
+        {/* `loading="lazy"` matters here: the rail can hold dozens of alerts, and without it
+            every thumbnail in the scrollback would be fetched even while off-screen. */}
+        {alert.evidence_url && (
+          <img className="rail-thumb" src={alert.evidence_url} alt="" loading="lazy" decoding="async" />
+        )}
         <span className="rail-text">
           <span className="rail-title">
             {meta.short}

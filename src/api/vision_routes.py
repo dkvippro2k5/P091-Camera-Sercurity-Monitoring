@@ -249,7 +249,8 @@ async def camera_stream(camera_id: str, request: Request, fps: float = Query(def
     Default matches CameraStreamWorker's display_fps: the buffer this reads from
     (MonitoringService.latest_jpeg) now refreshes at that cadence regardless of the camera's
     (usually much lower) target_fps, so the emission rate here should keep up with it rather
-    than sit at the old inference-cadence default and throw most of those frames away."""
+    than sit at the old inference-cadence default and throw most of those frames away.
+    """
     service = get_service(request)
     if service.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
@@ -291,14 +292,32 @@ async def list_alerts(request: Request, unacknowledged_only: bool = False) -> li
 
 
 @router.get("/evidence/{evidence_id}")
-async def incident_evidence(evidence_id: str, request: Request) -> FileResponse:
-    """Serve local evidence only through the authenticated operator surface."""
-    if get_service(request).evidence_store.backend != "local":
-        raise HTTPException(status_code=404, detail="Local evidence storage is disabled")
-    path = get_service(request).evidence_store.local_path(evidence_id)
-    if not path.is_file():
+async def incident_evidence(evidence_id: str, request: Request) -> Response:
+    """Serve one stored evidence frame through the authenticated guard surface.
+
+    This is the only way an alert image reaches the browser — alerts carry a URL, never the
+    image itself. Both storage backends are served here rather than only the local one: an
+    S3 deployment without a public base URL would otherwise have no reachable image at all,
+    and serving it through this route keeps `require_guard` in front of footage that, since
+    face blurring was removed, identifies people.
+
+    `private` keeps proxies and CDNs from caching a frame and handing it to someone else,
+    while still letting the operator's own browser reuse it — which is what makes reopening
+    an alert free.
+    """
+    store = get_service(request).evidence_store
+    if store.backend == "local":
+        # FileResponse streams from disk without reading the whole image into the event loop.
+        path = store.local_path(evidence_id)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Evidence not found")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    # S3 (or S3-compatible): a blocking boto3 get, so off the event loop thread.
+    jpeg = await asyncio.to_thread(store.fetch, evidence_id)
+    if jpeg is None:
         raise HTTPException(status_code=404, detail="Evidence not found")
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.post("/alerts/{alert_id}/acknowledge", status_code=204)
