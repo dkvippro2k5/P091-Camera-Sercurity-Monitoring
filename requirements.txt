@@ -33,6 +33,10 @@ lap>=0.5.12
 
 # Database
 psycopg[binary]>=3.2.0
+# Connection pooling for the Postgres repositories (src/services/db_pool.py). Separate
+# distribution from psycopg itself; without it the stores fall back to one connection
+# per query, which is slow against a managed database.
+psycopg-pool>=3.2.0
 pgvector>=0.3.6
 redis>=5.2.0
 boto3>=1.35.0

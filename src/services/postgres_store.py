@@ -7,6 +7,8 @@ DATABASE_URL and requires psycopg 3 at runtime.
 
 from datetime import datetime
 
+from src.services import db_pool
+
 
 class PostgresStore:
     def __init__(self, database_url: str) -> None:
@@ -22,7 +24,7 @@ class PostgresStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        return db_pool.connection(self.database_url)
 
     def _initialize(self) -> None:
         with self._connect() as connection:

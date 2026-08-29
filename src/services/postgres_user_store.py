@@ -2,6 +2,7 @@
 
 import logging
 
+from src.services import db_pool
 from src.services.security import DEFAULT_WORK_FACTOR, hash_password, verify_password
 from src.services.user_store import User, UserRecord, _dummy_hash
 
@@ -19,7 +20,7 @@ class PostgresUserStore:
         self._initialize()
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        return db_pool.connection(self.database_url)
 
     def _initialize(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
