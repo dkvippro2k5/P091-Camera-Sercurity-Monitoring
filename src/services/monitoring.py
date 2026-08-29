@@ -460,7 +460,11 @@ class MonitoringService:
 
     # ------------------------------------------------------------------ frames
     def latest_jpeg(self, camera_id: str) -> bytes | None:
-        return self._frames.get(camera_id)
+        # The display thread's high-cadence buffer (see CameraStreamWorker._display_loop) is
+        # what a viewer should actually see; self._frames (populated by _on_frame below, at
+        # target_fps) is only a fallback for the brief window before the display thread has
+        # encoded its first frame.
+        return self.manager.latest_display_jpeg(camera_id) or self._frames.get(camera_id)
 
     def _on_frame(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
         """Every analysed frame: refresh the preview buffer and the triage ring.

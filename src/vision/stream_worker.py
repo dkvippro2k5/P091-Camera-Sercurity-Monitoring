@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 _FFMPEG_OPTS_LOCK = threading.Lock()
 _RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp"
 _LATENCY_WINDOW_SIZE = 100
+# Mirrors monitoring.py's _PREVIEW_JPEG_QUALITY. Duplicated rather than imported: monitoring
+# imports stream_manager which imports this module, so importing the other way would cycle.
+_DISPLAY_JPEG_QUALITY = 65
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -55,12 +58,20 @@ class CameraStreamWorker:
         read_timeout_sec: float = 10.0,
         loop_finite_sources: bool = False,
         inference_semaphore: threading.Semaphore | None = None,
+        display_fps: float = 20.0,
+        display_max_height: int = 480,
     ):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
         self.pipeline = pipeline or VisionPipeline()
         self.on_result_callback = on_result_callback
         self.target_fps = target_fps
+        # Decoupled from target_fps on purpose: the live view can be smooth without paying for
+        # YOLO at that rate — see docs/plans/multi-camera-streaming-scale.md's "phương pháp 0".
+        # Not exposed through CameraCreate/the API: there is no second stream to configure,
+        # this only redraws the same source's frames at a cheaper cadence.
+        self.display_fps = display_fps
+        self.display_max_height = display_max_height
         self.reconnect_interval_sec = reconnect_interval_sec
         # 0 means unlimited retries (original behavior); >0 is a circuit-breaker.
         self.max_reconnect_attempts = max_reconnect_attempts
@@ -76,11 +87,17 @@ class CameraStreamWorker:
         self._stop_event = threading.Event()
         self._process_thread: threading.Thread | None = None
         self._reader_thread: threading.Thread | None = None
+        self._display_thread: threading.Thread | None = None
 
         # Single-slot latest-frame buffer shared between reader and processor.
         self._latest_frame: np.ndarray | None = None
         self._latest_frame_id: int = 0
         self._frame_lock = threading.Lock()
+
+        # Display loop's output. No lock: same reasoning as monitoring.py's self._frames —
+        # a plain bytes-reference reassignment is atomic under the GIL, and readers only ever
+        # want whatever is newest, so a lock would only add contention for no correctness gain.
+        self._latest_display_jpeg: bytes | None = None
 
         # Stats (read from main thread via get_stats, written from worker threads).
         self._lock_stats = threading.Lock()
@@ -96,7 +113,7 @@ class CameraStreamWorker:
         self._stopped_reason: str | None = None
 
     def start(self) -> None:
-        """Start the reader and processing threads."""
+        """Start the reader, processing, and display threads."""
         if not self._stop_event.is_set() and self._process_thread is not None:
             return
         self._stop_event.clear()
@@ -111,19 +128,25 @@ class CameraStreamWorker:
             name=f"CameraWorker-{self.camera_id}",
             daemon=True,
         )
+        self._display_thread = threading.Thread(
+            target=self._display_loop,
+            name=f"CameraDisplay-{self.camera_id}",
+            daemon=True,
+        )
         self._reader_thread.start()
         self._process_thread.start()
+        self._display_thread.start()
         logger.info(f"Started CameraStreamWorker for '{self.camera_id}' ({self.rtsp_url})")
 
     def stop(self) -> None:
-        """Signal both threads to stop and wait for them.
+        """Signal all threads to stop and wait for them.
 
         A reader blocked deep inside FFmpeg cannot be interrupted by the event alone —
         the open/read timeouts are what bound that wait. If a thread outlives the join
         it is reported rather than silently leaked.
         """
         self._stop_event.set()
-        for thread in (self._reader_thread, self._process_thread):
+        for thread in (self._reader_thread, self._process_thread, self._display_thread):
             if thread and thread.is_alive():
                 thread.join(timeout=3.0)
                 if thread.is_alive():
@@ -139,6 +162,11 @@ class CameraStreamWorker:
             and self._process_thread is not None
             and self._process_thread.is_alive()
         )
+
+    def get_latest_display_jpeg(self) -> bytes | None:
+        """Newest frame produced by `_display_loop` — the high-cadence view, decoupled from
+        target_fps. `None` until the display thread has encoded its first frame."""
+        return self._latest_display_jpeg
 
     def get_stats(self) -> dict:
         with self._lock_stats:
@@ -432,3 +460,49 @@ class CameraStreamWorker:
                 # Do not run catch-up bursts after an overloaded interval; use the newest
                 # frame at the next normal slot instead.
                 next_process_at = max(next_process_at + frame_interval, time.monotonic())
+
+    # ----------------------------------------------------------------- display
+    def _display_loop(self) -> None:
+        """Independent thread: redraw the newest raw frame at display_fps, no inference.
+
+        Reads the same single-slot buffer the reader thread fills (as fast as the source
+        delivers — already close to display_fps for most sources) and the processor thread
+        also reads, but never runs YOLO itself: it just re-composites the last known
+        zones/boxes (`VisionPipeline.overlay_last_known`) onto whatever frame is newest right
+        now. This is what lets the live view be smooth without raising target_fps, which
+        would mean paying for YOLO that often instead of just for a cheap resize + JPEG encode.
+        """
+        frame_interval = 1.0 / self.display_fps if self.display_fps > 0 else 0.05
+        next_display_at = time.monotonic()
+
+        while not self._stop_event.is_set():
+            wait_for = max(0.0, next_display_at - time.monotonic())
+            self._stop_event.wait(wait_for)
+            if self._stop_event.is_set():
+                break
+
+            with self._frame_lock:
+                frame = self._latest_frame
+
+            try:
+                if frame is not None:
+                    annotated = self.pipeline.overlay_last_known(frame, self.camera_id)
+                    height, width = annotated.shape[:2]
+                    if height > self.display_max_height:
+                        scale = self.display_max_height / height
+                        annotated = cv2.resize(
+                            annotated,
+                            (max(1, round(width * scale)), self.display_max_height),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    ok, buffer = cv2.imencode(
+                        ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _DISPLAY_JPEG_QUALITY]
+                    )
+                    if ok:
+                        self._latest_display_jpeg = buffer.tobytes()
+            except Exception as e:
+                # No reconnect logic here, unlike the reader thread — one bad encode must not
+                # be allowed to silently end the display feed for this camera's whole session.
+                logger.error(f"[{self.camera_id}] Error in display loop: {e}")
+            finally:
+                next_display_at = max(next_display_at + frame_interval, time.monotonic())

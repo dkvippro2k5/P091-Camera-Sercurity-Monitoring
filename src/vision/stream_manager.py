@@ -358,6 +358,13 @@ class MultiStreamManager:
                 "get_status(), and see MultiStreamManager's docstring for scaling options."
             )
 
+    def latest_display_jpeg(self, camera_id: str) -> bytes | None:
+        """The named camera's newest high-cadence display frame, or None if it has none yet
+        (not added, not started, or the display thread hasn't encoded its first frame)."""
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.get_latest_display_jpeg() if worker else None
+
     def remove_camera(self, camera_id: str) -> bool:
         """Stop and remove a camera stream by ID."""
         with self._workers_lock:

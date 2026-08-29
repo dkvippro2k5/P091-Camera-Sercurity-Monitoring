@@ -177,6 +177,27 @@ class VisionPipeline:
 
         return output_frame, result
 
+    def overlay_last_known(
+        self, frame: np.ndarray, camera_id: str | None, now: datetime | None = None
+    ) -> np.ndarray:
+        """Cheap redraw: last-known zones + tracked boxes on a *copy* of `frame`, no inference.
+
+        `frame` need not be the frame that produced `self._last_detections` — a higher-cadence
+        caller (the display loop decoupled from inference, see `CameraStreamWorker._display_loop`)
+        redraws newer raw frames with the last inference's boxes, at zero YOLO cost. Never
+        mutates `self._last_detections`, never runs the motion gate or rule engine.
+        """
+        if not self.draw_overlays:
+            return frame
+        wall_time = now or datetime.now()
+        # Copy is not optional: `frame` may be the reader thread's shared single-slot buffer,
+        # which something else could be reading concurrently (see the class docstring's note
+        # on process_frame never mutating its input).
+        output_frame = frame.copy()
+        zones = self.rule_engine.zone_manager.zones_for(camera_id)
+        output_frame = draw_zones(output_frame, zones, wall_time)
+        return draw_tracks(output_frame, self._last_detections, [])
+
     def _skipped_result(
         self,
         frame: np.ndarray,
@@ -190,15 +211,7 @@ class VisionPipeline:
         The frame is handed to previews and recorders regardless of whether inference ran,
         so this path still produces an output frame — it just carries no fresh detections.
         """
-        output_frame = frame
-
-        if self.draw_overlays:
-            output_frame = frame.copy()
-            zones = self.rule_engine.zone_manager.zones_for(camera_id)
-            output_frame = draw_zones(output_frame, zones, wall_time)
-            # Carry the last known detections so the operator view does not flicker empty
-            # between inferences on an idle scene.
-            output_frame = draw_tracks(output_frame, self._last_detections, [])
+        output_frame = self.overlay_last_known(frame, camera_id, wall_time)
 
         return output_frame, FrameAnalysisResult(
             frame_id=frame_id,

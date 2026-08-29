@@ -112,15 +112,13 @@ nên làm khi đã có nhiều viewer đồng thời hoặc cần deploy qua int
 
 ## Khuyến nghị lộ trình
 
-1. **Tách luồng display/AI (mục #0)** — effort thấp nhất, giải quyết đúng vấn đề "AI đang gánh cả
-   phần encode preview". Làm trước tiên.
-2. **Bỏ giới hạn `max_concurrent_inferences=1` + gom batch nhiều camera + export TensorRT FP16**
+0. Tách luồng 1 dùng để stream MJPEG  (480p display, 20-24fps) và luồng 2 (5-10fps cho vision/vlm xử lí và triage)
+
+1. **Bỏ giới hạn `max_concurrent_inferences=1` + gom batch nhiều camera + export TensorRT FP16**
    (mục #2, gắn liền nhau) — đây là nâng cấp thật sự tăng số camera/GPU chịu được, đúng cái đề
    xuất đang nhắm tới.
-3. Đo lại `get_status()["average_inference_capacity_fps"]` sau bước 1-2 trước khi cân nhắc NVDEC
+2. Đo lại `get_status()["average_inference_capacity_fps"]` sau bước 1-2 trước khi cân nhắc NVDEC
    hay Triton — cả hai đều là effort rất cao, chỉ nên làm khi có số đo cụ thể cho thấy decode
    hoặc điều phối request là nút thắt, không phải suy đoán trước.
-4. WebRTC/MediaMTX khi cần phục vụ nhiều người xem cùng lúc hoặc qua mạng ngoài LAN.
+3. WebRTC/MediaMTX khi cần phục vụ nhiều người xem cùng lúc hoặc qua mạng ngoài LAN.
 
-**Không khuyến nghị** Triton và NVDEC ở giai đoạn hiện tại của dự án — đúng về mặt kỹ thuật cho
-một VMS thương mại quy mô lớn, nhưng effort không tương xứng với quy mô camera và team hiện có.

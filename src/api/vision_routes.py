@@ -243,8 +243,13 @@ async def camera_snapshot(camera_id: str, request: Request) -> Response:
 
 
 @router.get("/cameras/{camera_id}/stream")
-async def camera_stream(camera_id: str, request: Request, fps: float = Query(default=10.0, gt=0, le=30)) -> Response:
-    """MJPEG stream of the annotated frames for one camera."""
+async def camera_stream(camera_id: str, request: Request, fps: float = Query(default=20.0, gt=0, le=30)) -> Response:
+    """MJPEG stream of the annotated frames for one camera.
+
+    Default matches CameraStreamWorker's display_fps: the buffer this reads from
+    (MonitoringService.latest_jpeg) now refreshes at that cadence regardless of the camera's
+    (usually much lower) target_fps, so the emission rate here should keep up with it rather
+    than sit at the old inference-cadence default and throw most of those frames away."""
     service = get_service(request)
     if service.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
