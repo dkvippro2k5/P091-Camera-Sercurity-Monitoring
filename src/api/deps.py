@@ -87,8 +87,12 @@ def require_manager(request: Request) -> User:
     return user
 
 
-def current_websocket_manager(websocket: WebSocket) -> User | None:
-    """Resolve and authorize the session cookie for a manager WebSocket."""
+def _current_websocket_user(websocket: WebSocket, role: str) -> User | None:
+    """Resolve the session cookie for a WebSocket and check it carries `role`.
+
+    Returns None rather than raising: a WebSocket has no HTTP response to carry a 401/403,
+    so the caller closes the socket with a policy code instead.
+    """
     users = getattr(websocket.app.state, "users", None)
     sessions = getattr(websocket.app.state, "sessions", None)
     if users is None or sessions is None:
@@ -97,9 +101,23 @@ def current_websocket_manager(websocket: WebSocket) -> User | None:
     if session is None:
         return None
     user = users.get(session.username)
-    if user is None or user.role != "manager":
+    if user is None or user.role != role:
         return None
     return user
+
+
+def current_websocket_manager(websocket: WebSocket) -> User | None:
+    """Resolve and authorize the session cookie for a manager WebSocket."""
+    return _current_websocket_user(websocket, "manager")
+
+
+def current_websocket_guard(websocket: WebSocket) -> User | None:
+    """Resolve and authorize the session cookie for a guard WebSocket.
+
+    Mirrors `require_guard` for the live video socket: watching footage is a guard's
+    surface, and the HTTP MJPEG route it replaces sits behind the same gate.
+    """
+    return _current_websocket_user(websocket, "guard")
 
 
 def session_is_live(request: Request) -> bool:

@@ -8,6 +8,7 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
+from src.vision.h264_encoder import H264StreamEncoder
 from src.vision.pipeline import VisionPipeline
 from src.vision.schemas import FrameAnalysisResult
 
@@ -60,6 +61,8 @@ class CameraStreamWorker:
         inference_semaphore: threading.Semaphore | None = None,
         display_fps: float = 20.0,
         display_max_height: int = 480,
+        h264_enabled: bool = True,
+        h264_bitrate: int = 1_200_000,
     ):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -99,6 +102,26 @@ class CameraStreamWorker:
         # want whatever is newest, so a lock would only add contention for no correctness gain.
         self._latest_display_jpeg: bytes | None = None
 
+        # H.264 stream fed from the same display frames. Kept alongside the JPEG buffer
+        # rather than replacing it: MJPEG stays the fallback for a browser without
+        # MediaSource support and for the snapshot endpoint, and it costs ~1.2ms/frame.
+        # Constructed eagerly but opened lazily on the first frame, so a host without a
+        # usable encoder degrades to MJPEG instead of failing to start the camera.
+        self._h264_bitrate = h264_bitrate
+        self._h264_encoder: H264StreamEncoder | None = (
+            H264StreamEncoder(
+                camera_id,
+                fps=display_fps,
+                bitrate=h264_bitrate,
+                # ~2s at the default display rate. This is the longest a joining viewer can
+                # wait for its first picture, traded against the bandwidth of sending full
+                # keyframes more often.
+                keyframe_interval_frames=max(1, int(round(display_fps * 2))),
+            )
+            if h264_enabled
+            else None
+        )
+
         # Stats (read from main thread via get_stats, written from worker threads).
         self._lock_stats = threading.Lock()
         self._frame_count = 0
@@ -117,6 +140,19 @@ class CameraStreamWorker:
         if not self._stop_event.is_set() and self._process_thread is not None:
             return
         self._stop_event.clear()
+
+        # stop() closes the encoder permanently — a restart of this same worker therefore
+        # needs a fresh one, or the display loop would encode into a closed container and
+        # every viewer would be told to fall back to MJPEG. The manager currently builds a
+        # new worker per (re)start, so this only matters for a direct stop()/start() pair,
+        # which the tests do and a future caller reasonably might.
+        if self._h264_encoder is not None and not self._h264_encoder.available:
+            self._h264_encoder = H264StreamEncoder(
+                self.camera_id,
+                fps=self.display_fps,
+                bitrate=self._h264_bitrate,
+                keyframe_interval_frames=max(1, int(round(self.display_fps * 2))),
+            )
 
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
@@ -154,6 +190,11 @@ class CameraStreamWorker:
                         f"[{self.camera_id}] Thread '{thread.name}' did not exit within 3s; "
                         "it is blocked in FFmpeg and will exit once its I/O times out."
                     )
+        # After the display thread is joined, so nothing is mid-encode. Closing wakes every
+        # WebSocket viewer, which is what lets their handlers notice the camera is gone
+        # instead of blocking on a queue no producer will ever fill again.
+        if self._h264_encoder is not None:
+            self._h264_encoder.close()
         logger.info(f"Stopped CameraStreamWorker for '{self.camera_id}'")
 
     def is_running(self) -> bool:
@@ -167,6 +208,15 @@ class CameraStreamWorker:
         """Newest frame produced by `_display_loop` — the high-cadence view, decoupled from
         target_fps. `None` until the display thread has encoded its first frame."""
         return self._latest_display_jpeg
+
+    def get_h264_encoder(self) -> H264StreamEncoder | None:
+        """This camera's fMP4 encoder, or None when H.264 is disabled for it.
+
+        A returned encoder can still be unusable — check `.available`, which goes false when
+        no encoder could be opened on this host. The video WebSocket uses that to tell the
+        client to fall back to MJPEG rather than wait on a stream that will never arrive.
+        """
+        return self._h264_encoder
 
     def get_stats(self) -> dict:
         with self._lock_stats:
@@ -495,6 +545,12 @@ class CameraStreamWorker:
                             (max(1, round(width * scale)), self.display_max_height),
                             interpolation=cv2.INTER_AREA,
                         )
+                    # H.264 first: it is what the grid actually renders, and doing it before
+                    # the JPEG means a slow encode delays the fallback rather than the
+                    # primary path.
+                    if self._h264_encoder is not None:
+                        self._h264_encoder.encode(annotated)
+
                     ok, buffer = cv2.imencode(
                         ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _DISPLAY_JPEG_QUALITY]
                     )

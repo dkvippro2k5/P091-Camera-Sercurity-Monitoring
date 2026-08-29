@@ -370,6 +370,7 @@ class MonitoringService:
             active_labels=labels,
             target_fps=payload.target_fps or settings.camera_target_fps,
             stream_url=f"/api/v1/cameras/{camera_id}/stream",
+            video_url=f"/api/v1/cameras/{camera_id}/video",
             fall_perspective=payload.fall_perspective,
         )
 
@@ -478,6 +479,15 @@ class MonitoringService:
         # target_fps) is only a fallback for the brief window before the display thread has
         # encoded its first frame.
         return self.manager.latest_display_jpeg(camera_id) or self._frames.get(camera_id)
+
+    def h264_encoder(self, camera_id: str):
+        """The camera's H.264/fMP4 encoder for the video WebSocket, or None.
+
+        MJPEG (`latest_jpeg` above) remains the fallback: it is what the snapshot endpoint
+        serves and what the grid uses on a browser without MediaSource, or when this returns
+        None or an encoder whose `.available` is False.
+        """
+        return self.manager.h264_encoder(camera_id)
 
     def _on_frame(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
         """Every analysed frame: refresh the preview buffer and the triage ring.

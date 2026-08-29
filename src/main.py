@@ -8,7 +8,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.api.auth_routes import router as auth_router
 from src.api.routes import router
-from src.api.vision_routes import manager_router, manager_ws_router, operator_router
+from src.api.vision_routes import (
+    guard_ws_router,
+    manager_router,
+    manager_ws_router,
+    operator_router,
+)
 from src.api.vision_routes import router as monitoring_router
 from src.config import get_settings
 from src.services import db_pool
@@ -107,6 +112,7 @@ app.include_router(monitoring_router, prefix="/api/v1")
 app.include_router(operator_router, prefix="/api/v1")
 app.include_router(manager_router, prefix="/api/v1")
 app.include_router(manager_ws_router, prefix="/api/v1")
+app.include_router(guard_ws_router, prefix="/api/v1")
 
 
 @app.get("/health")

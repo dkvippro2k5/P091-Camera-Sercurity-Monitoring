@@ -10,6 +10,18 @@ const BASE = '/api/v1'
  */
 let onUnauthorized = () => {}
 
+/**
+ * Absolute ws:// or wss:// URL for a path under BASE.
+ *
+ * WebSocket, unlike fetch, has no relative form and no `credentials` option — it always
+ * sends the origin's cookies, and always needs a full URL. Deriving the scheme from
+ * `location.protocol` rather than hardcoding it is what keeps this working behind TLS.
+ */
+function wsUrl(path) {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${scheme}//${window.location.host}${BASE}${path}`
+}
+
 export function setUnauthorizedHandler(handler) {
   onUnauthorized = typeof handler === 'function' ? handler : () => {}
 }
@@ -116,5 +128,7 @@ export const api = {
   streamUrl: (id) => `${BASE}/cameras/${id}/stream`,
   snapshotUrl: (id) => `${BASE}/cameras/${id}/snapshot`,
   eventsUrl: () => `${BASE}/events`,
-  managerLiveUrl: () => `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${BASE}/manager/live`,
+  managerLiveUrl: () => wsUrl('/manager/live'),
+  // H.264/fMP4 socket the grid prefers over `streamUrl`'s MJPEG. See `VideoFeed`.
+  videoUrl: (id) => wsUrl(`/cameras/${id}/video`),
 }

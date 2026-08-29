@@ -17,33 +17,38 @@ gì (effort/lợi ích, không chỉ khả năng kỹ thuật thuần tuý).
 
 ## Kiến trúc hiện tại — đối chiếu với đề xuất "2 luồng"
 
-Đề xuất giả định hệ thống đã tách Luồng 1 (display 480p) và Luồng 2 (AI). **Thực tế: chưa tách.**
+> **Trạng thái 2026-08-29:** phần mô tả bên dưới là hiện trạng *tại thời điểm viết báo cáo*. Mục
+> #0 (tách luồng) và #5 (transport nén liên khung) từ đó đã được triển khai — xem mục #5 và phần
+> "Khuyến nghị lộ trình" ở cuối. Phần về batching/TensorRT (#2) vẫn còn đúng nguyên.
+
+Đề xuất giả định hệ thống đã tách Luồng 1 (display 480p) và Luồng 2 (AI). **Thực tế lúc đó: chưa
+tách.**
 
 - `CameraStreamWorker` (dùng bởi `MultiStreamManager`) mở RTSP bằng `cv2.VideoCapture` — decode
   CPU, không dùng NVDEC — và chạy **một** pipeline duy nhất: mỗi frame vừa bị YOLO detect vừa bị
-  vẽ overlay (`draw_overlays=True`) để làm preview.
-- `/api/cameras/{id}/stream` (`vision_routes.py:194-228`) phát MJPEG lấy từ đúng frame đã annotate
-  đó (`service.latest_jpeg(camera_id)`) — không có sub-stream 480p riêng, không WebRTC, overlay
-  vẽ ở server (`cv2.rectangle` trong `VisionPipeline`), không phải "Frontend tự vẽ bounding box từ
-  metadata JSON" như đề xuất mô tả.
+  vẽ overlay (`draw_overlays=True`) để làm preview. *(Đã sửa: nay có `_display_loop` riêng dựng
+  preview 480p ở 20fps, không chạy YOLO.)*
+- `/api/cameras/{id}/stream` phát MJPEG lấy từ đúng frame đã annotate đó
+  (`service.latest_jpeg(camera_id)`) — không có sub-stream 480p riêng, không WebRTC, overlay vẽ ở
+  server (`cv2.rectangle` trong `VisionPipeline`), không phải "Frontend tự vẽ bounding box từ
+  metadata JSON" như đề xuất mô tả. *(Đã sửa một phần: có `/cameras/{id}/video` phát H.264/fMP4
+  qua WebSocket; MJPEG giữ làm fallback. Overlay vẫn vẽ ở server — xem ghi chú cuối mục #5.)*
 - Không có batching qua nhiều camera: khi có CUDA, `_default_inference_concurrency()` trả về
   **1** — nghĩa là các camera trên GPU hiện đang chạy tuần tự, không gộp batch. Docstring của
   chính class ghi rõ: *"Single mid-range GPU + batching: 20-50 cameras (needs a batched detector,
-  which this class does NOT implement)"* — đây là giới hạn đã biết trước, không phải phát hiện mới.
-
-Nói cách khác: ý tưởng "tách luồng display/AI" trong đề xuất là đúng hướng và là gap thật của hệ
-thống hiện tại — không phải thứ đã có sẵn cần tinh chỉnh.
+  which this class does NOT implement)"* — đây là giới hạn đã biết trước, không phải phát hiện
+  mới. **Điểm này vẫn còn nguyên, và là việc tiếp theo cần làm.**
 
 ## Đánh giá từng đề xuất
 
 | # | Đề xuất | Khả thi kỹ thuật | Effort trên codebase này | Đáng làm ở quy mô hiện tại? |
 |---|---|---|---|---|
-| 0 | Tách Luồng 1 (480p display) / Luồng 2 (5-10fps AI) | Cao | Vừa | **Có — ưu tiên cao nhất** |
+| 0 | Tách Luồng 1 (480p display) / Luồng 2 (5-10fps AI) | Cao | Vừa | **Đã làm** |
 | 1 | NVDEC zero-copy decode (PyNvVideoCodec/Decord) | Cao (có T4, hỗ trợ NVDEC) | Rất cao | Không, trừ khi CPU decode đã thành nút thắt đo được |
 | 2 | TensorRT + FP16/INT8 | Cao | Vừa | **Có, sau khi có nhiều camera hơn CPU/GPU hiện chịu nổi** |
 | 3 | Triton Inference Server | Cao (nhưng đổi hẳn kiến trúc deploy) | Rất cao | Không ở quy mô này |
 | 4 | Cascade Inference 2 tầng | Cao | Thấp–Vừa | Đã có bản "nhẹ" tương đương, xem bên dưới |
-| 5 | WebRTC qua MediaMTX/go2rtc | Cao | Vừa | Có, nhưng ưu tiên thấp hơn #0 và #2 |
+| 5 | Transport nén liên khung (WebRTC / H.264-fMP4) | Cao | Vừa | **Đã làm** — H.264/fMP4 qua WebSocket, xem bên dưới |
 
 ### 0. Tách 2 luồng — làm trước, ROI cao nhất
 
@@ -102,23 +107,65 @@ trên bbox**, không phải **model Pose Estimation** riêng. Thêm Pose thật 
 chính xác, nhưng là việc "làm tinh hơn" chứ không phải "thêm kiến trúc cascade còn thiếu" —
 framework cascade đã tồn tại.
 
-### 5. WebRTC/MediaMTX — đúng hướng, làm sau #0 và #2
+### 5. Transport video có nén liên khung — ĐÃ TRIỂN KHAI (H.264/fMP4 qua WebSocket)
 
-MJPEG hiện tại (`multipart/x-mixed-replace`) tốn băng thông hơn WebRTC đúng như đề xuất nêu, và
-việc browser tự giải mã bằng GPU client cũng đúng là lợi thế thật. Nhưng đây là thay đổi ở tầng
-transport, độc lập với nút thắt hiện tại (nghẽn ở compute, không phải băng thông — team đang chạy
-local/LAN theo ngữ cảnh dự án, chưa phải nhiều client ở xa cùng xem). Ưu tiên thấp hơn 2 mục trên;
-nên làm khi đã có nhiều viewer đồng thời hoặc cần deploy qua internet thật.
+**Cập nhật 2026-08-29.** Đánh giá ban đầu ở trên xếp mục này ưu tiên thấp với lý do "nghẽn ở
+compute, không phải băng thông". Điều đó đúng với *throughput của server*, nhưng bỏ sót một nút
+thắt riêng biệt ở phía client: sau khi làm mục #0, server đã phát ~20fps nhưng browser chỉ render
+được 10-14fps. Nguyên nhân không phải băng thông LAN mà là **chi phí giải mã**: MJPEG gửi mỗi
+frame như một ảnh JPEG độc lập, và browser phải decode từng ảnh một bằng CPU. Tăng tốc inference
+không sửa được triệu chứng này.
+
+Đã triển khai (`src/vision/h264_encoder.py`, `/api/v1/cameras/{id}/video`,
+`src/frontend/src/components/VideoFeed.jsx`):
+
+- Server encode H.264 từ chính khung hình mà display loop đã dựng, xuất fMP4
+  (`frag_every_frame` → mỗi frame một fragment, độ trễ ~1 frame) và đẩy qua WebSocket.
+- Browser nạp vào MediaSource Extensions, giải mã bằng GPU.
+- Ưu tiên `h264_nvenc` (T4), tự động lùi về `libx264` nếu không mở được.
+- **MJPEG được giữ nguyên làm fallback**, không phải code chết: dùng cho browser không hỗ trợ
+  MediaSource, cho host không có encoder H.264 khả dụng, khi socket rớt, và cho `/snapshot`.
+  Server báo `{"type":"fallback"}` tường minh thay vì để client chờ trên một socket câm.
+
+Đo thực tế trên 4 clip mẫu của dự án (480p, 20fps, `libx264` CPU):
+
+| Clip | Độ phân giải | MJPEG | H.264 | Giảm |
+|---|---|---|---|---|
+| abandoned.mp4 | 600x480 | 4.58 Mbps | 1.25 Mbps | 3.7x |
+| drop_and_go.mov | 853x480 | 11.28 Mbps | 1.30 Mbps | 8.7x |
+| xamnhap_01.mov | 854x480 | 12.67 Mbps | 1.33 Mbps | 9.5x |
+| xamnhap_02.mov | 854x480 | 12.84 Mbps | 1.38 Mbps | 9.3x |
+| **Tổng 4 camera** | | **41.4 Mbps** | **5.3 Mbps** | **7.9x** |
+
+Chi phí thêm: ~2.3-3.4 ms/frame encode trên CPU, chạy trong display thread nên **không** đụng
+vào ngân sách inference. Trên T4 với NVENC con số này gần bằng 0.
+
+Ghi chú về WebRTC/MediaMTX như đề xuất gốc: không chọn, vì cả hai đều đòi thêm signaling/ICE
+(aiortc) hoặc thêm hẳn một service vào deploy (MediaMTX) để đổi lấy phần lợi ích còn lại là độ
+trễ thấp hơn vài trăm ms — thứ chưa thành vấn đề ở quy mô LAN hiện tại. fMP4 qua WebSocket lấy
+được gần hết lợi ích băng thông và GPU-decode mà không thêm dependency vận hành nào.
 
 ## Khuyến nghị lộ trình
 
-0. Tách luồng 1 dùng để stream MJPEG  (480p display, 20-24fps) và luồng 2 (5-10fps cho vision/vlm xử lí và triage)
+**0. ✅ Tách luồng display / luồng AI** — luồng 1 dựng preview 480p ở 20fps
+(`CameraStreamWorker._display_loop`), luồng 2 chạy vision/VLM ở 5-10fps. Đã xong.
 
-1. **Bỏ giới hạn `max_concurrent_inferences=1` + gom batch nhiều camera + export TensorRT FP16**
-   (mục #2, gắn liền nhau) — đây là nâng cấp thật sự tăng số camera/GPU chịu được, đúng cái đề
-   xuất đang nhắm tới.
-2. Đo lại `get_status()["average_inference_capacity_fps"]` sau bước 1-2 trước khi cân nhắc NVDEC
+**1. ✅ Transport video có nén liên khung** (mục #5) — H.264/fMP4 qua WebSocket, giữ MJPEG làm
+fallback. Đã xong; giảm 7.9x băng thông và bỏ được chi phí decode JPEG per-frame ở client, tức
+là gỡ đúng nút thắt khiến browser chỉ render 10-14fps trong khi server phát 20fps.
+
+Hai bước trên là hai nút thắt **khác nhau** và không thay thế cho nhau: #0 gỡ nghẽn ở phía
+server (inference chiếm hết ngân sách của preview), #1 gỡ nghẽn ở phía client (chi phí decode).
+Đây là lý do làm #1 trước phần compute bên dưới — không có cải tiến inference nào sửa được việc
+browser không kịp giải mã.
+
+**2. Bỏ giới hạn `max_concurrent_inferences=1` + gom batch nhiều camera + export TensorRT FP16**
+(mục #2) — bước tiếp theo, và là bước đầu tiên thật sự tăng *số camera* một GPU chịu được. Lưu ý
+đây là trục hoàn toàn khác với #1: nó không làm client render mượt hơn, nó cho phép thêm camera.
+
+3. Đo lại `get_status()["average_inference_capacity_fps"]` sau bước 2 trước khi cân nhắc NVDEC
    hay Triton — cả hai đều là effort rất cao, chỉ nên làm khi có số đo cụ thể cho thấy decode
    hoặc điều phối request là nút thắt, không phải suy đoán trước.
-3. WebRTC/MediaMTX khi cần phục vụ nhiều người xem cùng lúc hoặc qua mạng ngoài LAN.
+4. WebRTC thật (aiortc/MediaMTX) chỉ khi cần độ trễ dưới ~200ms hoặc phục vụ qua internet với
+   bitrate thích ứng — fMP4 qua WebSocket đã lấy phần lợi ích lớn mà không thêm service nào.
 

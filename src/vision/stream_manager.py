@@ -365,6 +365,17 @@ class MultiStreamManager:
             worker = self.workers.get(camera_id)
         return worker.get_latest_display_jpeg() if worker else None
 
+    def h264_encoder(self, camera_id: str):
+        """The named camera's fMP4 encoder, or None if it has no worker or H.264 is off.
+
+        Returned for the video WebSocket to subscribe to; see `H264StreamEncoder`. Callers
+        must also check `.available` — an encoder exists but is unusable on a host with no
+        working H.264 encoder, and that is the signal to fall back to MJPEG.
+        """
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.get_h264_encoder() if worker else None
+
     def remove_camera(self, camera_id: str) -> bool:
         """Stop and remove a camera stream by ID."""
         with self._workers_lock:

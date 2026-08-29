@@ -129,7 +129,13 @@ class CameraInfo(BaseModel):
     latency_p99_ms: float = 0.0
     inference_wait_p95_ms: float = 0.0
     processing_errors: int = 0
+    # MJPEG. Still populated for every camera: it is the fallback the grid uses when the
+    # browser has no MediaSource support or the H.264 socket cannot be served.
     stream_url: str = ""
+    # H.264/fMP4 over a WebSocket — the path the grid prefers. Relative like `stream_url`,
+    # so the client resolves the scheme (ws vs wss) against its own origin rather than the
+    # server guessing it from behind a proxy.
+    video_url: str = ""
     fall_perspective: FallPerspectiveConfig | None = None
 
 

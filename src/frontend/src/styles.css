@@ -426,9 +426,10 @@ input[type='file'] {
 .feed-wrap {
   position: relative;
   background: #000;
-  /* Reserving the aspect ratio stops the grid reflowing as each MJPEG stream delivers
-     its first frame — otherwise every tile jumps once at load and the operator's
-     click lands on whatever slid underneath. */
+  /* Reserving the aspect ratio stops the grid reflowing as each feed delivers its first
+     frame — otherwise every tile jumps once at load and the operator's click lands on
+     whatever slid underneath. It also covers the moment a tile swaps its <video> for the
+     MJPEG <img> fallback, which would otherwise resize the tile mid-shift. */
   aspect-ratio: 16 / 9;
 }
 

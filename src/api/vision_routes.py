@@ -4,11 +4,22 @@ Kept in its own router rather than bolted onto `routes.py` because it has nothin
 with the template's chat agent — it is the camera product, and mixing them would make both
 harder to read.
 
-Two streaming choices worth stating. Video goes out as **MJPEG** (`multipart/x-mixed-replace`),
-which an `<img src>` renders natively — no player, no WebSocket, no codec negotiation, and
-it degrades to "the last frame" instead of erroring when a camera stalls. Alerts go out as
-**SSE**, because they are one-directional server→client and reconnect automatically; a
-WebSocket would need its own keepalive and retry logic for no gain.
+Three streaming choices worth stating.
+
+Video goes out as **H.264 in fragmented MP4 over a WebSocket** (`/cameras/{id}/video`), which
+the browser feeds to MediaSource Extensions and decodes on the GPU. MJPEG sent every frame as
+a standalone JPEG — ~10 Mbps per 480p camera on this footage — and the browser's per-frame CPU
+decode is what held the grid to 10-14fps while the server was producing 20. H.264 sends
+keyframes rarely and deltas in between (~1.3 Mbps for the same feed, ~8x less across the
+project's four sample clips) and renders at the full rate.
+
+**MJPEG** (`multipart/x-mixed-replace`, `/cameras/{id}/stream`) is kept as the fallback, not as
+dead code: it is what a browser without MediaSource gets, what the client falls back to if the
+socket fails or the host has no usable H.264 encoder, and what `/snapshot` serves. It needs no
+player and degrades to "the last frame" instead of erroring when a camera stalls.
+
+Alerts go out as **SSE**, because they are one-directional server→client and reconnect
+automatically; a WebSocket would need its own keepalive and retry logic for no gain.
 """
 
 import asyncio
@@ -22,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from src.api.deps import (
+    current_websocket_guard,
     current_websocket_manager,
     require_guard,
     require_manager,
@@ -52,6 +64,10 @@ router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_guard)])
 manager_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_manager)])
 operator_router = APIRouter(tags=["monitoring"], dependencies=[Depends(require_operator)])
 manager_ws_router = APIRouter(tags=["monitoring"])
+# WebSocket routes cannot reuse `router`'s `Depends(require_guard)`: a dependency that raises
+# HTTPException has no response to raise it into on a socket. They authenticate explicitly in
+# the handler and close with a policy code instead, so they live on their own router.
+guard_ws_router = APIRouter(tags=["monitoring"])
 
 # How often a long-lived stream re-reads its session from the store, rather than on every
 # wake. Bounds how long a revoked session can keep a stream open, traded against a database
@@ -283,6 +299,139 @@ async def camera_stream(camera_id: str, request: Request, fps: float = Query(def
         media_type=f"multipart/x-mixed-replace; boundary={boundary}",
         headers={"Cache-Control": "no-store"},
     )
+
+
+# How long a viewer waits for the encoder's first output before being told to fall back.
+# The display thread produces a frame within ~50ms of the camera opening, but the camera
+# itself may still be connecting, so this is sized for a slow RTSP handshake.
+_H264_START_TIMEOUT_SEC = 10.0
+# How long a connected viewer tolerates silence before the server gives up on it. Longer
+# than the keyframe interval (~2s) by a wide margin, so a healthy but momentarily stalled
+# camera is not disconnected; short enough that a dead camera does not hold a socket open.
+_H264_IDLE_TIMEOUT_SEC = 30.0
+
+
+@guard_ws_router.websocket("/cameras/{camera_id}/video")
+async def camera_video(websocket: WebSocket, camera_id: str) -> None:
+    """Live H.264 video for one camera, as fMP4 over a WebSocket.
+
+    Wire protocol, deliberately minimal: one JSON text frame first, then binary frames.
+
+      - The **text** frame is `{"type": "init", "codec": ..., "mime": ...}` on success, or
+        `{"type": "fallback", "reason": ...}` when this camera cannot serve H.264. The
+        client uses `mime` verbatim for `MediaSource.addSourceBuffer`, and treats `fallback`
+        as "use the MJPEG `<img>` instead" — the server saying so explicitly is what keeps a
+        client off a socket that will never produce video.
+      - The first **binary** frame is the fMP4 init segment (`ftyp`+`moov`); every one after
+        is a media fragment (`moof`+`mdat`). MSE wants exactly this order, so the framing is
+        just "first binary is init", with no per-message header to parse.
+
+    A viewer joining mid-stream is held by the encoder until the next keyframe (see
+    `H264StreamEncoder.subscribe`), so the first fragment it receives is always decodable.
+    """
+    user = await asyncio.to_thread(current_websocket_guard, websocket)
+    if user is None:
+        await websocket.close(code=1008, reason="Guard authentication required")
+        return
+
+    service = getattr(websocket.app.state, "monitoring", None)
+    if service is None:
+        await websocket.close(code=1013, reason="Monitoring service is not ready")
+        return
+    if service.get_camera(camera_id) is None:
+        await websocket.close(code=1008, reason=f"No camera '{camera_id}'")
+        return
+
+    await websocket.accept()
+
+    encoder = service.h264_encoder(camera_id)
+    if encoder is None or not encoder.available:
+        await websocket.send_json(
+            {"type": "fallback", "reason": "H.264 encoding is unavailable for this camera"}
+        )
+        await websocket.close(code=1000)
+        return
+
+    subscription = encoder.subscribe()
+    queue, ready, state = subscription
+    try:
+        # The init segment only exists once a frame has been encoded. A camera that was just
+        # added has not produced one yet, so wait rather than declaring failure — but bound
+        # the wait, because a camera that never connects would otherwise hold this open.
+        init_segment = encoder.init_segment()
+        waited = 0.0
+        while init_segment is None and waited < _H264_START_TIMEOUT_SEC:
+            await asyncio.sleep(0.1)
+            waited += 0.1
+            if not encoder.available or state["closed"]:
+                break
+            init_segment = encoder.init_segment()
+
+        if init_segment is None:
+            await websocket.send_json(
+                {"type": "fallback", "reason": "Camera produced no video within the timeout"}
+            )
+            await websocket.close(code=1000)
+            return
+
+        await websocket.send_json(
+            {
+                "type": "init",
+                "codec": encoder.codec_name,
+                # Baseline profile, level 3.1 — matches `_codec_options`. MSE rejects a
+                # source buffer whose codec string does not describe the actual bitstream,
+                # so this has to move if the encoder's profile ever does.
+                "mime": 'video/mp4; codecs="avc1.42E01F"',
+            }
+        )
+        await websocket.send_bytes(init_segment)
+
+        next_session_check = time.monotonic() + _SESSION_RECHECK_SECONDS
+        idle_deadline = time.monotonic() + _H264_IDLE_TIMEOUT_SEC
+        while True:
+            # Same reasoning as the SSE stream and the manager socket: a video feed left up
+            # on a control-room screen must stop when its session is revoked, and re-reading
+            # the session is a database round trip, so it is paced rather than per-fragment.
+            now = time.monotonic()
+            if now >= next_session_check:
+                if not await asyncio.to_thread(session_is_live, websocket):
+                    await websocket.close(code=1008, reason="Session expired")
+                    return
+                next_session_check = now + _SESSION_RECHECK_SECONDS
+
+            # The encoder signals on a threading.Event, which cannot be awaited. Waiting on
+            # it in a worker thread keeps the event loop free while this socket is idle —
+            # polling it here instead would burn a wakeup per camera per tick.
+            got_signal = await asyncio.to_thread(ready.wait, 1.0)
+            if state["closed"] or not encoder.available:
+                break
+            if not got_signal:
+                # A camera that has gone quiet without failing outright — unplugged, or
+                # wedged behind an FFmpeg read that has not timed out yet. Drop the socket
+                # so the client can fall back rather than watch a frozen frame forever.
+                if time.monotonic() > idle_deadline:
+                    break
+                continue
+            ready.clear()
+
+            while queue:
+                await websocket.send_bytes(queue.popleft())
+            # Extended on real output only, so the deadline above measures silence from the
+            # camera rather than time since connect.
+            idle_deadline = time.monotonic() + _H264_IDLE_TIMEOUT_SEC
+
+        # Reached when the camera stopped or the encoder failed mid-session. Telling the
+        # client explicitly lets it switch to MJPEG instead of showing a frozen last frame.
+        await websocket.send_json({"type": "fallback", "reason": "Camera stream ended"})
+        await websocket.close(code=1000)
+    except WebSocketDisconnect:
+        return
+    except RuntimeError:
+        # Starlette raises this when the socket is already closed underneath us — a browser
+        # tab closed mid-send. Nothing to clean up beyond the unsubscribe below.
+        return
+    finally:
+        encoder.unsubscribe(subscription)
 
 
 # ---------------------------------------------------------------- alerts
