@@ -167,9 +167,13 @@ def _read_preview_frame(resolved: str):
             cv2.CAP_PROP_READ_TIMEOUT_MSEC,
             int(_PREVIEW_READ_TIMEOUT_SEC * 1000),
         ]
+        # The lock guards only the env var write, never the blocking VideoCapture open below
+        # it — see _FFMPEG_OPTS_LOCK's definition. Holding it across the open would serialize
+        # this preview against every other preview request and every camera start in the
+        # process behind whichever one happens to be connecting.
         with _FFMPEG_OPTS_LOCK:
             os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _RTSP_FFMPEG_OPTIONS)
-            capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
     else:
         capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
@@ -401,18 +405,24 @@ async def camera_video(websocket: WebSocket, camera_id: str) -> None:
                     return
                 next_session_check = now + _SESSION_RECHECK_SECONDS
 
-            # The encoder signals on a threading.Event, which cannot be awaited. Waiting on
-            # it in a worker thread keeps the event loop free while this socket is idle —
-            # polling it here instead would burn a wakeup per camera per tick.
-            got_signal = await asyncio.to_thread(ready.wait, 1.0)
-            if state["closed"] or not encoder.available:
-                break
-            if not got_signal:
-                # A camera that has gone quiet without failing outright — unplugged, or
-                # wedged behind an FFmpeg read that has not timed out yet. Drop the socket
-                # so the client can fall back rather than watch a frozen frame forever.
-                if time.monotonic() > idle_deadline:
+            # The encoder signals on a threading.Event, which cannot be awaited directly.
+            # Deliberately not `asyncio.to_thread(ready.wait, ...)`: that would borrow one
+            # slot from the process-wide default thread pool for close to the entire
+            # lifetime of every connected viewer (this loop runs once a second, forever),
+            # competing with unrelated to_thread calls elsewhere in the app — DB session
+            # lookups, preview-frame opens — for the same limited pool. `deque` and dict
+            # item access are atomic under the GIL, so the queue can be polled directly from
+            # the event loop instead; short sleeps between polls keep this socket from
+            # busy-looping while idle without taking a thread to do it.
+            if not queue:
+                if state["closed"] or not encoder.available:
                     break
+                if time.monotonic() > idle_deadline:
+                    # A camera that has gone quiet without failing outright — unplugged, or
+                    # wedged behind an FFmpeg read that has not timed out yet. Drop the
+                    # socket so the client can fall back rather than watch a frozen frame.
+                    break
+                await asyncio.sleep(0.05)
                 continue
             ready.clear()
 

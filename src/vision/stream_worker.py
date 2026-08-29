@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 # FFmpeg reads its RTSP options from this process-global env var, which has to be set
 # before the capture is constructed. Every worker wants the same value, so writing it
 # repeatedly is harmless; the lock only keeps concurrent writes from interleaving.
+#
+# Scope discipline matters here: cv2.VideoCapture(...) is a blocking call that can take up
+# to open_timeout_sec, and it must never be made *inside* this lock. Every caller across the
+# process shares one lock instance, so holding it around the open would serialize every
+# camera start and every preview-frame request in the system behind whichever one is
+# currently connecting — a large, easy-to-miss latency hit disguised as a one-line env var
+# guard. Grab the lock only around the setdefault(); construct the capture after releasing it.
 _FFMPEG_OPTS_LOCK = threading.Lock()
 _RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp"
 _LATENCY_WINDOW_SIZE = 100
@@ -264,7 +271,7 @@ class CameraStreamWorker:
             ]
             with _FFMPEG_OPTS_LOCK:
                 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _RTSP_FFMPEG_OPTIONS)
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
         else:
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
