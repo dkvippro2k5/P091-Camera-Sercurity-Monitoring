@@ -46,10 +46,10 @@ from src.models.camera_schemas import (
     CameraCreate,
     CameraInfo,
     DemoVideo,
-    SimilarIncident,
-    SystemStatus,
     NotificationSettings,
     NotificationToggle,
+    SimilarIncident,
+    SystemStatus,
 )
 from src.services.eval_report import build_report
 from src.services.monitoring import UPLOAD_DIR, MonitoringService
@@ -167,9 +167,13 @@ def _read_preview_frame(resolved: str):
             cv2.CAP_PROP_READ_TIMEOUT_MSEC,
             int(_PREVIEW_READ_TIMEOUT_SEC * 1000),
         ]
+        # The lock guards only the env var write, never the blocking VideoCapture open below
+        # it — see _FFMPEG_OPTS_LOCK's definition. Holding it across the open would serialize
+        # this preview against every other preview request and every camera start in the
+        # process behind whichever one happens to be connecting.
         with _FFMPEG_OPTS_LOCK:
             os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _RTSP_FFMPEG_OPTIONS)
-            capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
     else:
         capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
@@ -312,6 +316,14 @@ _H264_START_TIMEOUT_SEC = 10.0
 # camera is not disconnected; short enough that a dead camera does not hold a socket open.
 _H264_IDLE_TIMEOUT_SEC = 30.0
 
+# The send loop polls the subscriber's queue rather than blocking on it (see the comment
+# where it is used). At a 20fps display rate a fragment lands every ~50ms, so the minimum
+# keeps a healthy camera's queue-empty moments short; on real silence the interval doubles
+# each miss up to the max, so a camera stuck idle for the whole _H264_IDLE_TIMEOUT_SEC window
+# wakes this coroutine a few dozen times rather than several hundred.
+_H264_POLL_INTERVAL_MIN_SEC = 0.02
+_H264_POLL_INTERVAL_MAX_SEC = 1.0
+
 
 @guard_ws_router.websocket("/cameras/{camera_id}/video")
 async def camera_video(websocket: WebSocket, camera_id: str) -> None:
@@ -390,6 +402,7 @@ async def camera_video(websocket: WebSocket, camera_id: str) -> None:
 
         next_session_check = time.monotonic() + _SESSION_RECHECK_SECONDS
         idle_deadline = time.monotonic() + _H264_IDLE_TIMEOUT_SEC
+        poll_interval = _H264_POLL_INTERVAL_MIN_SEC
         while True:
             # Same reasoning as the SSE stream and the manager socket: a video feed left up
             # on a control-room screen must stop when its session is revoked, and re-reading
@@ -401,20 +414,34 @@ async def camera_video(websocket: WebSocket, camera_id: str) -> None:
                     return
                 next_session_check = now + _SESSION_RECHECK_SECONDS
 
-            # The encoder signals on a threading.Event, which cannot be awaited. Waiting on
-            # it in a worker thread keeps the event loop free while this socket is idle —
-            # polling it here instead would burn a wakeup per camera per tick.
-            got_signal = await asyncio.to_thread(ready.wait, 1.0)
-            if state["closed"] or not encoder.available:
-                break
-            if not got_signal:
-                # A camera that has gone quiet without failing outright — unplugged, or
-                # wedged behind an FFmpeg read that has not timed out yet. Drop the socket
-                # so the client can fall back rather than watch a frozen frame forever.
-                if time.monotonic() > idle_deadline:
+            # The encoder signals on a threading.Event, which cannot be awaited directly.
+            # Deliberately not `asyncio.to_thread(ready.wait, ...)`: that would borrow one
+            # slot from the process-wide default thread pool for close to the entire
+            # lifetime of every connected viewer (this loop runs once a second, forever),
+            # competing with unrelated to_thread calls elsewhere in the app — DB session
+            # lookups, preview-frame opens — for the same limited pool. `deque` and dict
+            # item access are atomic under the GIL, so the queue can be polled directly from
+            # the event loop instead; sleeps between polls back off while idle (see
+            # _H264_POLL_INTERVAL_MIN/MAX_SEC) so a quiet camera does not spend the whole
+            # _H264_IDLE_TIMEOUT_SEC window waking this coroutine every tick.
+            if not queue:
+                if state["closed"] or not encoder.available:
                     break
+                if time.monotonic() > idle_deadline:
+                    # A camera that has gone quiet without failing outright — unplugged, or
+                    # wedged behind an FFmpeg read that has not timed out yet. Drop the
+                    # socket so the client can fall back rather than watch a frozen frame.
+                    break
+                await asyncio.sleep(poll_interval)
+                # Backs off while the camera stays quiet, capped well under the idle
+                # timeout so a genuinely stalled camera is still noticed promptly. A fresh
+                # miss (queue empty right after delivering a fragment, the common case at
+                # display_fps) starts back at the fast interval below rather than carrying
+                # the backoff over, so a merely-fast-arriving next frame is not penalised.
+                poll_interval = min(poll_interval * 2, _H264_POLL_INTERVAL_MAX_SEC)
                 continue
             ready.clear()
+            poll_interval = _H264_POLL_INTERVAL_MIN_SEC
 
             while queue:
                 await websocket.send_bytes(queue.popleft())

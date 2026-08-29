@@ -212,6 +212,38 @@ def test_stream_ending_is_announced_rather_than_dropped(camera_with_encoder):
         assert socket.receive_json()["type"] == "fallback"
 
 
+def test_idle_camera_is_dropped_close_to_the_timeout_not_late(camera_with_encoder, monkeypatch):
+    """The send loop polls the subscriber's queue instead of blocking on a threading.Event
+    (see the comment above `poll_interval` in the route), backing off while the camera stays
+    quiet so it does not wake this coroutine every tick for the whole idle window. The backoff
+    is capped, and this is what proves the cap actually bounds it: a camera producing nothing
+    must still be noticed within a small multiple of the poll cap past the idle deadline, not
+    left hanging because the interval grew unbounded.
+    """
+    import src.api.vision_routes as routes
+
+    # A window long enough that an *uncapped* doubling backoff (0.02, 0.04, 0.08, ... with
+    # no ceiling) would overshoot it by more than a second — short enough to keep the test
+    # fast. Regression-tested: with the cap removed this assertion fails at ~2.7s elapsed.
+    monkeypatch.setattr(routes, "_H264_IDLE_TIMEOUT_SEC", 2.0)
+    monkeypatch.setattr(routes, "_H264_POLL_INTERVAL_MIN_SEC", 0.02)
+    monkeypatch.setattr(routes, "_H264_POLL_INTERVAL_MAX_SEC", 0.1)
+
+    client, encoder = camera_with_encoder
+    started = time.monotonic()
+    with client.websocket_connect("/api/v1/cameras/cam_ws/video") as socket:
+        socket.receive_json()
+        socket.receive_bytes()
+        # No push(): the camera producing nothing after the init segment is exactly the
+        # "gone quiet" case idle_deadline exists to catch.
+        assert socket.receive_json()["type"] == "fallback"
+    elapsed = time.monotonic() - started
+
+    # Generous slack above the idle window plus one poll interval: enough to absorb test
+    # scheduling jitter, tight enough that an unbounded or mis-capped backoff would fail it.
+    assert elapsed < 2.0 + 0.1 + 0.5
+
+
 def test_disconnecting_unsubscribes_from_the_encoder(camera_with_encoder):
     """A leaked subscriber keeps receiving fragments into a queue nobody drains, which is
     exactly the unbounded-growth case the encoder's queue cap exists to bound."""
