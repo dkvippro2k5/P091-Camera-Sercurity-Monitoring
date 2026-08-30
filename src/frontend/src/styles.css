@@ -2929,6 +2929,11 @@ legend {
 .history-open {
   display: flex;
   align-items: center;
+  /* The base `button` rule sets `justify-content: center`, which here centred the
+     thumbnail-and-name group inside the full-width cell — so a shorter incident name pushed
+     the whole group right and the column read ragged by a few pixels. Left-align it so every
+     row's thumbnail starts at the same x. */
+  justify-content: flex-start;
   gap: var(--sp-3);
   width: 100%;
   padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
@@ -2943,20 +2948,25 @@ legend {
   background: var(--surface-2);
 }
 
-/* Severity as a left bar, matching the activity rail. Paired with the incident name beside
-   it, never carrying the meaning alone. */
-.history-sev {
+/* Fixed-size slot so every incident name starts at the same x, image or not. When there is
+   an evidence frame the <img> fills it; when there isn't, the empty box still holds the
+   column. Severity is carried by the verdict badge and the incident name, not a colour bar. */
+.history-thumb {
   flex: none;
-  width: 3px;
-  align-self: stretch;
-  min-height: 32px;
-  border-radius: var(--r-full);
-  background: var(--border-strong);
+  display: block;
+  width: 48px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
 }
 
-.history-sev.critical { background: var(--sev-critical); }
-.history-sev.high { background: var(--sev-high); }
-.history-sev.medium { background: var(--sev-medium); }
+.history-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 .history-label {
   font-weight: var(--fw-medium);

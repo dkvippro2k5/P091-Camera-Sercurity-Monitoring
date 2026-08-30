@@ -178,10 +178,15 @@ function HistoryRow({ row, onInspect }) {
         {/* The row opens the detail view. A button rather than a click handler on the <tr>
             so it is reachable by keyboard and announced as an action. */}
         <button className="history-open" onClick={() => onInspect(row)}>
-          <span className={`history-sev ${meta.severity}`} aria-hidden="true" />
-          {row.evidence_url && (
-            <img className="rail-thumb" src={row.evidence_url} alt="" loading="lazy" decoding="async" />
-          )}
+          {/* The thumbnail slot is rendered on every row and is always the same size, so the
+              incident name after it starts at the same x whether or not this row has an
+              evidence frame. Older rows have no evidence_url; without the empty slot their
+              names slid left to the cell edge and the column read ragged. */}
+          <span className="history-thumb" aria-hidden="true">
+            {row.evidence_url && (
+              <img src={row.evidence_url} alt="" loading="lazy" decoding="async" />
+            )}
+          </span>
           <span className="history-label">{meta.short}</span>
         </button>
       </td>
