@@ -203,19 +203,42 @@ input[type='file'] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
+  /* Wraps rather than overflowing. The switch below has a `min-width` floor it must not go
+     under — its label would truncate — so on a narrow card there is a width at which the row
+     genuinely cannot fit, and the switch has to drop onto its own line instead of pushing out
+     through the card's right edge, which is what it was doing. */
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-4);
   margin-bottom: var(--sp-4);
   padding: var(--sp-4) var(--sp-5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-md);
   background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
 }
-.notification-copy { display: flex; align-items: center; gap: var(--sp-3); }
-.notification-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface-3); color: var(--text-secondary); }
+.notification-copy { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+/* `flex: none` is what keeps the glyph round. As a flex item it was free to shrink below its
+   36px width while `height` stayed fixed, so on a narrow viewport the circle — and the ✈
+   inside it — squashed into a vertical ellipse. `aspect-ratio` holds the shape even if the
+   width is ever changed, and `line-height: 1` stops the glyph's own metrics adding height. */
+.notification-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  aspect-ratio: 1;
+  line-height: 1;
+  font-size: 16px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
 .notification-card.is-on .notification-icon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .notification-card h2 { font-size: var(--fs-md); }
 .notification-card p { margin: 3px 0 0; color: var(--text-secondary); font-size: var(--fs-sm); }
-.notification-switch { min-width: 112px; justify-content: space-between; gap: var(--sp-2); }
+/* `flex: none` so the button keeps its floor instead of being compressed by the copy beside
+   it — without it the 112px minimum was overridden by flex shrinking and the label clipped. */
+.notification-switch { flex: none; min-width: 112px; justify-content: space-between; gap: var(--sp-2); }
 .notification-switch i { width: 30px; height: 18px; border-radius: 99px; background: var(--border-strong); position: relative; }
 .notification-switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-primary); transition: transform 120ms ease; }
 .notification-card.is-on .notification-switch { border-color: var(--accent); }
@@ -326,6 +349,15 @@ input[type='file'] {
   display: block;
   width: 100%;
   min-height: 0;
+  /* The grid item under `.app`, and the one place the intrinsic-width chain has to stop.
+     `min-width: auto` here means "at least as wide as my widest content", so any descendant
+     with a fixed minimum — the history table's 620px is the current one — stretches this box
+     and, with it, the masthead and every other row of the shell. `.app` has `overflow: hidden`,
+     so the result is not a scrollbar but silent clipping: the last nav tab simply leaves the
+     screen while `document.scrollWidth` still measures a clean 390px.
+
+     Anything genuinely wider than the viewport scrolls inside its own wrapper instead. */
+  min-width: 0;
 }
 
 .stage {
@@ -336,13 +368,15 @@ input[type='file'] {
 .stage-inner {
   max-width: var(--grid-max);
   margin: 0 auto;
+  /* Floors the intrinsic-width chain at the stage. Any descendant with a `min-width` — the
+     history table is the current one — otherwise widens this box, and through it `.stage`
+     and the whole app shell, because `min-width: auto` on a grid/flex item resolves to its
+     content's own minimum. The symptom is the masthead growing past the viewport on a phone
+     while `document.scrollWidth` still reads clean, since `.app` clips the result. Anything
+     that genuinely needs to be wider than the column scrolls inside its own wrapper. */
+  min-width: 0;
 }
 
-@media (max-width: 1100px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 /* ---------------------------------------------------------------- camera grid */
 .stage-head {
   display: flex;
@@ -365,8 +399,14 @@ input[type='file'] {
   display: grid;
   /* 380px floor rather than 320px: at 320 a 16:9 tile is 180px tall, and a person in
      the far third of a corridor shot is a handful of pixels. The operator has to be
-     able to judge the frame without opening it. */
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+     able to judge the frame without opening it.
+
+     Wrapped in `min()` so the floor yields on a viewport narrower than itself. A bare
+     380px minimum makes each track 380px wide even at 360px of available space, and the
+     grid then overflows its container — the whole page scrolls sideways on a phone. With
+     `min(100%, 380px)` the track collapses to the container width instead, which is the
+     same single column the 700px breakpoint asks for, arrived at by measurement. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
   gap: var(--sp-4);
 }
 
@@ -3818,10 +3858,26 @@ legend {
   .masthead nav {
     order: 3;
     width: 100%;
+    /* The tab strip is the one row here that cannot wrap — wrapped, the second line sits
+       under the first with no visual connection to it and reads as two unrelated controls.
+       So it scrolls instead, and `min-width: 0` is what lets it: without it the flex item
+       takes its content's intrinsic width and pushes the last tab past the viewport edge
+       rather than scrolling within it. */
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .masthead nav::-webkit-scrollbar {
+    display: none;
   }
 
   .masthead nav button {
-    flex: 1;
+    /* Grow to share the row when there is room, but never shrink below the label — a
+       compressed tab truncates to an unreadable stub, and these are the only navigation
+       the screen has. `flex: 1` alone permitted that shrink. */
+    flex: 1 0 auto;
+    white-space: nowrap;
   }
 
   .vitals {
