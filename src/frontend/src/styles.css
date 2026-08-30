@@ -2840,6 +2840,164 @@ legend {
 .footer-separator { width: 1px; height: 18px; margin: 0 var(--sp-2); background: var(--border-subtle); }
 .manager-empty { display: grid; min-height: 160px; place-items: center; color: var(--text-tertiary); font-size: var(--fs-sm); }
 
+/* ---------------------------------------------------------------- event history */
+.event-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 1140px;
+  margin: 0 auto;
+  /* Same reason as `.stage-inner`: this is the flex container the wide table sits in, and
+     without an explicit floor it adopts the table's 620px minimum as its own. */
+  min-width: 0;
+}
+
+.event-history .stage-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.history-filters {
+  display: grid;
+  /* Auto-fit rather than three fixed columns: the three filters collapse to two and then to
+     one on their own, so this needs no breakpoint of its own.
+
+     `min()` against the *track*, not against 100% of the parent: `min(100%, 200px)` resolves
+     the percentage against the grid's content box, which excludes this element's own padding
+     — so at 390px the track stayed 200px wide, two of them plus the gap overflowed, and the
+     middle filter was clipped. Sizing the floor off the viewport instead keeps the track
+     inside the padded box at every width. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+/* The wrapper scrolls, never the page. Five columns do not fit a phone, and without this the
+   whole document scrolls sideways — which moves the masthead off screen too.
+
+   `min-width: 0` is the half that makes the scrolling actually work. A grid and flex item's
+   default `min-width: auto` is its *content's* intrinsic width, so the 640px table below
+   propagated back up through `.stage-inner` → `.stage` → `.workspace` and stretched the whole
+   shell to 640px inside a 390px viewport — the masthead included, pushing the last nav tab
+   off screen. The page did not report a horizontal scroll while this was happening, because
+   `.app`'s grid clipped the overflow instead: the layout was broken and every document-level
+   `scrollWidth` check still read clean. Overriding the floor here is what lets the ancestors
+   shrink and confines the overflow to this box, which is the one element meant to scroll. */
+.history-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+/* Below this the five columns compress into unreadable stubs, so the wrapper scrolls
+   instead. Paired with the `min-width: 0` above — this floor is only safe because that
+   override stops it reaching the page shell. */
+.history-table {
+  min-width: 620px;
+}
+
+.history-table th {
+  text-align: left;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.history-table td {
+  font-size: var(--fs-sm);
+}
+
+/* The whole cell is the target, so the row reads as one click rather than a small link
+   inside it. Transparent chrome — it is a table row, not a button in a toolbar. */
+.history-open {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.history-open:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* Severity as a left bar, matching the activity rail. Paired with the incident name beside
+   it, never carrying the meaning alone. */
+.history-sev {
+  flex: none;
+  width: 3px;
+  align-self: stretch;
+  min-height: 32px;
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+
+.history-sev.critical { background: var(--sev-critical); }
+.history-sev.high { background: var(--sev-high); }
+.history-sev.medium { background: var(--sev-medium); }
+
+.history-label {
+  font-weight: var(--fw-medium);
+}
+
+.history-relative {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+.history-reviewer {
+  color: var(--text-secondary);
+}
+
+.history-verdict {
+  display: inline-block;
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.history-verdict.real {
+  background: rgb(220 38 38 / 0.14);
+  color: var(--danger-text);
+}
+
+.history-verdict.false {
+  background: rgb(52 211 153 / 0.14);
+  color: var(--live);
+}
+
+.history-verdict.pending {
+  background: rgb(148 163 184 / 0.14);
+  color: var(--text-secondary);
+}
+
+.history-pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.history-pager .hint {
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 980px) {
   .manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .manager-primary-grid,

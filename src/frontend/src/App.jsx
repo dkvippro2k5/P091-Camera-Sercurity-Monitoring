@@ -6,6 +6,7 @@ import ActivityRail from './components/ActivityRail'
 import Masthead from './components/Masthead'
 import Login from './components/Login'
 import StatsView from './components/StatsView'
+import EventHistory from './components/EventHistory'
 import VerifyingCard from './components/VerifyingCard'
 import NotificationToggle from './components/NotificationToggle'
 import { api, setUnauthorizedHandler } from './api'
@@ -14,13 +15,16 @@ import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview } f
 const MAX_HISTORY = 60
 
 // Which screens each role may reach. The guard runs the room — live grid plus camera setup;
-// the manager reads statistics and is offered nothing else.
+// the manager reads statistics and the event history.
 //
-// The API enforces the same boundary. Shared monitoring health is exposed separately so a
-// manager can keep the masthead current without receiving camera footage or incident data.
+// The API enforces the same boundary, and draws it at read-versus-act rather than at the two
+// roles: the history screen and the evidence stills it links to sit on the shared operator
+// gate (`require_operator`), while live footage and every write — verdicts, acknowledgements,
+// camera configuration — stay guard-only. So a manager can review what happened and cannot
+// change any of it, which is what the read-only detail view below relies on.
 const SCREENS = {
   guard: ['grid', 'setup'],
-  manager: ['stats'],
+  manager: ['stats', 'history'],
 }
 
 export default function App() {
@@ -37,6 +41,10 @@ export default function App() {
   // Set when the operator opens a past alert from the rail, so re-reading a resolved
   // incident does not require a new one to fire.
   const [inspectingId, setInspectingId] = useState(null)
+  // The manager's history detail, held as the row itself rather than an id. It comes from
+  // `/incidents` (the durable log), not from `alerts` — so there is no list here to look an
+  // id up in, and reusing `inspectingId` would silently resolve to `null` and render nothing.
+  const [historyRow, setHistoryRow] = useState(null)
   const [dismissedAlertIds, setDismissedAlertIds] = useState(() => new Set())
   // Whether the guard has collapsed the activity rail sidebar on the live grid page (defaults to true so grid is un-obscured).
   // Always start closed on a fresh page load; the handle remains available to pull it out.
@@ -61,6 +69,7 @@ export default function App() {
     setStatus(null)
     setAlerts([])
     setInspectingId(null)
+    setHistoryRow(null)
     setDismissedAlertIds(new Set())
     setScreen('grid')
   }, [])
@@ -340,6 +349,7 @@ export default function App() {
               />
             )}
             {current === 'stats' && <StatsView status={status} />}
+            {current === 'history' && <EventHistory onInspect={setHistoryRow} />}
           </div>
         </main>
 
@@ -357,6 +367,25 @@ export default function App() {
       </div>
 
       {isGuard && pendingAlerts.length > 0 && <VerifyingCard pendingAlerts={pendingAlerts} />}
+
+      {/* The manager's read-only detail view: same evidence and AI assessment, no verdict
+          controls — those post to a guard-gated route, so offering them here would only
+          produce a 403. `readOnly` is what selects that footer; see the note on AlertModal
+          for why it is a separate flag from `isHistory`.
+
+          The row is reshaped to `Alert` here rather than inside `EventHistory`: `/incidents`
+          keys the id as `alert_id` and the modal reads `alert.id`, and doing it at this one
+          boundary keeps the history component free of the modal's field names. */}
+      {historyRow && (
+        <AlertModal
+          key={historyRow.alert_id}
+          alert={{ ...historyRow, id: historyRow.alert_id }}
+          isHistory
+          readOnly
+          onVerdict={() => {}}
+          onClose={() => setHistoryRow(null)}
+        />
+      )}
 
       {active && (
         <AlertModal

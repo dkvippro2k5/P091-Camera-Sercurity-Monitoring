@@ -1029,6 +1029,67 @@ class MonitoringService:
             "last_alert": rows[-1].get("created_at") if rows else None,
         }
 
+    def incident_history(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        camera_id: str | None = None,
+        label: str | None = None,
+        verdict: str | None = None,
+    ) -> dict:
+        """A page of the durable event log, newest first, for the manager's history screen.
+
+        Reads `IncidentLog`, not the `_alerts` ring buffer. The buffer is capped and dies with
+        the process — a "history" built on it would quietly show a few recent alerts and hide
+        everything from before the last restart, which is the opposite of what the screen is
+        for. `operational_stats` above reads the same log for the same reason.
+
+        Newest first, unlike the log's own oldest-first order: a history screen is read from
+        the top, and an operator looking for last night's incident should not have to page to
+        the end to find it.
+
+        `verdict` accepts the two recorded values plus `"unreviewed"`, which is not a verdict
+        but the absence of one. It has to be expressible: "what has nobody looked at yet" is
+        the question a manager actually opens this screen to answer, and it cannot be asked by
+        filtering on a value that was never written.
+
+        Paginated because this list grows without bound. Every alert the system has ever
+        raised is in here, and serving all of it would put an unbounded response on a route
+        the dashboard polls.
+
+        Blocking file I/O — call it off the event loop.
+        """
+        rows = self.incidents.incidents()
+
+        # Built before filtering: these populate the screen's filter dropdowns, and deriving
+        # them from the filtered rows would make each option disappear as soon as it was
+        # chosen — the operator could never widen a filter again without reloading.
+        cameras = sorted({row.get("camera_name") or row.get("camera_id") or "unknown" for row in rows})
+        labels = sorted({row.get("label") or "unknown" for row in rows})
+
+        if camera_id:
+            rows = [row for row in rows if row.get("camera_id") == camera_id]
+        if label:
+            rows = [row for row in rows if row.get("label") == label]
+        if verdict == "unreviewed":
+            rows = [row for row in rows if not row.get("operator_verdict")]
+        elif verdict:
+            rows = [row for row in rows if row.get("operator_verdict") == verdict]
+
+        total = len(rows)
+        # Reversed rather than re-sorted: `incidents()` already guarantees oldest-first, so
+        # this is the same ordering read the other way and costs nothing extra.
+        page = list(reversed(rows))[offset : offset + limit]
+
+        return {
+            "items": page,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "cameras": cameras,
+            "labels": labels,
+        }
+
     def heatmap(self) -> dict:
         """Return a simulated floor-plan heat map until real camera coordinates are configured."""
         points: dict[str, dict] = {}
