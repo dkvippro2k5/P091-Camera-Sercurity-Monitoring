@@ -3683,90 +3683,59 @@ legend {
   background: #111821;
 }
 
+/* The brand photograph, dimmed by a gradient painted over it in the same layer.
+   The overlay is not decoration: the artwork is a dark building at night with a bright
+   camera housing and a white wordmark, so its local contrast swings from near-black to
+   near-white across the frame. Form labels and the error text sit on the card above it,
+   and without a fixed floor under them their contrast ratio would depend on which part of
+   the photo happened to be behind — which is not a thing that can be checked once and
+   trusted. Two stops rather than a flat wash so the top stays slightly lighter and the
+   image is still legible as an image.
+
+   `background-color` underneath is what the page renders as if the file is missing or
+   still loading; without it the operator gets a white flash on a screen that is otherwise
+   entirely dark. */
 .login-page {
-  padding: var(--sp-6);
-  background: #0a0f15;
+  /* The card is pushed to the right rather than centred. The artwork is square and its
+     subject runs across the middle — the lens on the left, the wordmark through the centre,
+     the camera housing top-right — so a centred card lands squarely on the wordmark and
+     each ruins the other. Right-aligned, the card sits over the darkest region (the lower
+     building face) and leaves the branding readable beside it, which is the reason for
+     using this image at all. */
+  justify-content: flex-end;
+  padding: var(--sp-6) clamp(var(--sp-6), 8vw, var(--sp-8));
+  background-color: #0a0f15;
+  /* Light enough to leave the artwork readable, which is the whole reason for using it —
+     the wordmark is the brand and a wash that greys it out defeats the change. The card
+     carries its own opaque-enough fill, so text contrast does not depend on this layer;
+     it is here to settle the photo's bright spots (the lit doorway, the lens highlight)
+     so they do not compete with the form beside them. */
+  background-image:
+    linear-gradient(180deg, rgb(8 12 18 / 0.28), rgb(8 12 18 / 0.52)),
+    url('/login-bg.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 .login-shell {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
-  width: min(980px, 100%);
-  min-height: 600px;
+  width: min(420px, 100%);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--r-lg);
-  background: var(--surface-1);
+  /* Nearly opaque, and deliberately so. The overlay on the photo behind is light enough to
+     keep the artwork readable, which means it cannot be relied on as the contrast floor for
+     the form — that floor has to live here instead, where it is a fixed value rather than
+     whatever part of the image happens to sit behind a given label. The remaining
+     translucency is enough for the card to read as sitting on the scene rather than
+     covering a hole punched in it, and not enough for the photo to interfere with text. */
+  background: rgb(17 24 33 / 0.94);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
   box-shadow: var(--shadow-modal);
 }
 
-.login-visual {
-  position: relative;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-right: 1px solid var(--border-subtle);
-  background-color: #0b1016;
-}
-
-.login-visual::before,
-.login-visual::after {
-  position: absolute;
-  content: '';
-  background: var(--border-subtle);
-  pointer-events: none;
-}
-
-.login-visual::before { top: 0; bottom: 0; left: 50%; width: 1px; }
-.login-visual::after { top: 50%; right: 0; left: 0; height: 1px; }
-
-.login-radar {
-  position: relative;
-  width: 250px;
-  height: 250px;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-}
-
-.login-radar::before,
-.login-radar::after {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  content: '';
-  transform: translate(-50%, -50%);
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-}
-
-.login-radar::before { width: 164px; height: 164px; }
-.login-radar::after { width: 78px; height: 78px; }
-
-.login-radar span {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--live);
-  box-shadow: 0 0 0 5px rgb(16 185 129 / 0.12);
-}
-
-.login-radar span:nth-child(1) { top: 38px; left: 116px; }
-.login-radar span:nth-child(2) { top: 143px; left: 58px; }
-.login-radar span:nth-child(3) { top: 174px; right: 42px; background: var(--warning); box-shadow: 0 0 0 5px rgb(245 158 11 / 0.12); }
-
-.login-visual-label {
-  position: absolute;
-  left: var(--sp-5);
-  bottom: var(--sp-5);
-  color: var(--text-tertiary);
-  font-size: 10px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--track-wide);
-  text-transform: uppercase;
-}
-
 .login-card {
-  align-self: center;
   gap: var(--sp-4);
   max-width: none;
   padding: var(--sp-7);
@@ -3955,16 +3924,17 @@ legend {
   }
 
   .login-page {
+    /* Centred again on a phone. The right-alignment above buys separation from the artwork
+       on a wide screen; at this width the card is the full column and there is nothing to
+       sit beside, so holding it right would only shave the gutter unevenly.
+
+       `cover` on a tall, narrow viewport crops this square image to a vertical band through
+       its middle, which keeps the lens and the wordmark and loses the outer edges. That is
+       the right half to keep, so the default centre anchor stands — it is restated here
+       because the rule above sets `justify-content`, and a reader checking why the phone
+       layout looks different should find the answer in one place. */
+    justify-content: center;
     padding: var(--sp-4);
-  }
-
-  .login-shell {
-    display: block;
-    min-height: 0;
-  }
-
-  .login-visual {
-    display: none;
   }
 
   .login-card {
