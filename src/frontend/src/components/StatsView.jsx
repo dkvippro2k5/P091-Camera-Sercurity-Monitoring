@@ -10,6 +10,20 @@ function number(value) {
   return new Intl.NumberFormat().format(value ?? 0)
 }
 
+/**
+ * The manager's aggregate report.
+ *
+ * Mounted once and then kept alive for the session — `App` hides this screen rather than
+ * unmounting it when the manager switches to the history tab, so `data` and the socket below
+ * survive the switch. Two consequences worth knowing before editing:
+ *
+ *   - Effects here run once per *session*, not once per visit. Anything that should happen
+ *     each time the screen is opened cannot live in a `[]`-keyed effect any more.
+ *   - The socket stays connected while the screen is hidden. That is deliberate: it costs one
+ *     idle WebSocket and means the numbers are already current when the manager comes back,
+ *     rather than a placeholder and a refetch. It closes on sign-out, when `App` empties
+ *     `visitedScreens` and this really does unmount.
+ */
 export default function StatsView({ status }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -22,7 +36,27 @@ export default function StatsView({ status }) {
     const connect = () => {
       if (cancelled) return
       socket = new WebSocket(api.managerLiveUrl())
-      socket.onmessage = () => {
+      socket.onmessage = (event) => {
+        // Only refetch for messages that mean the numbers changed.
+        //
+        // Every message used to trigger one, and two of the three kinds never carry a change:
+        // `manager.connected` is the greeting sent the instant the socket opens, and
+        // `manager.status` is a camera-health heartbeat the server emits every 5 seconds
+        // whether or not anything happened. So the screen re-read `/statistics` — three JSONL
+        // files on the server — twice on open and then every five seconds for as long as the
+        // dashboard stayed up, to redraw figures that were almost always identical.
+        //
+        // Unparseable frames are ignored rather than treated as a change: a refetch is the
+        // expensive branch, so the safe default when the payload makes no sense is to skip it
+        // and wait for the next real event.
+        let type
+        try {
+          type = JSON.parse(event.data)?.type
+        } catch {
+          return
+        }
+        if (type === 'manager.connected' || type === 'manager.status') return
+
         // The event stream is the invalidation signal; the statistics endpoint remains the
         // single source of truth for the aggregate report and heat-map data.
         api.statistics().then((body) => !cancelled && setData(body)).catch(() => {})
@@ -42,7 +76,10 @@ export default function StatsView({ status }) {
 
   useEffect(() => {
     let cancelled = false
-    api.statistics()
+    // `cached: true` only here. This is the screen's first paint, where last session's figures
+    // beat a placeholder; the socket-driven refresh above deliberately bypasses the cache
+    // because its whole job is to fetch what the cache does not have.
+    api.statistics(true)
       .then((body) => !cancelled && setData(body))
       .catch((err) => !cancelled && setError(err.message))
     return () => { cancelled = true }

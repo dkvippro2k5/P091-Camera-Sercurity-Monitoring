@@ -104,6 +104,15 @@ h3 {
   border: 0;
 }
 
+/* The `hidden` attribute only sets `display: none` through a UA default, which any later
+   `display` rule silently beats — a wrapper given `display: flex` by a selector written for
+   something else stays fully visible while the markup insists it is hidden. The manager's
+   screens are kept mounted and toggled with this attribute, so that failure would paint the
+   report and the history on top of each other. Made explicit here so it cannot be lost. */
+[hidden] {
+  display: none !important;
+}
+
 /* ---------------------------------------------------------------- controls */
 button {
   font: inherit;
