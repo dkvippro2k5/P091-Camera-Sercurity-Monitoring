@@ -283,6 +283,80 @@ def test_alert_ring_buffer_is_bounded(service):
     assert len(service.list_alerts()) == monitoring_module._MAX_ALERTS
 
 
+# ------------------------------------------------------------------ incident history
+def _judge(service, alert_id: str, verdict: str, judged_by: str = "gwen") -> None:
+    service.record_operator_verdict(alert_id, verdict, judged_by=judged_by)
+
+
+def test_history_reads_the_durable_log_not_the_ring_buffer(service):
+    """The property the whole endpoint exists for.
+
+    `list_alerts` is a capped in-memory buffer; the history screen must not be built on it or
+    it would show only this process's tail and call it history. Firing past the cap and then
+    asserting the history is *larger* than the buffer is what tells the two apart — if this
+    ever starts matching `_MAX_ALERTS`, the source has silently reverted.
+    """
+    for _ in range(monitoring_module._MAX_ALERTS + 10):
+        service._emit_alert(camera_id="cam_1", label="intrusion", confidence=0.5, frame=_frame())
+
+    assert len(service.list_alerts()) == monitoring_module._MAX_ALERTS
+    assert service.incident_history(limit=1)["total"] == monitoring_module._MAX_ALERTS + 10
+
+
+def test_history_is_newest_first_and_paginates(service):
+    """Read from the top, and bounded — this list grows without limit on a 24/7 system."""
+    for index in range(5):
+        service._emit_alert(camera_id=f"cam_{index}", label="intrusion", confidence=0.5, frame=_frame())
+
+    page = service.incident_history(limit=2)
+    assert page["total"] == 5
+    assert len(page["items"]) == 2
+    # The log stores oldest-first; the screen reads newest-first.
+    assert page["items"][0]["camera_id"] == "cam_4"
+
+    second = service.incident_history(limit=2, offset=2)
+    assert [row["camera_id"] for row in second["items"]] == ["cam_2", "cam_1"]
+    # Pages do not overlap, which an off-by-one in the slice would break silently.
+    assert {row["alert_id"] for row in page["items"]}.isdisjoint({row["alert_id"] for row in second["items"]})
+
+
+def test_history_filters_including_the_absence_of_a_verdict(service):
+    """`unreviewed` is the question a manager actually opens this screen to ask.
+
+    It cannot be expressed by filtering on a stored value, because "nobody has looked at
+    this" is the *absence* of one — so it gets its own branch, and this is what pins it.
+    """
+    service._emit_alert(camera_id="cam_a", label="fall_detection", confidence=0.9, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+    judged = service.list_alerts()[0]
+    _judge(service, judged.id, "real")
+
+    assert service.incident_history(camera_id="cam_b")["total"] == 2
+    assert service.incident_history(label="fall_detection")["total"] == 1
+    assert service.incident_history(verdict="real")["total"] == 1
+    assert service.incident_history(verdict="unreviewed")["total"] == 2
+    # The judged row carries its attribution through the fold, which is what makes the
+    # history auditable rather than just a list of things that happened.
+    reviewed = service.incident_history(verdict="real")["items"][0]
+    assert reviewed["judged_by"] == "gwen"
+
+
+def test_history_filter_options_survive_being_filtered(service):
+    """The dropdowns are built from the whole log, not the filtered page.
+
+    Derived from the filtered rows instead, every option would vanish the moment it was
+    chosen and the operator could never widen the filter again without reloading.
+    """
+    service._emit_alert(camera_id="cam_a", label="fall_detection", confidence=0.9, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+
+    narrowed = service.incident_history(label="intrusion")
+    assert narrowed["total"] == 1
+    assert narrowed["labels"] == ["fall_detection", "intrusion"]
+    assert len(narrowed["cameras"]) == 2
+
+
 def test_frame_is_downscaled_before_upload():
     """A 1080p JPEG is ~10x the bytes of a 640px one, and the grid renders neither at size."""
     import cv2
@@ -300,10 +374,14 @@ def test_frame_is_downscaled_before_upload():
 # ------------------------------------------------------------------ routes
 # Every route below is behind auth now, so these use the signed-in fixtures from
 # `conftest.py` rather than a bare TestClient. Which fixture a test takes is itself an
-# assertion: every route in this file is the guard's — the live grid, the alerts, and camera
-# setup — so `guard_client` throughout, and `manager_client` appearing here would mean the
-# split had drifted. The manager's only surface is `/statistics`, tested in `test_auth.py`
-# alongside the 401/403 boundary itself.
+# assertion: every route in this file is the guard's — the live grid, the live alert buffer,
+# and camera setup — so `guard_client` throughout, and `manager_client` appearing here would
+# mean the split had drifted.
+#
+# The manager's surface is `/statistics` plus the read-only history routes (`/incidents`,
+# `/evidence`, `/similar`), which sit on the shared operator gate. All of it is tested in
+# `test_auth.py` alongside the 401/403 boundary itself, so that the read-versus-act line is
+# asserted in one place rather than inferred from which fixture each test happened to take.
 def test_health_and_demo_videos(guard_client):
     # /health stays public — it is the Docker healthcheck, which carries no cookie.
     assert guard_client.get("/health").json()["status"] == "ok"

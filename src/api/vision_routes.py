@@ -46,6 +46,7 @@ from src.models.camera_schemas import (
     CameraCreate,
     CameraInfo,
     DemoVideo,
+    IncidentPage,
     NotificationSettings,
     NotificationToggle,
     SimilarIncident,
@@ -481,15 +482,61 @@ async def list_alerts(request: Request, unacknowledged_only: bool = False) -> li
     return get_service(request).list_alerts(unacknowledged_only=unacknowledged_only)
 
 
-@router.get("/evidence/{evidence_id}")
+@operator_router.get("/incidents", response_model=IncidentPage)
+async def incident_history(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    camera_id: str | None = Query(default=None),
+    label: str | None = Query(default=None),
+    verdict: str | None = Query(default=None, pattern="^(real|false|unreviewed)$"),
+) -> IncidentPage:
+    """The durable event log, paged and filtered — what the manager's history screen reads.
+
+    Distinct from `/alerts`, which serves the live ring buffer for the guard's rail and is
+    capped and process-local. This reads `IncidentLog`, so it still answers "what happened on
+    Tuesday" after a restart. The two are not interchangeable and neither can replace the
+    other: the rail needs the triage payload the log never stored, and the history needs the
+    durability the buffer does not have.
+
+    On the shared gate: reviewing what the room did is a manager's job, and `/evidence` above
+    is widened to match so the thumbnails in this list actually resolve. Acting on any of it
+    remains the guard's — see that route's note.
+
+    `verdict` is validated by pattern rather than accepted freely, so an unknown value is a
+    422 instead of silently matching nothing and rendering as "no incidents" — which reads
+    identically to a quiet week and would hide the bug.
+
+    Blocking file I/O in the service, so off the event loop like every other such call.
+    """
+    page = await asyncio.to_thread(
+        get_service(request).incident_history,
+        limit,
+        offset,
+        camera_id,
+        label,
+        verdict,
+    )
+    return IncidentPage(**page)
+
+
+@operator_router.get("/evidence/{evidence_id}")
 async def incident_evidence(evidence_id: str, request: Request) -> Response:
-    """Serve one stored evidence frame through the authenticated guard surface.
+    """Serve one stored evidence frame to any signed-in operator.
 
     This is the only way an alert image reaches the browser — alerts carry a URL, never the
     image itself. Both storage backends are served here rather than only the local one: an
-    S3 deployment without a public base URL would otherwise have no reachable image at all,
-    and serving it through this route keeps `require_guard` in front of footage that, since
-    face blurring was removed, identifies people.
+    S3 deployment without a public base URL would otherwise have no reachable image at all.
+
+    On the shared gate rather than the guard's, which is a deliberate widening. It used to be
+    guard-only, on the reasoning that footage identifies people (face blurring was removed on
+    2026-08-10) and a manager reading statistics had no need of it. The manager's incident
+    history changed the second half of that: reviewing what the room actually did, and whether
+    a guard's verdict was right, cannot be done from a label and a timestamp — the frame *is*
+    the evidence being audited. The first half still holds, so the widening stops here: this
+    serves one stored still to an authenticated operator. Live footage (`/cameras/*/stream`,
+    the video socket) and every write — verdicts, acknowledgements, camera configuration —
+    stay on `require_guard`. A manager can see what happened; only a guard can act on it.
 
     `private` keeps proxies and CDNs from caching a frame and handing it to someone else,
     while still letting the operator's own browser reuse it — which is what makes reopening
@@ -558,7 +605,7 @@ async def submit_verdict(
     return Response(status_code=204)
 
 
-@router.get("/alerts/{alert_id}/similar", response_model=list[SimilarIncident])
+@operator_router.get("/alerts/{alert_id}/similar", response_model=list[SimilarIncident])
 async def similar_incidents(
     alert_id: str, request: Request, limit: int = Query(default=5, ge=1, le=20)
 ) -> list[SimilarIncident]:
@@ -570,6 +617,13 @@ async def similar_incidents(
     deployment starts with nothing to compare against. Never a 404/500 for "not configured
     yet" or "no matches" -- both read as an empty list, the same way a search with zero
     results is not an error.
+
+    On the shared gate so the manager's read-only incident view can render the same panel.
+    Worth stating what a manager gets from it in practice: `similar_incidents` resolves the
+    id against the live `_alerts` buffer, and a row opened from the durable history is
+    usually older than that buffer — so this returns an empty list and the panel renders
+    nothing. That is the already-correct behaviour for "no matches" rather than a gap to
+    paper over, and it is why widening the gate needs no change to the lookup itself.
     """
     rows = await asyncio.to_thread(get_service(request).similar_incidents, alert_id, limit)
     return [SimilarIncident(**row) for row in rows]

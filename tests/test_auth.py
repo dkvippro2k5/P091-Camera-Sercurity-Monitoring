@@ -40,6 +40,9 @@ AUTHENTICATED_ONLY = [
 
 OPERATOR_ONLY = [
     ("get", "/api/v1/monitoring/status"),
+    ("get", "/api/v1/incidents"),
+    ("get", "/api/v1/evidence/nope"),
+    ("get", "/api/v1/alerts/nope/similar"),
 ]
 
 
@@ -131,9 +134,46 @@ def test_a_guard_can_configure_cameras(guard_client):
 
 
 def test_a_manager_cannot_reach_guard_routes_but_can_read_shared_status(manager_client):
+    """The manager boundary is *read versus act*, and this is where that line falls.
+
+    A manager reviewing the room's work reaches the durable incident history and the stored
+    evidence stills it links to — auditing a guard's verdict against a label and a timestamp
+    alone is not auditing it. What stays refused is the live surface and every write: the
+    camera list, the live alert buffer behind the guard's rail, and the verdict route below.
+    """
+    # Refused: live footage and camera control.
     assert manager_client.get("/api/v1/cameras").status_code == 403
+    # Refused: the live ring buffer behind the guard's rail. The manager's equivalent is
+    # `/incidents`, which is the durable log rather than this process's tail.
     assert manager_client.get("/api/v1/alerts").status_code == 403
+    # Refused: the guard's write path. Reviewing is not judging.
+    assert manager_client.post("/api/v1/alerts/anything/verdict", json={"verdict": "real"}).status_code == 403
+    assert manager_client.post("/api/v1/alerts/anything/acknowledge").status_code == 403
+    # Refused: the live alert stream.
+    assert manager_client.get("/api/v1/events").status_code == 403
+
+    # Allowed: shared status, and the read-only history surface.
     assert manager_client.get("/api/v1/monitoring/status").status_code == 200
+    assert manager_client.get("/api/v1/incidents").status_code == 200
+    assert manager_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    # 404 rather than 403: the gate passed and the handler ran on an id that does not exist.
+    # A 403 here would mean evidence had drifted back behind the guard-only router and the
+    # thumbnails in the history list would silently stop resolving.
+    assert manager_client.get("/api/v1/evidence/does-not-exist").status_code == 404
+
+
+def test_a_guard_keeps_the_history_surface_too(guard_client):
+    """Widening these to the shared gate must not have moved them off the guard.
+
+    The guard's rail and modal read `/evidence` and `/similar` on every alert they open. A
+    change that handed those to the manager by taking them from the guard would break the
+    screen the product exists for, and would do it silently — the images would just stop
+    appearing.
+    """
+    assert guard_client.get("/api/v1/incidents").status_code == 200
+    assert guard_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    assert guard_client.get("/api/v1/evidence/does-not-exist").status_code == 404
+    assert guard_client.get("/api/v1/alerts").status_code == 200
 
 
 def test_every_gated_route_is_401_when_signed_out(anon_client):

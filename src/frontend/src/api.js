@@ -124,6 +124,18 @@ export const api = {
   // --- Manager surface ----------------------------------------------------------------------
   statistics: () => request('/statistics'),
 
+  // The durable event log, paged. Distinct from `listAlerts`, which is the guard's live ring
+  // buffer: this one survives a restart and is what the history screen reads. Undefined
+  // filters are dropped rather than sent as the string "undefined", which the route's
+  // `verdict` pattern would reject with a 422.
+  incidents: ({ limit = 50, offset = 0, cameraId, label, verdict } = {}) => {
+    const params = new URLSearchParams({ limit, offset })
+    if (cameraId) params.set('camera_id', cameraId)
+    if (label) params.set('label', label)
+    if (verdict) params.set('verdict', verdict)
+    return request(`/incidents?${params}`)
+  },
+
   previewFrameUrl: (sourceType, source) =>
     `${BASE}/preview-frame?source_type=${sourceType}&source=${encodeURIComponent(source)}`,
 

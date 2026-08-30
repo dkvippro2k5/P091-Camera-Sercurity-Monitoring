@@ -231,6 +231,55 @@ class SimilarIncident(BaseModel):
     created_at: str
 
 
+class IncidentRecord(BaseModel):
+    """One folded row from `IncidentLog.incidents()` — the durable event history.
+
+    Deliberately **not** `Alert`. The two look alike and differ in the ways that matter:
+
+    - `Alert` is the live ring buffer (`MonitoringService._alerts`, capped and gone on
+      restart). This is the append-only log, which is every alert ever raised and survives a
+      restart. A history screen fed from `Alert` would silently show only the current
+      process's tail and call it "history".
+    - `Alert` carries the triage payload the guard's modal acts on — `evidence_frames`,
+      `triage_*`, `reason`. The log never stored those, so modelling them here would promise
+      fields that are always empty.
+
+    `reviewed_at` and `judged_by` come from the fold of the alert row with its later review
+    row, which is why they are optional: an incident nobody has judged yet has neither.
+    """
+
+    alert_id: str
+    camera_id: str
+    camera_name: str
+    label: str
+    confidence: float = 0.0
+    created_at: str
+    evidence_url: str | None = None
+    operator_verdict: OperatorVerdict | None = None
+    judged_by: str | None = None
+    operator_note: str | None = None
+    actual_event_type: str | None = None
+    reviewed_at: str | None = None
+
+
+class IncidentPage(BaseModel):
+    """One page of history, plus the totals a UI needs to describe what it is showing.
+
+    `total` is the count *after* filtering and before pagination, so the client can render
+    "showing 50 of 812" without fetching the rest. `cameras` and `labels` are the distinct
+    values present across the whole unfiltered log — the filter dropdowns are built from
+    them, and deriving them from the current page instead would make the options vanish as
+    the operator narrows the filter.
+    """
+
+    items: list[IncidentRecord] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    cameras: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+
+
 class NotificationSettings(BaseModel):
     enabled: bool
     configured: bool

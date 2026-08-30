@@ -3,7 +3,18 @@ import { api } from '../api'
 import { useFocusTrap } from '../useFocusTrap'
 import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incidents'
 
-export default function AlertModal({ alert, queued = 0, isHistory = false, onVerdict, onClose }) {
+/**
+ * `readOnly` is the manager's view of a past incident: the same evidence and AI assessment a
+ * guard sees, with no way to record a judgement. It is distinct from `isHistory`, which is a
+ * guard reopening an old alert — that one still offers the verdict buttons, because a guard
+ * revisiting an unjudged incident is exactly who should be able to judge it late.
+ *
+ * The reason it is a prop rather than something inferred from the alert: the verdict route is
+ * guard-gated, so a manager pressing those buttons gets a 403. Showing a control whose only
+ * outcome is an error is worse than not showing it — and inferring "hide them" from a missing
+ * verdict would also hide them from the guard, who is the one person meant to have them.
+ */
+export default function AlertModal({ alert, queued = 0, isHistory = false, readOnly = false, onVerdict, onClose }) {
   const meta = incidentMeta(alert.label)
   const dialogRef = useFocusTrap(true)
   const [note, setNote] = useState(alert.operator_note || '')
@@ -62,7 +73,19 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
 
           <TriagePanel alert={alert} />
           <SimilarIncidents alertId={alert.id} />
-          {!alert.operator_verdict && (
+          {/* Inputs whose only submit path is the guard-gated verdict route, so they are not
+              offered to a read-only viewer — a manager filling in a note that can never be
+              saved is worse than not being asked. Their recorded values are shown instead. */}
+          {readOnly && (alert.operator_note || alert.actual_event_type) && (
+            <div className="reason">
+              <span className="fact-label">Ghi nhận của bảo vệ</span>
+              <span>
+                {alert.actual_event_type && <strong>{alert.actual_event_type}</strong>}
+                {alert.operator_note && <span> {alert.operator_note}</span>}
+              </span>
+            </div>
+          )}
+          {!readOnly && !alert.operator_verdict && (
             <div className="operator-feedback">
               <label htmlFor="actual-event-type">
                 Thực tế đã xảy ra điều gì?
@@ -84,7 +107,18 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, onVer
         </div>
 
         <div className="modal-foot">
-          {isHistory ? (
+          {readOnly ? (
+            <>
+              <span className="queued">
+                {alert.operator_verdict === 'real' && 'Đã ghi nhận là sự cố thật'}
+                {alert.operator_verdict === 'false' && 'Đã ghi nhận là báo động giả'}
+                {!alert.operator_verdict && 'Chưa có kết luận của bảo vệ'}
+              </span>
+              <button data-autofocus onClick={onClose}>
+                Đóng
+              </button>
+            </>
+          ) : isHistory ? (
             <>
               {alert.operator_verdict ? (
                 <>
