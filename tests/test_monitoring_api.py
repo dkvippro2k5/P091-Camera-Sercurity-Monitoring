@@ -162,6 +162,86 @@ def test_replay_replaces_an_ended_worker_without_removing_the_camera(service, mo
     assert camera.stopped_reason is None
 
 
+# ------------------------------------------------------------------ deferred start
+class _FakeWorker:
+    def __init__(self):
+        self.started = False
+        self.pipeline = type("Pipeline", (), {})()
+
+    def start(self):
+        self.started = True
+
+
+def _stub_worker(service, monkeypatch) -> _FakeWorker:
+    """Replace the real worker factory, so nothing opens a video or a socket."""
+    worker = _FakeWorker()
+    monkeypatch.setattr(service.manager, "add_camera", lambda **_: worker)
+    monkeypatch.setattr(
+        service.manager,
+        "start_camera",
+        lambda camera_id: (worker.start(), True)[1],
+    )
+    return worker
+
+
+def test_a_file_source_waits_for_its_first_viewer(service, monkeypatch, tmp_path):
+    """The uploaded clip must not play to an empty room.
+
+    `add_camera` returns in ~15ms while the worker decodes at the file's own frame rate, so
+    anything started here is already seconds in by the time the browser has re-rendered onto
+    the grid and finished the video socket's handshake. Those seconds are not buffered — the
+    operator who just uploaded a clip would watch it from the middle.
+    """
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"not really a video, never opened")
+    monkeypatch.setattr(service, "resolve_source", lambda source_type, source: str(clip))
+    worker = _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(CameraCreate(name="Clip", source_type="upload", source=str(clip)))
+
+    assert worker.started is False, "the file began decoding before anyone could watch it"
+    assert info.id in service._awaiting_viewer
+
+    # The first viewer attaching is what starts it.
+    assert service.start_if_awaiting_viewer(info.id) is True
+    assert worker.started is True
+    # And a second viewer must not restart it, nor claim to have started anything.
+    assert service.start_if_awaiting_viewer(info.id) is False
+
+
+def test_an_rtsp_camera_starts_immediately(service, monkeypatch):
+    """A live camera exists to be monitored whether or not anyone has the grid open.
+
+    Deferring RTSP would mean no alerts fire on an unattended wall display, which inverts
+    what the product is for. Only a finite file — whose beginning is reproducible and whose
+    purpose here is to be watched — waits.
+    """
+    worker = _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(
+        CameraCreate(name="Live", source_type="rtsp", source="rtsp://example/stream")
+    )
+
+    assert worker.started is True
+    assert info.id not in service._awaiting_viewer
+    # Nothing to start later, so the viewer hook is a no-op.
+    assert service.start_if_awaiting_viewer(info.id) is False
+
+
+def test_removing_a_never_watched_camera_clears_the_pending_flag(service, monkeypatch, tmp_path):
+    """Otherwise a later camera reusing that id would refuse to start on its first viewer."""
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    monkeypatch.setattr(service, "resolve_source", lambda source_type, source: str(clip))
+    _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(CameraCreate(name="Clip", source_type="upload", source=str(clip)))
+    assert info.id in service._awaiting_viewer
+
+    service.remove_camera(info.id)
+    assert info.id not in service._awaiting_viewer
+
+
 # ------------------------------------------------------------------ alerts
 def test_alert_carries_the_frame_and_the_rule_reason(service):
     """An event must publish immediately, carrying its own evidence.

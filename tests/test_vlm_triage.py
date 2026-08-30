@@ -271,21 +271,59 @@ def test_empty_ring_yields_no_frames(make_service):
     assert service._collect_clip("cam_unknown") == ([], 0)
 
 
-def test_missing_before_or_after_evidence_is_uncertain(make_service):
-    """A one-sided clip cannot establish a transition and must not spend an API call."""
+def test_missing_after_evidence_is_uncertain(make_service):
+    """No aftermath means no outcome to judge, so the call is not worth making.
+
+    The camera died at the moment of the event. Whatever the lead-up showed, nothing can say
+    whether the person got up — which is the question the assessment exists to answer.
+    """
     triage = FakeTriage(verdict="real")
     service = make_service(triage=triage)
     service.triage = NullVLMTriage()
     alert = _emit(service)
     service.triage = triage
-    service._ring["cam_1"] = __import__("collections").deque([(time.monotonic(), b"after")], maxlen=8)
+    # Everything sits before the split point, so `post` is empty.
+    stale = time.monotonic() - service._post_roll_sec - 1.0
+    service._ring["cam_1"] = deque([(stale, b"before")], maxlen=8)
     service._triage_in_flight = 1
 
     service._run_triage(alert)
 
     assert alert.triage_verdict == "uncertain"
-    assert "insufficient visual evidence" in (alert.triage_error or "")
+    assert "no frames after the event" in (alert.triage_error or "")
     assert triage.requests == []
+
+
+def test_missing_before_evidence_is_still_assessed(make_service):
+    """The regression this pair exists to prevent: a startup alert must still be judged.
+
+    Both sides used to be required, which quietly made every alert in a camera's first
+    seconds unassessable — the ring fills from empty, so `pre` is 0 at t≈1s on a 5fps camera
+    with a 5s pre-roll. The operator saw "không thể đánh giá" on exactly the alerts a freshly
+    started clip produces, with nothing they could do about it.
+
+    Aftermath alone still answers most of the question, and the prompt tells the model the
+    split is 0-before so it can weigh a thin clip itself rather than being second-guessed here.
+    """
+    triage = FakeTriage(verdict="real")
+    service = make_service(triage=triage)
+    service.triage = NullVLMTriage()
+    alert = _emit(service)
+    service.triage = triage
+    # Stamped ahead of the split so the frame counts as "after". `_collect_clip` computes the
+    # split as `now - post_roll` at call time, and post_roll is 0 in these tests — so a frame
+    # stamped at the current instant would already be in the past by the time the split is
+    # taken, and would land on the "before" side instead of the side under test.
+    service._ring["cam_1"] = deque([(time.monotonic() + 1.0, b"after")], maxlen=8)
+    service._triage_in_flight = 1
+
+    service._run_triage(alert)
+
+    assert alert.triage_verdict == "real"
+    assert alert.triage_error is None
+    # The model was actually consulted, and told there is no lead-up to reason from.
+    assert len(triage.requests) == 1
+    assert triage.requests[0].pre_count == 0
 
 
 def test_ring_capacity_uses_camera_target_fps(make_service):
