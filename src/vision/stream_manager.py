@@ -376,6 +376,22 @@ class MultiStreamManager:
             worker = self.workers.get(camera_id)
         return worker.get_h264_encoder() if worker else None
 
+    def start_camera(self, camera_id: str) -> bool:
+        """Start the named camera's threads if it has a worker. False if it has none.
+
+        `CameraStreamWorker.start` is itself idempotent, so calling this on an already-running
+        camera is harmless. Exposed because `add_camera(autostart=False)` leaves the decision
+        to the caller, and the deferred-start path in `MonitoringService` needs to make that
+        decision later — from the request that attaches the first viewer, rather than from
+        the one that created the camera.
+        """
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        if worker is None:
+            return False
+        worker.start()
+        return True
+
     def remove_camera(self, camera_id: str) -> bool:
         """Stop and remove a camera stream by ID."""
         with self._workers_lock:

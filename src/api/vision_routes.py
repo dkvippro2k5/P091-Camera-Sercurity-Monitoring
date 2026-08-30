@@ -277,6 +277,11 @@ async def camera_stream(camera_id: str, request: Request, fps: float = Query(def
     if service.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail=f"No camera '{camera_id}'")
 
+    # The MJPEG path is a real viewer too — it is what a browser without MediaSource gets, and
+    # what the client falls back to when H.264 is unavailable. Without this, a deferred clip
+    # would never start for those viewers and the tile would stay black forever.
+    await asyncio.to_thread(service.start_if_awaiting_viewer, camera_id)
+
     boundary = "frame"
     interval = 1.0 / fps
 
@@ -347,6 +352,13 @@ async def camera_video(websocket: WebSocket, camera_id: str) -> None:
     if service.get_camera(camera_id) is None:
         await websocket.close(code=1008, reason=f"No camera '{camera_id}'")
         return
+
+    # An uploaded clip does not begin decoding until someone is here to watch it, so this is
+    # where it starts. Before `accept()` and before the encoder is asked for output: the wait
+    # for the first fragment below is bounded, and starting the worker after entering that
+    # wait would spend the budget on a camera that had not been told to run yet.
+    # No-op for a live camera, and for a file a second viewer already started.
+    await asyncio.to_thread(service.start_if_awaiting_viewer, camera_id)
 
     await websocket.accept()
 
