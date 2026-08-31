@@ -210,6 +210,10 @@ class MonitoringService:
         # whatever the newest frame is — a "clip" of identical images. These are the same
         # bytes `_on_frame` already encodes for the preview, so this costs no extra encode.
         self._ring: dict[str, deque[tuple[float, bytes]]] = {}
+        # Cameras registered but not yet decoding, waiting for their first viewer. Only ever
+        # holds finite file sources — see `add_camera`. Guarded by `self._lock`, because two
+        # viewers attaching at once must still start the worker exactly once.
+        self._awaiting_viewer: set[str] = set()
         self._pre_roll_sec = settings.vlm_pre_roll_sec
         self._post_roll_sec = settings.vlm_post_roll_sec
         self._max_frames = settings.vlm_max_frames
@@ -401,12 +405,56 @@ class MonitoringService:
                     **payload.fall_perspective.model_dump(exclude_none=True)
                 ),
             )
+        # A finite file waits for its first viewer; a live camera does not.
+        #
+        # `worker.start()` begins decoding immediately, and `add_camera` returns ~15ms later —
+        # long before the browser has re-rendered onto the grid and completed the video
+        # socket's handshake. A file source is paced to its own frame rate, so those seconds
+        # are not buffered anywhere: they are decoded, analysed and discarded, and the
+        # operator who just uploaded a clip watches it from the middle. On a short clip that
+        # is most of the evidence.
+        #
+        # RTSP is deliberately excluded. A live camera exists to be monitored whether or not
+        # anyone has the grid open — deferring it would mean no alerts fire on an unattended
+        # wall display, which inverts the product. Only a finite file, whose beginning is
+        # reproducible and whose whole purpose here is to be watched, waits.
         if worker is not None:
-            worker.start()
+            if self._defers_start(payload.source_type):
+                with self._lock:
+                    self._awaiting_viewer.add(camera_id)
+                logger.info(f"Camera '{info.name}' ({camera_id}) registered on {resolved}; waiting for a viewer")
+            else:
+                worker.start()
+                logger.info(f"Camera '{info.name}' ({camera_id}) started on {resolved}")
         self._persist_registry()
         self._publish("camera.added", info.model_dump())
-        logger.info(f"Camera '{info.name}' ({camera_id}) started on {resolved}")
         return info
+
+    @staticmethod
+    def _defers_start(source_type: str) -> bool:
+        """Should this source wait for a viewer before it begins decoding?
+
+        Files only. See the note in `add_camera` for why RTSP must never wait.
+        """
+        return source_type != "rtsp"
+
+    def start_if_awaiting_viewer(self, camera_id: str) -> bool:
+        """Begin decoding a deferred camera, if this is the first viewer to ask.
+
+        Called from the video socket and the MJPEG stream as a viewer attaches. Idempotent
+        and safe to call on any camera: a camera that was never deferred, or that a previous
+        viewer already started, is left alone — the set membership check under the lock is
+        what makes two viewers connecting at once start the worker exactly once.
+        """
+        with self._lock:
+            if camera_id not in self._awaiting_viewer:
+                return False
+            self._awaiting_viewer.discard(camera_id)
+
+        if not self.manager.start_camera(camera_id):
+            return False
+        logger.info(f"[{camera_id}] first viewer attached; started from the beginning")
+        return True
 
     def replay_camera(self, camera_id: str) -> CameraInfo | None:
         """Restart an ended file source under the same configured camera id."""
@@ -449,6 +497,9 @@ class MonitoringService:
             existed = self._cameras.pop(camera_id, None) is not None
             self._frames.pop(camera_id, None)
             self._ring.pop(camera_id, None)
+            # Or a camera deleted before anyone ever watched it would leave its id behind,
+            # and a later camera reusing that id would refuse to start on its first viewer.
+            self._awaiting_viewer.discard(camera_id)
         self.zone_manager.clear_zones(camera_id)
         if existed:
             self._persist_registry()
@@ -706,10 +757,27 @@ class MonitoringService:
         pre_count: int,
         examples: list[str],
     ) -> TriageVerdict:
-        if pre_count < 1 or len(frames) - pre_count < 1:
+        # What makes a clip unassessable is having nothing *after* the trigger, not having
+        # nothing before it. The two were treated the same and they are not the same.
+        #
+        # Missing "after" means the camera died at the moment of the event: there is no
+        # outcome to judge, and the call would be wasted. Missing "before" means the event
+        # happened near the start of the ring — which is the common case, not an edge one.
+        # The ring fills from empty when a camera starts, so on a 5fps camera with a 5s
+        # pre-roll `pre` is 0 at t≈1s and only reaches 3 by t≈3s (measured). Every alert in
+        # that window was refused an assessment and surfaced to the operator as "không thể
+        # đánh giá" — a failure they can do nothing about, on exactly the alerts a freshly
+        # started clip produces.
+        #
+        # A clip with only aftermath still carries most of the signal: whether someone stayed
+        # down is what separates a fall from a stumble. `pre_count` is passed through and the
+        # prompt states the split ("Frames: 0 before the trigger, N after"), so the model is
+        # told what it is missing and can answer `uncertain` itself if that matters — which
+        # is the judgement it exists to make, and a better one than this branch guessing.
+        if not frames or len(frames) - pre_count < 1:
             return TriageVerdict(
                 verdict="uncertain",
-                error="insufficient visual evidence: missing before or after frames",
+                error="insufficient visual evidence: no frames after the event",
             )
         return self.triage.assess(
             TriageRequest(
@@ -961,6 +1029,67 @@ class MonitoringService:
             "reviewers": sorted({row["judged_by"] for row in reviewed if row.get("judged_by")}),
             "first_alert": rows[0].get("created_at") if rows else None,
             "last_alert": rows[-1].get("created_at") if rows else None,
+        }
+
+    def incident_history(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        camera_id: str | None = None,
+        label: str | None = None,
+        verdict: str | None = None,
+    ) -> dict:
+        """A page of the durable event log, newest first, for the manager's history screen.
+
+        Reads `IncidentLog`, not the `_alerts` ring buffer. The buffer is capped and dies with
+        the process — a "history" built on it would quietly show a few recent alerts and hide
+        everything from before the last restart, which is the opposite of what the screen is
+        for. `operational_stats` above reads the same log for the same reason.
+
+        Newest first, unlike the log's own oldest-first order: a history screen is read from
+        the top, and an operator looking for last night's incident should not have to page to
+        the end to find it.
+
+        `verdict` accepts the two recorded values plus `"unreviewed"`, which is not a verdict
+        but the absence of one. It has to be expressible: "what has nobody looked at yet" is
+        the question a manager actually opens this screen to answer, and it cannot be asked by
+        filtering on a value that was never written.
+
+        Paginated because this list grows without bound. Every alert the system has ever
+        raised is in here, and serving all of it would put an unbounded response on a route
+        the dashboard polls.
+
+        Blocking file I/O — call it off the event loop.
+        """
+        rows = self.incidents.incidents()
+
+        # Built before filtering: these populate the screen's filter dropdowns, and deriving
+        # them from the filtered rows would make each option disappear as soon as it was
+        # chosen — the operator could never widen a filter again without reloading.
+        cameras = sorted({row.get("camera_name") or row.get("camera_id") or "unknown" for row in rows})
+        labels = sorted({row.get("label") or "unknown" for row in rows})
+
+        if camera_id:
+            rows = [row for row in rows if row.get("camera_id") == camera_id]
+        if label:
+            rows = [row for row in rows if row.get("label") == label]
+        if verdict == "unreviewed":
+            rows = [row for row in rows if not row.get("operator_verdict")]
+        elif verdict:
+            rows = [row for row in rows if row.get("operator_verdict") == verdict]
+
+        total = len(rows)
+        # Reversed rather than re-sorted: `incidents()` already guarantees oldest-first, so
+        # this is the same ordering read the other way and costs nothing extra.
+        page = list(reversed(rows))[offset : offset + limit]
+
+        return {
+            "items": page,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "cameras": cameras,
+            "labels": labels,
         }
 
     def heatmap(self) -> dict:

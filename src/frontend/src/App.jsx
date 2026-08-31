@@ -6,21 +6,25 @@ import ActivityRail from './components/ActivityRail'
 import Masthead from './components/Masthead'
 import Login from './components/Login'
 import StatsView from './components/StatsView'
+import EventHistory from './components/EventHistory'
 import VerifyingCard from './components/VerifyingCard'
 import NotificationToggle from './components/NotificationToggle'
-import { api, setUnauthorizedHandler } from './api'
+import { api, clearApiCache, setUnauthorizedHandler } from './api'
 import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview } from './incidents'
 
 const MAX_HISTORY = 60
 
 // Which screens each role may reach. The guard runs the room — live grid plus camera setup;
-// the manager reads statistics and is offered nothing else.
+// the manager reads statistics and the event history.
 //
-// The API enforces the same boundary. Shared monitoring health is exposed separately so a
-// manager can keep the masthead current without receiving camera footage or incident data.
+// The API enforces the same boundary, and draws it at read-versus-act rather than at the two
+// roles: the history screen and the evidence stills it links to sit on the shared operator
+// gate (`require_operator`), while live footage and every write — verdicts, acknowledgements,
+// camera configuration — stay guard-only. So a manager can review what happened and cannot
+// change any of it, which is what the read-only detail view below relies on.
 const SCREENS = {
   guard: ['grid', 'setup'],
-  manager: ['stats'],
+  manager: ['stats', 'history'],
 }
 
 export default function App() {
@@ -37,10 +41,26 @@ export default function App() {
   // Set when the operator opens a past alert from the rail, so re-reading a resolved
   // incident does not require a new one to fire.
   const [inspectingId, setInspectingId] = useState(null)
+  // The manager's history detail, held as the row itself rather than an id. It comes from
+  // `/incidents` (the durable log), not from `alerts` — so there is no list here to look an
+  // id up in, and reusing `inspectingId` would silently resolve to `null` and render nothing.
+  const [historyRow, setHistoryRow] = useState(null)
   const [dismissedAlertIds, setDismissedAlertIds] = useState(() => new Set())
   // Whether the guard has collapsed the activity rail sidebar on the live grid page (defaults to true so grid is un-obscured).
   // Always start closed on a fresh page load; the handle remains available to pull it out.
   const [railCollapsed, setRailCollapsed] = useState(true)
+  // Which of the manager's screens have been opened at least once this session.
+  //
+  // Those two are rendered once and then kept mounted, hidden rather than unmounted, so
+  // switching tabs does not throw their state away. Unmounting them meant every return to
+  // the report screen restarted from `data === null` — a "Đang chuẩn bị báo cáo…" placeholder
+  // and a fresh `/statistics` call that re-reads three JSONL files on the server — and every
+  // return to the history screen forgot which filter and page the operator was on. Neither
+  // is a page you visit once: a manager flips between them.
+  //
+  // Tracked in a set rather than rendering both from the start so the work is still deferred
+  // until the screen is actually asked for. A guard never adds an entry here at all.
+  const [visitedScreens, setVisitedScreens] = useState(() => new Set())
 
   // The alert half of the app — modal, rail, backlog badge, incident stream — is the guard's.
   const isGuard = user?.role === 'guard'
@@ -61,7 +81,15 @@ export default function App() {
     setStatus(null)
     setAlerts([])
     setInspectingId(null)
+    setHistoryRow(null)
     setDismissedAlertIds(new Set())
+    // Unmounts the kept-alive manager screens, which is what actually discards the statistics
+    // and incident rows they were holding. Without this the next operator to sign in at the
+    // same terminal would briefly see the previous one's report behind the login form.
+    setVisitedScreens(new Set())
+    // The component state above lives and dies with the mount; the `/statistics` cache does
+    // not, so it has to be emptied by hand or it would outlive the session that fetched it.
+    clearApiCache()
     setScreen('grid')
   }, [])
 
@@ -282,6 +310,28 @@ export default function App() {
     setInspectingId(null)
   }
 
+  // A role that cannot reach the current screen is put back on its own first screen — not on
+  // the grid. `screen` initialises to 'grid', and a manager restoring a session by refreshing
+  // never passes through `handleLogin`, so a hardcoded 'grid' fallback here leaves them on a
+  // screen no `current ===` branch matches: a blank stage under a working masthead.
+  //
+  // Computed above the early returns below, not after them: `visitedScreens` is filled from an
+  // effect keyed on it, and a hook cannot sit after a conditional return. `user` is still
+  // `undefined`/`null` on those paths, so `allowed` falls back to the guard's list and
+  // `current` is a value nothing renders from — harmless, because the returns below run first.
+  const allowed = SCREENS[user?.role] ?? SCREENS.guard
+  const current = allowed.includes(screen) ? screen : allowed[0]
+
+  // Records a screen the first time it is actually shown, which is what lets the two manager
+  // screens stay mounted afterwards. Guarded on `user` so the login and session-check renders
+  // above do not record 'grid' for a session that does not exist yet, and it only ever grows
+  // — `signedOut` is what empties it, so one operator's visits do not survive into the next
+  // one's session on a shared terminal.
+  useEffect(() => {
+    if (!user) return
+    setVisitedScreens((prev) => (prev.has(current) ? prev : new Set(prev).add(current)))
+  }, [user, current])
+
   if (user === undefined) {
     return (
       <div className="login-page">
@@ -291,13 +341,6 @@ export default function App() {
   }
 
   if (user === null) return <Login onLogin={handleLogin} />
-
-  // A role that cannot reach the current screen is put back on its own first screen — not on
-  // the grid. `screen` initialises to 'grid', and a manager restoring a session by refreshing
-  // never passes through `handleLogin`, so a hardcoded 'grid' fallback here leaves them on a
-  // screen no `current ===` branch matches: a blank stage under a working masthead.
-  const allowed = SCREENS[user.role] ?? SCREENS.guard
-  const current = allowed.includes(screen) ? screen : allowed[0]
 
   return (
     <div className={`app role-${user.role} ${active ? 'modal-open' : ''}`}>
@@ -339,7 +382,26 @@ export default function App() {
                 onDelete={handleDeleteCamera}
               />
             )}
-            {current === 'stats' && <StatsView status={status} />}
+            {/* The manager's two screens are hidden rather than unmounted, so flipping between
+                them keeps the report already fetched and the history on the page and filter
+                the operator had chosen. Unmounting reset both to their empty state and fired a
+                fresh request every time — on `/statistics` that is three JSONL files re-read
+                on the server for a screen the operator was looking at seconds ago.
+
+                `visitedScreens` gates the first mount so nothing is fetched for a screen never
+                opened; after that the wrapper only toggles `hidden`. The guard's screens keep
+                unmounting: the grid holds live video sockets that should close when it is not
+                on screen, and the setup form is a task you finish and leave. */}
+            {visitedScreens.has('stats') && (
+              <div hidden={current !== 'stats'}>
+                <StatsView status={status} />
+              </div>
+            )}
+            {visitedScreens.has('history') && (
+              <div hidden={current !== 'history'}>
+                <EventHistory onInspect={setHistoryRow} />
+              </div>
+            )}
           </div>
         </main>
 
@@ -357,6 +419,25 @@ export default function App() {
       </div>
 
       {isGuard && pendingAlerts.length > 0 && <VerifyingCard pendingAlerts={pendingAlerts} />}
+
+      {/* The manager's read-only detail view: same evidence and AI assessment, no verdict
+          controls — those post to a guard-gated route, so offering them here would only
+          produce a 403. `readOnly` is what selects that footer; see the note on AlertModal
+          for why it is a separate flag from `isHistory`.
+
+          The row is reshaped to `Alert` here rather than inside `EventHistory`: `/incidents`
+          keys the id as `alert_id` and the modal reads `alert.id`, and doing it at this one
+          boundary keeps the history component free of the modal's field names. */}
+      {historyRow && (
+        <AlertModal
+          key={historyRow.alert_id}
+          alert={{ ...historyRow, id: historyRow.alert_id }}
+          isHistory
+          readOnly
+          onVerdict={() => {}}
+          onClose={() => setHistoryRow(null)}
+        />
+      )}
 
       {active && (
         <AlertModal

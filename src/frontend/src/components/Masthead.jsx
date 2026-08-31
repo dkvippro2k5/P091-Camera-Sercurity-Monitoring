@@ -15,6 +15,7 @@ const NAV = {
   grid: 'Giám sát',
   setup: 'Camera',
   stats: 'Báo cáo',
+  history: 'Lịch sử',
 }
 
 const ROLE_LABEL = { guard: 'Bảo vệ', manager: 'Quản lý' }
