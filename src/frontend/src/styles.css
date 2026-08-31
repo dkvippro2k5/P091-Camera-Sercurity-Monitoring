@@ -104,6 +104,15 @@ h3 {
   border: 0;
 }
 
+/* The `hidden` attribute only sets `display: none` through a UA default, which any later
+   `display` rule silently beats — a wrapper given `display: flex` by a selector written for
+   something else stays fully visible while the markup insists it is hidden. The manager's
+   screens are kept mounted and toggled with this attribute, so that failure would paint the
+   report and the history on top of each other. Made explicit here so it cannot be lost. */
+[hidden] {
+  display: none !important;
+}
+
 /* ---------------------------------------------------------------- controls */
 button {
   font: inherit;
@@ -203,19 +212,42 @@ input[type='file'] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
+  /* Wraps rather than overflowing. The switch below has a `min-width` floor it must not go
+     under — its label would truncate — so on a narrow card there is a width at which the row
+     genuinely cannot fit, and the switch has to drop onto its own line instead of pushing out
+     through the card's right edge, which is what it was doing. */
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-4);
   margin-bottom: var(--sp-4);
   padding: var(--sp-4) var(--sp-5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-md);
   background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
 }
-.notification-copy { display: flex; align-items: center; gap: var(--sp-3); }
-.notification-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface-3); color: var(--text-secondary); }
+.notification-copy { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+/* `flex: none` is what keeps the glyph round. As a flex item it was free to shrink below its
+   36px width while `height` stayed fixed, so on a narrow viewport the circle — and the ✈
+   inside it — squashed into a vertical ellipse. `aspect-ratio` holds the shape even if the
+   width is ever changed, and `line-height: 1` stops the glyph's own metrics adding height. */
+.notification-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  aspect-ratio: 1;
+  line-height: 1;
+  font-size: 16px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
 .notification-card.is-on .notification-icon { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .notification-card h2 { font-size: var(--fs-md); }
 .notification-card p { margin: 3px 0 0; color: var(--text-secondary); font-size: var(--fs-sm); }
-.notification-switch { min-width: 112px; justify-content: space-between; gap: var(--sp-2); }
+/* `flex: none` so the button keeps its floor instead of being compressed by the copy beside
+   it — without it the 112px minimum was overridden by flex shrinking and the label clipped. */
+.notification-switch { flex: none; min-width: 112px; justify-content: space-between; gap: var(--sp-2); }
 .notification-switch i { width: 30px; height: 18px; border-radius: 99px; background: var(--border-strong); position: relative; }
 .notification-switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-primary); transition: transform 120ms ease; }
 .notification-card.is-on .notification-switch { border-color: var(--accent); }
@@ -326,6 +358,15 @@ input[type='file'] {
   display: block;
   width: 100%;
   min-height: 0;
+  /* The grid item under `.app`, and the one place the intrinsic-width chain has to stop.
+     `min-width: auto` here means "at least as wide as my widest content", so any descendant
+     with a fixed minimum — the history table's 620px is the current one — stretches this box
+     and, with it, the masthead and every other row of the shell. `.app` has `overflow: hidden`,
+     so the result is not a scrollbar but silent clipping: the last nav tab simply leaves the
+     screen while `document.scrollWidth` still measures a clean 390px.
+
+     Anything genuinely wider than the viewport scrolls inside its own wrapper instead. */
+  min-width: 0;
 }
 
 .stage {
@@ -336,13 +377,15 @@ input[type='file'] {
 .stage-inner {
   max-width: var(--grid-max);
   margin: 0 auto;
+  /* Floors the intrinsic-width chain at the stage. Any descendant with a `min-width` — the
+     history table is the current one — otherwise widens this box, and through it `.stage`
+     and the whole app shell, because `min-width: auto` on a grid/flex item resolves to its
+     content's own minimum. The symptom is the masthead growing past the viewport on a phone
+     while `document.scrollWidth` still reads clean, since `.app` clips the result. Anything
+     that genuinely needs to be wider than the column scrolls inside its own wrapper. */
+  min-width: 0;
 }
 
-@media (max-width: 1100px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 /* ---------------------------------------------------------------- camera grid */
 .stage-head {
   display: flex;
@@ -365,8 +408,14 @@ input[type='file'] {
   display: grid;
   /* 380px floor rather than 320px: at 320 a 16:9 tile is 180px tall, and a person in
      the far third of a corridor shot is a handful of pixels. The operator has to be
-     able to judge the frame without opening it. */
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+     able to judge the frame without opening it.
+
+     Wrapped in `min()` so the floor yields on a viewport narrower than itself. A bare
+     380px minimum makes each track 380px wide even at 360px of available space, and the
+     grid then overflows its container — the whole page scrolls sideways on a phone. With
+     `min(100%, 380px)` the track collapses to the container width instead, which is the
+     same single column the 700px breakpoint asks for, arrived at by measurement. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
   gap: var(--sp-4);
 }
 
@@ -2800,6 +2849,174 @@ legend {
 .footer-separator { width: 1px; height: 18px; margin: 0 var(--sp-2); background: var(--border-subtle); }
 .manager-empty { display: grid; min-height: 160px; place-items: center; color: var(--text-tertiary); font-size: var(--fs-sm); }
 
+/* ---------------------------------------------------------------- event history */
+.event-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 1140px;
+  margin: 0 auto;
+  /* Same reason as `.stage-inner`: this is the flex container the wide table sits in, and
+     without an explicit floor it adopts the table's 620px minimum as its own. */
+  min-width: 0;
+}
+
+.event-history .stage-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.history-filters {
+  display: grid;
+  /* Auto-fit rather than three fixed columns: the three filters collapse to two and then to
+     one on their own, so this needs no breakpoint of its own.
+
+     `min()` against the *track*, not against 100% of the parent: `min(100%, 200px)` resolves
+     the percentage against the grid's content box, which excludes this element's own padding
+     — so at 390px the track stayed 200px wide, two of them plus the gap overflowed, and the
+     middle filter was clipped. Sizing the floor off the viewport instead keeps the track
+     inside the padded box at every width. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+/* The wrapper scrolls, never the page. Five columns do not fit a phone, and without this the
+   whole document scrolls sideways — which moves the masthead off screen too.
+
+   `min-width: 0` is the half that makes the scrolling actually work. A grid and flex item's
+   default `min-width: auto` is its *content's* intrinsic width, so the 640px table below
+   propagated back up through `.stage-inner` → `.stage` → `.workspace` and stretched the whole
+   shell to 640px inside a 390px viewport — the masthead included, pushing the last nav tab
+   off screen. The page did not report a horizontal scroll while this was happening, because
+   `.app`'s grid clipped the overflow instead: the layout was broken and every document-level
+   `scrollWidth` check still read clean. Overriding the floor here is what lets the ancestors
+   shrink and confines the overflow to this box, which is the one element meant to scroll. */
+.history-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
+/* Below this the five columns compress into unreadable stubs, so the wrapper scrolls
+   instead. Paired with the `min-width: 0` above — this floor is only safe because that
+   override stops it reaching the page shell. */
+.history-table {
+  min-width: 620px;
+}
+
+.history-table th {
+  text-align: left;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.history-table td {
+  font-size: var(--fs-sm);
+}
+
+/* The whole cell is the target, so the row reads as one click rather than a small link
+   inside it. Transparent chrome — it is a table row, not a button in a toolbar. */
+.history-open {
+  display: flex;
+  align-items: center;
+  /* The base `button` rule sets `justify-content: center`, which here centred the
+     thumbnail-and-name group inside the full-width cell — so a shorter incident name pushed
+     the whole group right and the column read ragged by a few pixels. Left-align it so every
+     row's thumbnail starts at the same x. */
+  justify-content: flex-start;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.history-open:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* Fixed-size slot so every incident name starts at the same x, image or not. When there is
+   an evidence frame the <img> fills it; when there isn't, the empty box still holds the
+   column. Severity is carried by the verdict badge and the incident name, not a colour bar. */
+.history-thumb {
+  flex: none;
+  display: block;
+  width: 48px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.history-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.history-label {
+  font-weight: var(--fw-medium);
+}
+
+.history-relative {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+.history-reviewer {
+  color: var(--text-secondary);
+}
+
+.history-verdict {
+  display: inline-block;
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.history-verdict.real {
+  background: rgb(220 38 38 / 0.14);
+  color: var(--danger-text);
+}
+
+.history-verdict.false {
+  background: rgb(52 211 153 / 0.14);
+  color: var(--live);
+}
+
+.history-verdict.pending {
+  background: rgb(148 163 184 / 0.14);
+  color: var(--text-secondary);
+}
+
+.history-pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.history-pager .hint {
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 980px) {
   .manager-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .manager-primary-grid,
@@ -3643,90 +3860,59 @@ legend {
   background: #111821;
 }
 
+/* The brand photograph, dimmed by a gradient painted over it in the same layer.
+   The overlay is not decoration: the artwork is a dark building at night with a bright
+   camera housing and a white wordmark, so its local contrast swings from near-black to
+   near-white across the frame. Form labels and the error text sit on the card above it,
+   and without a fixed floor under them their contrast ratio would depend on which part of
+   the photo happened to be behind — which is not a thing that can be checked once and
+   trusted. Two stops rather than a flat wash so the top stays slightly lighter and the
+   image is still legible as an image.
+
+   `background-color` underneath is what the page renders as if the file is missing or
+   still loading; without it the operator gets a white flash on a screen that is otherwise
+   entirely dark. */
 .login-page {
-  padding: var(--sp-6);
-  background: #0a0f15;
+  /* The card is pushed to the right rather than centred. The artwork is square and its
+     subject runs across the middle — the lens on the left, the wordmark through the centre,
+     the camera housing top-right — so a centred card lands squarely on the wordmark and
+     each ruins the other. Right-aligned, the card sits over the darkest region (the lower
+     building face) and leaves the branding readable beside it, which is the reason for
+     using this image at all. */
+  justify-content: flex-end;
+  padding: var(--sp-6) clamp(var(--sp-6), 8vw, var(--sp-8));
+  background-color: #0a0f15;
+  /* Light enough to leave the artwork readable, which is the whole reason for using it —
+     the wordmark is the brand and a wash that greys it out defeats the change. The card
+     carries its own opaque-enough fill, so text contrast does not depend on this layer;
+     it is here to settle the photo's bright spots (the lit doorway, the lens highlight)
+     so they do not compete with the form beside them. */
+  background-image:
+    linear-gradient(180deg, rgb(8 12 18 / 0.28), rgb(8 12 18 / 0.52)),
+    url('/login-bg.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 .login-shell {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
-  width: min(980px, 100%);
-  min-height: 600px;
+  width: min(420px, 100%);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--glass-border);
   border-radius: var(--r-lg);
-  background: var(--surface-1);
+  /* Nearly opaque, and deliberately so. The overlay on the photo behind is light enough to
+     keep the artwork readable, which means it cannot be relied on as the contrast floor for
+     the form — that floor has to live here instead, where it is a fixed value rather than
+     whatever part of the image happens to sit behind a given label. The remaining
+     translucency is enough for the card to read as sitting on the scene rather than
+     covering a hole punched in it, and not enough for the photo to interfere with text. */
+  background: rgb(17 24 33 / 0.94);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
   box-shadow: var(--shadow-modal);
 }
 
-.login-visual {
-  position: relative;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-right: 1px solid var(--border-subtle);
-  background-color: #0b1016;
-}
-
-.login-visual::before,
-.login-visual::after {
-  position: absolute;
-  content: '';
-  background: var(--border-subtle);
-  pointer-events: none;
-}
-
-.login-visual::before { top: 0; bottom: 0; left: 50%; width: 1px; }
-.login-visual::after { top: 50%; right: 0; left: 0; height: 1px; }
-
-.login-radar {
-  position: relative;
-  width: 250px;
-  height: 250px;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-}
-
-.login-radar::before,
-.login-radar::after {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  content: '';
-  transform: translate(-50%, -50%);
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-}
-
-.login-radar::before { width: 164px; height: 164px; }
-.login-radar::after { width: 78px; height: 78px; }
-
-.login-radar span {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--live);
-  box-shadow: 0 0 0 5px rgb(16 185 129 / 0.12);
-}
-
-.login-radar span:nth-child(1) { top: 38px; left: 116px; }
-.login-radar span:nth-child(2) { top: 143px; left: 58px; }
-.login-radar span:nth-child(3) { top: 174px; right: 42px; background: var(--warning); box-shadow: 0 0 0 5px rgb(245 158 11 / 0.12); }
-
-.login-visual-label {
-  position: absolute;
-  left: var(--sp-5);
-  bottom: var(--sp-5);
-  color: var(--text-tertiary);
-  font-size: 10px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--track-wide);
-  text-transform: uppercase;
-}
-
 .login-card {
-  align-self: center;
   gap: var(--sp-4);
   max-width: none;
   padding: var(--sp-7);
@@ -3818,10 +4004,26 @@ legend {
   .masthead nav {
     order: 3;
     width: 100%;
+    /* The tab strip is the one row here that cannot wrap — wrapped, the second line sits
+       under the first with no visual connection to it and reads as two unrelated controls.
+       So it scrolls instead, and `min-width: 0` is what lets it: without it the flex item
+       takes its content's intrinsic width and pushes the last tab past the viewport edge
+       rather than scrolling within it. */
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .masthead nav::-webkit-scrollbar {
+    display: none;
   }
 
   .masthead nav button {
-    flex: 1;
+    /* Grow to share the row when there is room, but never shrink below the label — a
+       compressed tab truncates to an unreadable stub, and these are the only navigation
+       the screen has. `flex: 1` alone permitted that shrink. */
+    flex: 1 0 auto;
+    white-space: nowrap;
   }
 
   .vitals {
@@ -3899,16 +4101,17 @@ legend {
   }
 
   .login-page {
+    /* Centred again on a phone. The right-alignment above buys separation from the artwork
+       on a wide screen; at this width the card is the full column and there is nothing to
+       sit beside, so holding it right would only shave the gutter unevenly.
+
+       `cover` on a tall, narrow viewport crops this square image to a vertical band through
+       its middle, which keeps the lens and the wordmark and loses the outer edges. That is
+       the right half to keep, so the default centre anchor stands — it is restated here
+       because the rule above sets `justify-content`, and a reader checking why the phone
+       layout looks different should find the answer in one place. */
+    justify-content: center;
     padding: var(--sp-4);
-  }
-
-  .login-shell {
-    display: block;
-    min-height: 0;
-  }
-
-  .login-visual {
-    display: none;
   }
 
   .login-card {

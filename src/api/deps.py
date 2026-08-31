@@ -75,7 +75,17 @@ def require_guard(request: Request) -> User:
 
 
 def require_operator(request: Request) -> User:
-    """Allow either operator role onto shared system-status routes."""
+    """Allow either operator role onto the shared read surface.
+
+    That surface is system status, notification settings, the durable incident history, and
+    the stored evidence stills it links to. The boundary it draws is *read versus act*, not
+    *manager versus guard*: a manager reviewing what the room did needs to see the frame an
+    alert was raised on, because the frame is the evidence being audited.
+
+    What stays on `require_guard` is the other half of that sentence — live footage, and
+    every write. Verdicts, acknowledgements, camera configuration and the video streams are
+    the guard's, so a manager can see what happened and only a guard can act on it.
+    """
     return current_user(request)
 
 
