@@ -25,7 +25,6 @@ growing file on the request path can.
 import json
 import logging
 import os
-import sqlite3
 import threading
 from datetime import UTC, datetime
 
@@ -85,6 +84,15 @@ class IncidentLog:
             except Exception:  # noqa: BLE001 - see _STORE_FAILURE note below
                 logger.exception("Could not write incident to the event store")
         self._append(row)
+
+    def record_evidence_frames(self, alert_id: str, frames: list[dict]) -> None:
+        if self.store is not None:
+            try:
+                self.store.update_incident_frames(alert_id, frames)
+                return
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not update incident evidence frames")
+        self._append({"kind": "evidence_frames", "alert_id": alert_id, "evidence_frames": frames})
 
     def record_evidence(self, alert_id: str, evidence_url: str) -> None:
         if self.store is not None:
@@ -174,6 +182,7 @@ class IncidentLog:
         alerts: dict[str, dict] = {}
         reviews: dict[str, dict] = {}
         evidence: dict[str, dict] = {}
+        evidence_frames: dict[str, dict] = {}
         for row in self._read():
             alert_id = row.get("alert_id")
             if not alert_id:
@@ -184,6 +193,8 @@ class IncidentLog:
                 reviews[alert_id] = row
             elif row.get("kind") == "evidence":
                 evidence[alert_id] = row
+            elif row.get("kind") == "evidence_frames":
+                evidence_frames[alert_id] = row
             else:
                 alerts[alert_id] = row
 
@@ -199,6 +210,7 @@ class IncidentLog:
                     "actual_event_type": (review or {}).get("actual_event_type"),
                     "reviewed_at": (review or {}).get("reviewed_at"),
                     "evidence_url": (evidence.get(alert_id) or {}).get("evidence_url"),
+                    "evidence_frames": (evidence_frames.get(alert_id) or {}).get("evidence_frames", []),
                 }
             )
         folded.sort(key=lambda row: row.get("created_at") or "")

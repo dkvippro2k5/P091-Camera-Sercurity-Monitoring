@@ -23,6 +23,7 @@ advisory — it annotates the alert and never suppresses it (see `src/services/v
 """
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -47,9 +48,9 @@ from src.models.camera_schemas import (
     SystemStatus,
 )
 from src.services.alert_history import AlertHistory
+from src.services.camera_registry import create_camera_registry
 from src.services.embedding_store import create_embedding_store
 from src.services.embeddings import build_embedder
-from src.services.camera_registry import create_camera_registry
 from src.services.event_bus import build_event_relay
 from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
@@ -805,6 +806,8 @@ class MonitoringService:
             alert.triage_frame_observations = verdict.frame_observations[: len(evidence_frames)]
             alert.triage_error = verdict.error
             alert.evidence_frames = evidence_frames
+            frame_rows = [frame.model_dump() for frame in evidence_frames]
+        self.incidents.record_evidence_frames(alert.id, frame_rows)
         logger.info(
             f"[{alert.camera_id}] triage {alert.label} -> {verdict.verdict} "
             f"({verdict.confidence:.2f}) in {verdict.latency_ms:.0f}ms"
@@ -1082,6 +1085,14 @@ class MonitoringService:
         # Reversed rather than re-sorted: `incidents()` already guarantees oldest-first, so
         # this is the same ordering read the other way and costs nothing extra.
         page = list(reversed(rows))[offset : offset + limit]
+        for row in page:
+            frames = row.get("evidence_frames")
+            if isinstance(frames, str):
+                try:
+                    frames = json.loads(frames)
+                except (TypeError, json.JSONDecodeError):
+                    frames = []
+            row["evidence_frames"] = frames if isinstance(frames, list) else []
 
         return {
             "items": page,
