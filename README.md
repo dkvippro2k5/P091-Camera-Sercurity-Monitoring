@@ -17,6 +17,11 @@ mandatory guard verdict in a React dashboard.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the component and data-flow diagrams.
 
+## Live Demo
+
+- Public URL: https://c4-cameradetection-091.id.vn/
+- Demo video: https://www.youtube.com/watch?v=DZun9iaYXDg
+
 ## Prerequisites
 
 - Python 3.11
