@@ -612,8 +612,10 @@ class MonitoringService:
 
         queued_for_triage = self._queue_triage(alert)
         self._publish("alert.created", alert.model_dump())
-        if self.notifier.enabled:
-            self._notification_worker.submit(alert.model_dump())
+        # Telegram is deliberately sent only after VLM triage confirms a real incident.
+        # The dashboard still receives alert.created immediately, while false positives,
+        # uncertain verdicts, and unavailable VLM assessments stay out of the notification
+        # channel instead of diluting the operator's alert stream.
         # Only after the operator already has the alert. Everything below this line happens
         # on another thread and can take seconds.
         if queued_for_triage:

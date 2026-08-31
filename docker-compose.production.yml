@@ -1,4 +1,23 @@
 services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.15.0
+    container_name: p091-mediamtx
+    restart: unless-stopped
+    ports:
+      # RTSP is not HTTP and must not be routed through Cloudflare.
+      # Restrict inbound TCP/8554 at the host firewall to publisher IPs.
+      - "8554:8554/tcp"
+    environment:
+      MEDIAMTX_PUBLISH_PASSWORD: ${MEDIAMTX_PUBLISH_PASSWORD:?MEDIAMTX_PUBLISH_PASSWORD is required}
+      MEDIAMTX_READ_PASSWORD: ${MEDIAMTX_READ_PASSWORD:?MEDIAMTX_READ_PASSWORD is required}
+    volumes:
+      - ./deploy/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    healthcheck:
+      test: ["CMD", "/mediamtx", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -52,6 +71,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mediamtx:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health', headers={'Host': 'c4-cameradetection-091.id.vn'}))"]

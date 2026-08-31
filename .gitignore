@@ -43,6 +43,9 @@ htmlcov/
 .coverage
 coverage.xml
 
+# MediaMTX production credentials/config (keep only the tracked .example)
+deploy/mediamtx/mediamtx.yml
+
 # Docker
 docker-compose.override.yml
 

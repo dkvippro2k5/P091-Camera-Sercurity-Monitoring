@@ -267,6 +267,24 @@ docker compose --env-file .env.production -f docker-compose.production.yml ps
 The production stack keeps the frontend and backend bound to loopback so an HTTPS reverse proxy can
 front the application. PostgreSQL data is persisted under `./data/postgres` and Redis under
 `./data/redis`. The manager
+### Production MediaMTX RTSP relay
+
+The production Compose stack includes MediaMTX as an authenticated RTSP relay. Create the ignored runtime configuration and set separate strong passwords in `.env.production`:
+
+```bash
+cp deploy/mediamtx/mediamtx.yml.example deploy/mediamtx/mediamtx.yml
+openssl rand -hex 32  # use different values for publish and read passwords
+```
+
+External publishers use `rtsp://publisher:<password>@rtsp.c4-cameradetection-091.id.vn:8554/test/cam01`.
+The backend reads through Compose service DNS at `rtsp://vision:<password>@mediamtx:8554/test/cam01`.
+Create the RTSP DNS record as **DNS only** (not Cloudflare-proxied), because the existing Cloudflare
+HTTP tunnel cannot carry RTSP. Allow TCP/8554 only from trusted publisher IPs and expose no MediaMTX
+HTTP/API ports. Verify with `docker compose --env-file .env.production -f docker-compose.production.yml config --quiet`
+and `docker logs p091-mediamtx` after starting the service. Do not commit `deploy/mediamtx/mediamtx.yml`
+or share credential-bearing URLs in logs, screenshots, or source control. Existing direct physical-camera
+URLs remain supported; only relay cameras should use the internal `mediamtx` hostname.
+
 dashboard receives live updates over an authenticated WebSocket at `/api/v1/manager/live`,
 while guard incident notifications continue to use SSE at `/api/v1/events`.
 
