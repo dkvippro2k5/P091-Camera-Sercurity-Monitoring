@@ -61,10 +61,15 @@ class PostgresStore:
                         judged_by TEXT,
                         operator_note TEXT,
                         actual_event_type TEXT,
+                        vlm_error TEXT,
                         recorded_at TIMESTAMPTZ NOT NULL
                     );
                     CREATE INDEX IF NOT EXISTS idx_history_camera_label
                         ON alert_history(camera_id, label, recorded_at);
+                    -- Added after the table shipped, so existing deployments need the ALTER
+                    -- as well as the column above; CREATE TABLE IF NOT EXISTS is a no-op for
+                    -- them. Same reason and shape as incidents.evidence_url.
+                    ALTER TABLE alert_history ADD COLUMN IF NOT EXISTS vlm_error TEXT;
                     """
                 )
 
@@ -112,12 +117,12 @@ class PostgresStore:
                 """INSERT INTO alert_history
                 (alert_id, camera_id, label, reason, vlm_verdict, vlm_confidence,
                  vlm_rationale, operator_verdict, judged_by, operator_note,
-                 actual_event_type, recorded_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                 actual_event_type, vlm_error, recorded_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 tuple(row.get(key) for key in (
                     "alert_id", "camera_id", "label", "reason", "vlm_verdict",
                     "vlm_confidence", "vlm_rationale", "operator_verdict", "judged_by",
-                    "operator_note", "actual_event_type",
+                    "operator_note", "actual_event_type", "vlm_error",
                 )) + (self._timestamp(row.get("recorded_at")),),
             )
 

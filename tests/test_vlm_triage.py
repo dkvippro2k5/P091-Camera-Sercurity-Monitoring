@@ -13,6 +13,7 @@ What these pin, in order of how expensive the bug would be:
   - the pre-roll ring holds distinct frames (the aliasing bug)
 """
 
+import json
 import threading
 import time
 from collections import deque
@@ -595,3 +596,102 @@ def _wait_until(predicate, timeout: float = 5.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("condition not met within timeout")
+
+
+# ------------------------------------------------------------------ observation reconciliation
+class _StubOpenAIClient:
+    """Just enough of the OpenAI SDK surface for `OpenAIVLMTriage.assess`."""
+
+    def __init__(self, content: str) -> None:
+        message = type("M", (), {"content": content})()
+        choice = type("C", (), {"message": message})()
+        response = type("R", (), {"choices": [choice]})()
+
+        class _Completions:
+            def create(self, **_):
+                return response
+
+        self.chat = type("Chat", (), {"completions": _Completions()})()
+
+
+def _assess_with(content: str, frames: int = 6):
+    triage = OpenAIVLMTriage.__new__(OpenAIVLMTriage)
+    triage.model = "stub-vlm"
+    triage._client = _StubOpenAIClient(content)
+    return triage.assess(
+        TriageRequest(label="fall_detection", reason="2/3 indicators", pre_count=4, frames=[b"x"] * frames)
+    )
+
+
+def test_a_short_observation_list_keeps_the_verdict():
+    """The regression this guards against.
+
+    A model that writes five notes for six frames used to lose its whole judgement: the
+    count check raised, the blanket `except` caught it, and a confident "real" on a fall
+    became `uncertain` with a zeroed confidence. The notes are an annotation; the verdict is
+    the product.
+    """
+    verdict = _assess_with(
+        json.dumps({
+            "verdict": "real",
+            "confidence": 0.95,
+            "rationale": "Người đàn ông ngã xuống sàn và nằm yên.",
+            "frame_observations": ["a", "b", "c", "d", "e"],
+        })
+    )
+
+    assert verdict.verdict == "real"
+    assert verdict.confidence == 0.95
+    assert verdict.rationale == "Người đàn ông ngã xuống sàn và nằm yên."
+    assert verdict.error is None
+    # Padded so index i still describes frame i -- the strip is rendered positionally.
+    assert verdict.frame_observations == ["a", "b", "c", "d", "e", ""]
+
+
+def test_a_long_observation_list_is_truncated_not_rejected():
+    verdict = _assess_with(
+        json.dumps({
+            "verdict": "false_positive",
+            "confidence": 0.7,
+            "rationale": "Người đang tập thể dục.",
+            "frame_observations": ["a", "b", "c", "d", "e", "f", "g", "h"],
+        })
+    )
+
+    assert verdict.verdict == "false_positive"
+    assert verdict.frame_observations == ["a", "b", "c", "d", "e", "f"]
+
+
+def test_malformed_json_still_fails_closed():
+    """Reconciling a count is not the same as trusting a broken response: a reply that is not
+    JSON at all carries no verdict to keep, and must still surface as an error."""
+    verdict = _assess_with("{not json at all")
+
+    assert verdict.verdict == "uncertain"
+    assert verdict.confidence == 0.0
+    assert verdict.error is not None
+
+
+def test_the_failure_reason_reaches_the_history(make_service):
+    """Every failure path lands on `uncertain` with an empty rationale, so without the error
+    string the history cannot tell "the model could not decide" from "the provider was never
+    reached" -- which is exactly how a misconfigured base URL failed silently for weeks."""
+    service = make_service(triage=ExplodingTriage())
+    alert = _emit(service)
+    _wait_until(lambda: alert.triage_status == "complete")
+
+    service.record_operator_verdict(alert.id, "real")
+
+    row = service.history.all_rows()[0]
+    assert row["vlm_verdict"] == "uncertain"
+    assert "upstream is on fire" in row["vlm_error"]
+
+
+def test_a_clean_assessment_records_no_error(make_service):
+    service = make_service(triage=FakeTriage(verdict="real"))
+    alert = _emit(service)
+    _wait_until(lambda: alert.triage_status == "complete")
+
+    service.record_operator_verdict(alert.id, "real")
+
+    assert service.history.all_rows()[0]["vlm_error"] is None

@@ -65,6 +65,7 @@ class SQLiteStore:
                     judged_by TEXT,
                     operator_note TEXT,
                     actual_event_type TEXT,
+                    vlm_error TEXT,
                     recorded_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_history_camera_label
@@ -74,6 +75,11 @@ class SQLiteStore:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
             if "evidence_url" not in columns:
                 connection.execute("ALTER TABLE incidents ADD COLUMN evidence_url TEXT")
+            # Added after the table shipped: CREATE TABLE IF NOT EXISTS leaves an existing
+            # alert_history untouched, so the column above only reaches fresh databases.
+            history_columns = {row[1] for row in connection.execute("PRAGMA table_info(alert_history)")}
+            if "vlm_error" not in history_columns:
+                connection.execute("ALTER TABLE alert_history ADD COLUMN vlm_error TEXT")
 
     def insert_incident(self, row: dict) -> None:
         with self._lock, self._connect() as connection:
@@ -106,12 +112,12 @@ class SQLiteStore:
                 """INSERT INTO alert_history
                 (alert_id, camera_id, label, reason, vlm_verdict, vlm_confidence,
                  vlm_rationale, operator_verdict, judged_by, operator_note,
-                 actual_event_type, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 actual_event_type, vlm_error, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 tuple(row.get(key) for key in (
                     "alert_id", "camera_id", "label", "reason", "vlm_verdict",
                     "vlm_confidence", "vlm_rationale", "operator_verdict", "judged_by",
-                    "operator_note", "actual_event_type", "recorded_at",
+                    "operator_note", "actual_event_type", "vlm_error", "recorded_at",
                 )),
             )
 

@@ -884,6 +884,7 @@ class MonitoringService:
             vlm_verdict=alert.triage_verdict,
             vlm_confidence=alert.triage_confidence,
             vlm_rationale=alert.triage_rationale,
+            vlm_error=alert.triage_error,
             judged_by=judged_by,
             operator_note=operator_note,
             actual_event_type=actual_event_type,

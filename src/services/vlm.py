@@ -210,10 +210,33 @@ class OpenAIVLMTriage:
                 for observation in payload.get("frame_observations", [])
                 if str(observation).strip()
             ]
-            if len(frame_observations) != len(request.frames):
-                raise ValueError(
-                    f"expected {len(request.frames)} frame observations, got {len(frame_observations)}"
+            # Reconciled to the frame count rather than enforced.
+            #
+            # This used to raise, which sent an otherwise-complete judgement -- verdict,
+            # confidence, rationale and all -- down the `except` below and turned it into
+            # `uncertain` with a zeroed confidence. That trade is backwards: the observations
+            # are an annotation the guard reads alongside the verdict, while the verdict is
+            # the thing an alert exists to produce. Losing a "real, 0.95" on a fall because
+            # the model wrote five notes for six frames is a safety regression, not strictness.
+            #
+            # The count does drift in practice: `_RESPONSE_SCHEMA` cannot express "exactly N
+            # items", so the count is only ever *asked* for in the prompt, and `strict`
+            # json_schema is an OpenAI feature that the OpenAI-compatible providers this
+            # points at (Qwen and friends, via OPENAI_BASE_URL) do not enforce.
+            #
+            # Extra notes are dropped and missing ones padded, so `frame_observations[i]`
+            # keeps describing frame `i` -- the frontend and `embedding_text` both index it
+            # positionally against the evidence strip. Padding with "" rather than a filler
+            # sentence keeps an absent note absent: the UI renders empty items as blank and
+            # `embedding_text` joins them away, neither inventing an observation nor claiming
+            # a frame showed nothing.
+            expected = len(request.frames)
+            if len(frame_observations) != expected:
+                logger.warning(
+                    f"VLM returned {len(frame_observations)} frame observations for {expected} frames; "
+                    "reconciling to the frame count and keeping the verdict."
                 )
+                frame_observations = (frame_observations + [""] * expected)[:expected]
             verdict = payload.get("verdict", "uncertain")
             confidence = min(1.0, max(0.0, float(payload.get("confidence", 0.0))))
             rationale = str(payload.get("rationale", "")).strip()

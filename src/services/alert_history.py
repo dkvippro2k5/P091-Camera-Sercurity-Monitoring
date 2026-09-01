@@ -79,6 +79,7 @@ class AlertHistory:
         vlm_verdict: str | None = None,
         vlm_confidence: float | None = None,
         vlm_rationale: str | None = None,
+        vlm_error: str | None = None,
         judged_by: str | None = None,
         operator_note: str | None = None,
         actual_event_type: str | None = None,
@@ -97,6 +98,14 @@ class AlertHistory:
             "vlm_verdict": vlm_verdict,
             "vlm_confidence": vlm_confidence,
             "vlm_rationale": vlm_rationale,
+            # Why the assessment is missing, not just that it is. Every failure path -- a 401
+            # from the provider, a malformed response, a timeout, a saturated queue -- lands
+            # on the same `uncertain` verdict with an empty rationale, so without this the
+            # stored history cannot tell a model that genuinely could not decide from a
+            # provider that was never reached. That ambiguity is what let a misconfigured
+            # OPENAI_BASE_URL fail every single call for weeks while the UI showed nothing
+            # worse than "assessment unavailable".
+            "vlm_error": vlm_error,
             "operator_verdict": operator_verdict,
             "judged_by": judged_by,
             "operator_note": operator_note,
