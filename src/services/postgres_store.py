@@ -5,6 +5,7 @@ which database is deployed. PostgreSQL is selected by a ``postgresql://`` or ``p
 DATABASE_URL and requires psycopg 3 at runtime.
 """
 
+import json
 from datetime import datetime
 
 from src.services import db_pool
@@ -43,8 +44,10 @@ class PostgresStore:
                         reviewed_at TIMESTAMPTZ,
                         operator_note TEXT,
                         actual_event_type TEXT,
-                        evidence_url TEXT
+                        evidence_url TEXT,
+                        evidence_frames JSONB
                     );
+                    ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_frames JSONB;
                     CREATE INDEX IF NOT EXISTS idx_incidents_camera_time
                         ON incidents(camera_id, created_at);
                     ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_url TEXT;
@@ -96,6 +99,13 @@ class PostgresStore:
     def update_incident_evidence(self, alert_id: str, evidence_url: str) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("UPDATE incidents SET evidence_url=%s WHERE alert_id=%s", (evidence_url, alert_id))
+
+    def update_incident_frames(self, alert_id: str, frames: list[dict]) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE incidents SET evidence_frames=%s::jsonb WHERE alert_id=%s",
+                (json.dumps(frames, ensure_ascii=False), alert_id),
+            )
 
     def update_incident_review(self, row: dict) -> None:
         with self._connect() as connection, connection.cursor() as cursor:

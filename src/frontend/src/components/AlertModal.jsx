@@ -1,7 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useFocusTrap } from '../useFocusTrap'
-import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incidents'
+import { incidentMeta, relativeTime, formatClock, triageMeta, alertPriority, similarIncidentQuery } from '../incidents'
+
+/**
+ * What the guard's verdict button means for "what actually happened".
+ *
+ * The dropdown used to carry `real_incident` and `false_alarm` options that duplicated the
+ * two verdict buttons, and a guard who pressed a button without touching the dropdown wrote
+ * `actual_event_type: null` — the verdict was recorded but the field the false-alarm rate is
+ * computed from stayed empty on the most common path there is. So the button now supplies
+ * that value itself, and the dropdown only offers what a button cannot say.
+ *
+ * An explicit selection always wins: a guard who picked "maintenance" and then pressed
+ * "Báo động giả" is telling us *why* it was a false alarm, which is strictly more information
+ * than the button alone carries. Only an untouched dropdown falls back to the button.
+ *
+ * The two string values are unchanged on purpose — history rows and the stored-procedure
+ * tests already read `real_incident`/`false_alarm`, so this changes where they come from,
+ * never what they are.
+ */
+function resolveActualEventType(verdict, selected) {
+  if (selected) return selected
+  return verdict === 'real' ? 'real_incident' : 'false_alarm'
+}
+
+/** Vietnamese labels for the stored `actual_event_type` values, for read-only views. */
+const ACTUAL_EVENT_LABELS = {
+  real_incident: 'Sự cố thật',
+  false_alarm: 'Báo động giả',
+  normal_activity: 'Hoạt động bình thường',
+  maintenance: 'Bảo trì / dịch vụ',
+  other: 'Khác',
+}
 
 /**
  * `readOnly` is the manager's view of a past incident: the same evidence and AI assessment a
@@ -16,6 +47,9 @@ import { incidentMeta, relativeTime, formatClock, triageMeta } from '../incident
  */
 export default function AlertModal({ alert, queued = 0, isHistory = false, readOnly = false, onVerdict, onClose }) {
   const meta = incidentMeta(alert.label)
+  // Wording only — `meta` still owns the headline, the action line and the modal's severity
+  // class, so a wrong AI verdict can never restyle a real emergency. See `alertPriority`.
+  const priority = alertPriority(alert)
   const dialogRef = useFocusTrap(true)
   const [note, setNote] = useState(alert.operator_note || '')
   const [actualEventType, setActualEventType] = useState(alert.actual_event_type || '')
@@ -30,7 +64,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
     if (submitting) return
     setSubmitting(true)
     try {
-      await onVerdict(alert.id, verdict, note, actualEventType)
+      await onVerdict(alert.id, verdict, note, resolveActualEventType(verdict, actualEventType))
     } finally {
       // No reset-to-false-then-leave-mounted case to worry about here: a successful verdict
       // acknowledges this alert, which drops it out of the queue and unmounts this instance
@@ -52,9 +86,9 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
         aria-describedby="alert-action"
       >
         <div className="modal-head">
-          <p className="modal-eyebrow">
+          <p className={isHistory ? 'modal-eyebrow' : `modal-eyebrow modal-eyebrow--${priority.tone}`}>
             <span aria-hidden="true">!</span>
-            {isHistory ? 'Sự cố đã xử lý' : 'Cảnh báo ưu tiên'}
+            {isHistory ? 'Sự cố đã xử lý' : priority.eyebrow}
           </p>
           <h2 id="alert-heading">{meta.headline}</h2>
           <p className="modal-action" id="alert-action">
@@ -72,7 +106,7 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
           <EvidenceFrames alert={alert} meta={meta} />
 
           <TriagePanel alert={alert} />
-          <SimilarIncidents alertId={alert.id} />
+          <SimilarIncidents alert={alert} />
           {/* Inputs whose only submit path is the guard-gated verdict route, so they are not
               offered to a read-only viewer — a manager filling in a note that can never be
               saved is worse than not being asked. Their recorded values are shown instead. */}
@@ -80,7 +114,9 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
             <div className="reason">
               <span className="fact-label">Ghi nhận của bảo vệ</span>
               <span>
-                {alert.actual_event_type && <strong>{alert.actual_event_type}</strong>}
+                {alert.actual_event_type && (
+                  <strong>{ACTUAL_EVENT_LABELS[alert.actual_event_type] ?? alert.actual_event_type}</strong>
+                )}
                 {alert.operator_note && <span> {alert.operator_note}</span>}
               </span>
             </div>
@@ -90,9 +126,10 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
               <label htmlFor="actual-event-type">
                 Thực tế đã xảy ra điều gì?
                 <select id="actual-event-type" value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
+                  {/* "Sự cố thật" / "Báo động giả" are deliberately absent: the verdict
+                      buttons below already say that, and offering them twice is what let a
+                      guard record a verdict with an empty actual-event field. */}
                   <option value="">Chọn nếu đã xác định</option>
-                  <option value="real_incident">Sự cố thật</option>
-                  <option value="false_alarm">Báo động giả</option>
                   <option value="normal_activity">Hoạt động bình thường</option>
                   <option value="maintenance">Bảo trì / dịch vụ</option>
                   <option value="other">Khác</option>
@@ -215,14 +252,22 @@ function TriagePanel({ alert }) {
  * nothing judged yet to compare against) and a guard mid-shift does not need a panel
  * explaining that.
  */
-function SimilarIncidents({ alertId }) {
+function SimilarIncidents({ alert }) {
   const [items, setItems] = useState([])
+  // Collapsed by default. The panel is context for a decision, not the decision, and a guard
+  // opening a live alert should meet the evidence and the verdict buttons first. Collapsed
+  // also means the neighbour thumbnails are never requested unless asked for.
+  const [expanded, setExpanded] = useState(false)
+
+  const alertId = alert.id
+  const { limit, minSimilarity } = similarIncidentQuery(alert)
 
   useEffect(() => {
     let cancelled = false
     setItems([])
+    setExpanded(false)
     api
-      .similarIncidents(alertId)
+      .similarIncidents(alertId, { limit, minSimilarity })
       .then((rows) => {
         if (!cancelled) setItems(rows)
       })
@@ -233,28 +278,208 @@ function SimilarIncidents({ alertId }) {
     return () => {
       cancelled = true
     }
-  }, [alertId])
+  }, [alertId, limit, minSimilarity])
 
   if (items.length === 0) return null
 
+  // Counted from what came back, never adjusted to agree with the AI. The whole value of the
+  // panel is that it can contradict the assessment above it.
+  const real = items.filter((item) => item.operator_verdict === 'real').length
+  const falseAlarms = items.length - real
+
   return (
-    <section className="similar-incidents" aria-label="Similar past incidents">
-      <span className="fact-label">Similar past events</span>
-      <ul>
-        {items.map((item) => (
-          <li key={item.alert_id}>
-            {item.evidence_url && <img src={item.evidence_url} alt={`${item.label} on ${item.camera_name}`} />}
-            <div className="similar-incident-text">
-              <strong>{item.camera_name}</strong>
-              <span>
-                {Math.round(item.similarity * 100)}% similar - recorded as{' '}
-                {item.operator_verdict === 'real' ? 'a real incident' : 'a false alarm'}
-              </span>
-            </div>
-          </li>
-        ))}
-      </ul>
+    <section className="similar-incidents" aria-label="Sự cố tương tự đã xảy ra">
+      <button
+        type="button"
+        className="similar-incidents-toggle"
+        aria-expanded={expanded}
+        aria-controls="similar-incidents-list"
+        onClick={() => setExpanded((previous) => !previous)}
+      >
+        <span className="fact-label">Sự cố tương tự ({items.length})</span>
+        <span className="similar-incidents-split">
+          {real} thật · {falseAlarms} giả
+        </span>
+        <span aria-hidden="true">{expanded ? '−' : '+'}</span>
+      </button>
+      {expanded && (
+        <ul id="similar-incidents-list">
+          {items.map((item) => (
+            <SimilarIncidentRow key={item.alert_id} item={item} />
+          ))}
+        </ul>
+      )}
     </section>
+  )
+}
+
+/**
+ * One past incident, with its evidence strip available on demand.
+ *
+ * The strip is fetched per row and only when opened, because rebuilding it probes storage
+ * frame by frame server-side. The thumbnail alone is the detection-moment frame, which for a
+ * fall is the least conclusive one there is — so a guard weighing this as precedent needs the
+ * sequence, and gets it in one click rather than by default.
+ */
+function SimilarIncidentRow({ item }) {
+  const [frames, setFrames] = useState(null)
+  const [loading, setLoading] = useState(false)
+  // Index of the frame open in the lightbox, or null. The strip's thumbnails are ~199px
+  // wide inside a 680px modal, which is enough to pick a frame out of the sequence and far
+  // too small to judge a posture from — so the thumbnails choose, and this shows.
+  const [zoomed, setZoomed] = useState(null)
+  // The fetch below resolves after an await, and this row can be gone by then: judging the
+  // alert remounts the whole modal (`key={active.id}` at the call site), and collapsing the
+  // panel unmounts the list. Same guard `SimilarIncidents` uses on its own lookup.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const showFrames = async () => {
+    if (frames !== null) {
+      setFrames(null)
+      setZoomed(null)
+      return
+    }
+    setLoading(true)
+    try {
+      const loaded = await api.incidentFrames(item.alert_id)
+      if (mounted.current) setFrames(loaded)
+    } catch {
+      if (mounted.current) setFrames([]) // Same best-effort stance as the lookup itself.
+    } finally {
+      if (mounted.current) setLoading(false)
+    }
+  }
+
+  return (
+    <li>
+      <div className="similar-incident-row">
+        {item.evidence_url && <img src={item.evidence_url} alt={`${item.label} tại ${item.camera_name}`} />}
+        <div className="similar-incident-text">
+          <strong>{item.camera_name}</strong>
+          <span>
+            Tương đồng {Math.round(item.similarity * 100)}% — ghi nhận là{' '}
+            {item.operator_verdict === 'real' ? 'sự cố thật' : 'báo động giả'}
+          </span>
+        </div>
+        <button type="button" className="similar-incident-frames-toggle" onClick={showFrames} disabled={loading}>
+          {loading ? 'Đang tải…' : frames !== null ? 'Ẩn khung hình' : 'Xem khung hình'}
+        </button>
+      </div>
+      {frames !== null && frames.length > 0 && (
+        <div className="evidence-grid similar-incident-frames">
+          {frames.map((frame, index) => (
+            <figure key={`${frame.phase}-${frame.index}`} className="evidence-frame">
+              <button
+                type="button"
+                className="evidence-frame-zoom"
+                onClick={() => setZoomed(index)}
+                aria-label={`Phóng to khung hình ${frame.index}`}
+              >
+                <img src={frame.image_url} alt={`Khung hình ${frame.index} của sự cố tương tự`} loading="lazy" decoding="async" />
+              </button>
+              <figcaption>
+                <span>{frame.phase}</span>
+                <strong>#{frame.index}</strong>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      {frames !== null && frames.length === 0 && !loading && (
+        <p className="similar-incident-empty">Không còn khung hình được lưu cho sự cố này.</p>
+      )}
+      {zoomed !== null && frames && frames[zoomed] && (
+        <FrameLightbox
+          frames={frames}
+          index={zoomed}
+          caption={`${item.camera_name} — ${item.operator_verdict === 'real' ? 'sự cố thật' : 'báo động giả'}`}
+          onNavigate={setZoomed}
+          onClose={() => setZoomed(null)}
+        />
+      )}
+    </li>
+  )
+}
+
+/**
+ * One evidence frame at full size, with the rest of the sequence a keypress away.
+ *
+ * The strip's thumbnails sit three-across inside a 680px modal, so each is about 199px wide
+ * — enough to tell frames apart, nowhere near enough to judge a posture, which is the whole
+ * question a guard opens a past incident to answer. Widening the modal was the alternative
+ * and was rejected: it would relayout the alert dialog every time this panel expands, under
+ * a guard's hands, next to the verdict buttons.
+ *
+ * Escape closes here, unlike the alert dialog that contains it. That trap deliberately
+ * ignores Escape because dismissing an alert writes an acknowledgement to the incident
+ * record; closing a zoomed photograph writes nothing, so the reflex should just work. It is
+ * rendered inside the modal rather than at the document root so the alert's own focus trap
+ * keeps containing it, and the arrow keys stay scoped to this sequence.
+ */
+function FrameLightbox({ frames, index, caption, onNavigate, onClose }) {
+  const frame = frames[index]
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        // Stops the alert dialog's own Tab-trapping handler from also seeing this, and
+        // keeps Escape from meaning two things at once.
+        event.stopPropagation()
+        onClose()
+      } else if (event.key === 'ArrowLeft' && index > 0) {
+        event.stopPropagation()
+        onNavigate(index - 1)
+      } else if (event.key === 'ArrowRight' && index < frames.length - 1) {
+        event.stopPropagation()
+        onNavigate(index + 1)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [index, frames.length, onNavigate, onClose])
+
+  return (
+    <div
+      className="frame-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Khung hình ${frame.index} của ${frames.length}`}
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <div className="frame-lightbox-inner">
+        <img src={frame.image_url} alt={`Khung hình ${frame.index}, ${frame.phase}`} />
+        <div className="frame-lightbox-bar">
+          <button
+            type="button"
+            onClick={() => onNavigate(index - 1)}
+            disabled={index === 0}
+            aria-label="Khung hình trước"
+          >
+            ‹
+          </button>
+          <span>
+            {caption} · <strong>{frame.phase}</strong> · #{frame.index}/{frames.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => onNavigate(index + 1)}
+            disabled={index === frames.length - 1}
+            aria-label="Khung hình sau"
+          >
+            ›
+          </button>
+          <button type="button" className="frame-lightbox-close" data-autofocus onClick={onClose}>
+            Đóng
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -30,7 +30,6 @@ The migration path stays open — only `recent_examples` would change.
 import json
 import logging
 import os
-import sqlite3
 import threading
 from datetime import UTC, datetime
 
