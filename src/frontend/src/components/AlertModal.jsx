@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useFocusTrap } from '../useFocusTrap'
 import { incidentMeta, relativeTime, formatClock, triageMeta, alertPriority, similarIncidentQuery } from '../incidents'
@@ -328,6 +328,16 @@ function SimilarIncidentRow({ item }) {
   // wide inside a 680px modal, which is enough to pick a frame out of the sequence and far
   // too small to judge a posture from — so the thumbnails choose, and this shows.
   const [zoomed, setZoomed] = useState(null)
+  // The fetch below resolves after an await, and this row can be gone by then: judging the
+  // alert remounts the whole modal (`key={active.id}` at the call site), and collapsing the
+  // panel unmounts the list. Same guard `SimilarIncidents` uses on its own lookup.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const showFrames = async () => {
     if (frames !== null) {
@@ -337,11 +347,12 @@ function SimilarIncidentRow({ item }) {
     }
     setLoading(true)
     try {
-      setFrames(await api.incidentFrames(item.alert_id))
+      const loaded = await api.incidentFrames(item.alert_id)
+      if (mounted.current) setFrames(loaded)
     } catch {
-      setFrames([]) // Same best-effort stance as the lookup itself.
+      if (mounted.current) setFrames([]) // Same best-effort stance as the lookup itself.
     } finally {
-      setLoading(false)
+      if (mounted.current) setLoading(false)
     }
   }
 
