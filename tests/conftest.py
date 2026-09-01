@@ -89,6 +89,17 @@ def isolated_data(monkeypatch, tmp_path):
     # someone's API quota for tests that have nothing to do with this feature.
     monkeypatch.setattr(monitoring_module, "create_embedding_store", lambda: None)
     monkeypatch.setattr(monitoring_module, "build_embedder", lambda settings: None)
+    # `create_camera_registry` now selects Postgres purely on DATABASE_URL (matching every
+    # other store), so a developer whose real .env points at Postgres would otherwise have
+    # every MonitoringService() in this suite open a connection to it just to load an empty
+    # camera roster. Force the local-file registry at the isolated path.
+    from src.services.camera_registry import FileCameraRegistry
+
+    monkeypatch.setattr(
+        monitoring_module,
+        "create_camera_registry",
+        lambda path: FileCameraRegistry(str(tmp_path / "cameras.json")),
+    )
     monkeypatch.setattr(monitoring_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     monkeypatch.setattr(monitoring_module, "IncidentLog", lambda: IncidentLog(path=str(tmp_path / "incidents.jsonl")))
     monkeypatch.setattr(
