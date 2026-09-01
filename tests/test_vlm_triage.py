@@ -623,13 +623,17 @@ def _assess_with(content: str, frames: int = 6):
     )
 
 
-def test_a_short_observation_list_keeps_the_verdict():
+def test_a_count_mismatch_keeps_the_verdict_and_drops_the_notes():
     """The regression this guards against.
 
     A model that writes five notes for six frames used to lose its whole judgement: the
     count check raised, the blanket `except` caught it, and a confident "real" on a fall
     became `uncertain` with a zeroed confidence. The notes are an annotation; the verdict is
     the product.
+
+    The notes go entirely, not trimmed to length: the response has no frame indices, so a
+    short list could be missing its end or its middle, and a middle gap silently shifts
+    every later BEFORE/AFTER caption onto the wrong frame.
     """
     verdict = _assess_with(
         json.dumps({
@@ -644,11 +648,10 @@ def test_a_short_observation_list_keeps_the_verdict():
     assert verdict.confidence == 0.95
     assert verdict.rationale == "Người đàn ông ngã xuống sàn và nằm yên."
     assert verdict.error is None
-    # Padded so index i still describes frame i -- the strip is rendered positionally.
-    assert verdict.frame_observations == ["a", "b", "c", "d", "e", ""]
+    assert verdict.frame_observations == []
 
 
-def test_a_long_observation_list_is_truncated_not_rejected():
+def test_a_long_observation_list_also_drops_the_notes_not_truncates():
     verdict = _assess_with(
         json.dumps({
             "verdict": "false_positive",
@@ -659,6 +662,19 @@ def test_a_long_observation_list_is_truncated_not_rejected():
     )
 
     assert verdict.verdict == "false_positive"
+    assert verdict.frame_observations == []
+
+
+def test_a_matching_observation_list_is_kept_verbatim():
+    verdict = _assess_with(
+        json.dumps({
+            "verdict": "real",
+            "confidence": 0.8,
+            "rationale": "x",
+            "frame_observations": ["a", "b", "c", "d", "e", "f"],
+        })
+    )
+
     assert verdict.frame_observations == ["a", "b", "c", "d", "e", "f"]
 
 
