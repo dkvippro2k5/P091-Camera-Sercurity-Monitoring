@@ -1037,6 +1037,12 @@ class MonitoringService:
         stopping bounds the probe at `vlm_max_frames` calls even when nothing is stored.
         Phase is recomputed from the same two-thirds split `_triage_frame_budget` uses, since
         which frames were "before" is not recoverable from the keys alone.
+
+        No lock and no exists/serve race to worry about: nothing in the app ever deletes an
+        evidence frame -- there is no retention job, no `EvidenceStore.delete` -- so the set
+        this probes is append-only for the life of the deployment. If a frame did go missing
+        between this call and the browser's fetch, `/evidence/{id}` already 404s cleanly and
+        the panel is best-effort by design (a lookup failure reads as "nothing similar").
         """
         settings = get_settings()
         max_frames = settings.vlm_max_frames
