@@ -859,6 +859,19 @@ input[type='file'] {
   color: var(--danger-text);
 }
 
+/* Eyebrow wording is graded by VLM confidence (`alertPriority`), so its colour follows the
+   wording rather than the alert's label. Scoped to this one line on purpose: the modal's own
+   severity class still owns the border and heading, so a mistaken AI verdict can restyle the
+   hedge above the headline and nothing else. `critical`/`high` inherit the base red. */
+.modal-eyebrow--medium {
+  color: var(--warning);
+}
+
+.modal-eyebrow--low,
+.modal-eyebrow--neutral {
+  color: var(--text-tertiary);
+}
+
 /* 28px/700. The old modal heading was 18px — the same size as body copy elsewhere in
    the app — for a message whose entire purpose is to interrupt. */
 .modal-head h2 {
@@ -2238,7 +2251,7 @@ legend {
 
 .similar-incidents li {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--sp-2);
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
@@ -2246,7 +2259,133 @@ legend {
   padding: var(--sp-2);
 }
 
-.similar-incidents img {
+/* Full-width so the whole header row is the hit target, not just the caret. */
+.similar-incidents-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The measured real/false split. Neutral colour on purpose: it reports what the library
+   holds, and tinting it toward either verdict would editorialise a count. */
+.similar-incidents-split {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.similar-incident-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.similar-incident-frames-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+/* Two across, not the strip's three. Nested inside a list row the available width is about
+   600px, so three columns give ~199px a frame -- enough to count them, not enough to tell
+   one posture from another and so pick the one worth opening. Two gives ~300px, and the
+   lightbox carries the actual reading. */
+.similar-incident-frames {
+  width: 100%;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* The thumbnail is a control now: it picks which frame the lightbox opens. Stripped back to
+   a bare image so it reads as the picture it is rather than as a button around one. */
+.evidence-frame-zoom {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 0;
+}
+
+.evidence-frame-zoom img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+/* Covers the alert dialog rather than the page: rendered inside it so the dialog's focus
+   trap still contains this, which is also why it needs a z-index above the modal's own. */
+.frame-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.frame-lightbox-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  max-width: min(1400px, 96vw);
+  width: 100%;
+}
+
+/* `contain` not `cover`: this is the view where the guard is reading posture, so the frame
+   must never be cropped, however the viewport is shaped. */
+.frame-lightbox img {
+  width: 100%;
+  max-height: 78vh;
+  object-fit: contain;
+  border-radius: var(--r-md);
+  background: #000;
+}
+
+.frame-lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.frame-lightbox-bar span {
+  flex: 1;
+  text-align: center;
+}
+
+.frame-lightbox-bar button {
+  min-width: 44px;
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+
+.frame-lightbox-close {
+  font-size: var(--fs-sm);
+}
+
+.similar-incident-empty {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* Scoped to the row's own thumbnail. As `.similar-incidents img` this also caught the six
+   evidence frames and the lightbox's full-size image, pinning every one of them to 64x48 in
+   the corner of its box -- which is what the black surround in the strip actually was. */
+.similar-incident-row > img {
   width: 64px;
   height: 48px;
   object-fit: cover;

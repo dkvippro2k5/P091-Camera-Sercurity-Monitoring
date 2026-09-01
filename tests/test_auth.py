@@ -43,6 +43,7 @@ OPERATOR_ONLY = [
     ("get", "/api/v1/incidents"),
     ("get", "/api/v1/evidence/nope"),
     ("get", "/api/v1/alerts/nope/similar"),
+    ("get", "/api/v1/incidents/nope/frames"),
 ]
 
 
@@ -156,6 +157,9 @@ def test_a_manager_cannot_reach_guard_routes_but_can_read_shared_status(manager_
     assert manager_client.get("/api/v1/monitoring/status").status_code == 200
     assert manager_client.get("/api/v1/incidents").status_code == 200
     assert manager_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    # Empty rather than 404: an incident whose frames are gone is a panel with no strip, and
+    # a manager auditing a verdict needs the same frames the guard judged from.
+    assert manager_client.get("/api/v1/incidents/anything/frames").status_code == 200
     # 404 rather than 403: the gate passed and the handler ran on an id that does not exist.
     # A 403 here would mean evidence had drifted back behind the guard-only router and the
     # thumbnails in the history list would silently stop resolving.
@@ -172,6 +176,7 @@ def test_a_guard_keeps_the_history_surface_too(guard_client):
     """
     assert guard_client.get("/api/v1/incidents").status_code == 200
     assert guard_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    assert guard_client.get("/api/v1/incidents/anything/frames").status_code == 200
     assert guard_client.get("/api/v1/evidence/does-not-exist").status_code == 404
     assert guard_client.get("/api/v1/alerts").status_code == 200
 
