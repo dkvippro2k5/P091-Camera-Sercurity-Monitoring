@@ -88,34 +88,46 @@ class PostgresEmbeddingStore:
         only judged alerts are ever embedded, so it excludes nothing a correct write path
         produced -- it is there so a half-written or externally-inserted row cannot reach a
         guard labelled as something a colleague decided.
+
+        `limit` bounds the nearest-neighbour scan; `min_similarity` then drops whatever in
+        that set is too far to be useful, so a caller asking for 5 can get fewer, or none.
+        That is deliberate -- see `MonitoringService.similar_incidents`, where both come from
+        the VLM's confidence and a weak, distant match is worse than an empty panel.
         """
         if len(embedding) != self.dimensions:
             raise ValueError(f"Expected {self.dimensions} dimensions, got {len(embedding)}")
         vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
+        # The query vector is bound once, as `%(vec)s`, rather than repeated positionally for
+        # the SELECT, the WHERE and the ORDER BY. The distance is computed once in the inner
+        # SELECT and every outer clause reads that column. `min_similarity` becomes a ceiling
+        # on cosine *distance* (1 - similarity) so the filter is an ordinary comparison on the
+        # same operator the ORDER BY and the HNSW index already use.
+        max_distance = 1.0 - float(min_similarity)
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """SELECT e.alert_id, e.content, i.camera_id, i.camera_name, i.label,
-                          i.operator_verdict, i.evidence_url, e.created_at,
-                          1 - (e.embedding <=> %s::vector) AS similarity
-                   FROM incident_embeddings e
-                   JOIN incidents i ON i.alert_id = e.alert_id
-                   WHERE (%s::text IS NULL OR e.alert_id != %s)
-                     AND (%s::text IS NULL OR i.label = %s)
-                     AND i.operator_verdict IS NOT NULL
-                     AND 1 - (e.embedding <=> %s::vector) >= %s
-                   ORDER BY e.embedding <=> %s::vector
-                   LIMIT %s""",
-                (
-                    vector,
-                    exclude_alert_id,
-                    exclude_alert_id,
-                    label,
-                    label,
-                    vector,
-                    float(min_similarity),
-                    vector,
-                    max(1, min(limit, 100)),
-                ),
+                """SELECT alert_id, content, camera_id, camera_name, label,
+                          operator_verdict, evidence_url, created_at, 1 - distance AS similarity
+                   FROM (
+                     SELECT e.alert_id, e.content, i.camera_id, i.camera_name, i.label,
+                            i.operator_verdict, i.evidence_url, e.created_at,
+                            e.embedding <=> %(vec)s::vector AS distance
+                     FROM incident_embeddings e
+                     JOIN incidents i ON i.alert_id = e.alert_id
+                     WHERE (%(exclude)s::text IS NULL OR e.alert_id != %(exclude)s)
+                       AND (%(label)s::text IS NULL OR i.label = %(label)s)
+                       AND i.operator_verdict IS NOT NULL
+                     ORDER BY e.embedding <=> %(vec)s::vector
+                     LIMIT %(limit)s
+                   ) ranked
+                   WHERE distance <= %(max_distance)s
+                   ORDER BY distance""",
+                {
+                    "vec": vector,
+                    "exclude": exclude_alert_id,
+                    "label": label,
+                    "limit": max(1, min(limit, 100)),
+                    "max_distance": max_distance,
+                },
             )
             return [
                 {
