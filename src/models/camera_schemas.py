@@ -255,6 +255,7 @@ class IncidentRecord(BaseModel):
     confidence: float = 0.0
     created_at: str
     evidence_url: str | None = None
+    evidence_frames: list[AlertEvidenceFrame] = Field(default_factory=list)
     operator_verdict: OperatorVerdict | None = None
     judged_by: str | None = None
     operator_note: str | None = None

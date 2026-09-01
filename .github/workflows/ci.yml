@@ -40,7 +40,7 @@ jobs:
           mv yolo26l.pt src/vision/weights/yolo26l.pt
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ --fix
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

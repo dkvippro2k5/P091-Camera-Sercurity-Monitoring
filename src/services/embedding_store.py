@@ -123,4 +123,8 @@ def create_embedding_store() -> PostgresEmbeddingStore | None:
     if not settings.database_url.startswith(("postgresql://", "postgres://")):
         logger.warning("EMBEDDINGS_ENABLED is true but DATABASE_URL is not Postgres; similar-incident lookup is disabled.")
         return None
-    return PostgresEmbeddingStore(settings.database_url, settings.embedding_dimensions)
+    try:
+        return PostgresEmbeddingStore(settings.database_url, settings.embedding_dimensions)
+    except Exception:  # noqa: BLE001 - embeddings are optional and must not block application startup
+        logger.exception("Could not initialize the embedding store; similar-incident lookup is disabled.")
+        return None

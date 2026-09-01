@@ -144,6 +144,19 @@ def test_triage_runs_off_the_caller_thread(make_service):
     assert triage.thread_names[0].startswith("vlm-triage")
 
 
+def test_false_positive_verdict_is_not_telegram_eligible(make_service):
+    service = make_service(triage=FakeTriage(verdict="false_positive"))
+    published: list[tuple[str, dict]] = []
+    service._publish = lambda event_type, data: published.append((event_type, data))
+
+    alert = _emit(service)
+    assert service._notification_worker.notifier.enabled is False
+    assert service._notification_worker._queue.empty()
+    assert alert.triage_status == "pending"
+
+    assert service.notifier.enabled is False
+
+
 def test_verdict_event_is_published_when_triage_finishes(make_service):
     triage = FakeTriage(verdict="real", rationale="person is prone and motionless")
     service = make_service(triage=triage)

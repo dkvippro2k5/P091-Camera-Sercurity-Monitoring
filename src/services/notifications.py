@@ -59,7 +59,10 @@ class TelegramNotifier:
         message = payload_text
         succeeded = True
         for chat_id in self.chat_ids:
-            payload = json.dumps({"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}).encode()
+            # The message is deliberately plain text after removing Markdown markers above.
+            # Omitting parse_mode prevents camera IDs/model text containing underscores or other
+            # punctuation from being rejected by Telegram's Markdown parser (HTTP 400).
+            payload = json.dumps({"chat_id": chat_id, "text": message}).encode()
             request = Request(self.endpoint, data=payload, headers={"Content-Type": "application/json"}, method="POST")
             try:
                 with urlopen(request, timeout=8) as response:  # noqa: S310 - fixed HTTPS endpoint
