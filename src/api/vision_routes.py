@@ -42,6 +42,7 @@ from src.api.deps import (
 )
 from src.models.camera_schemas import (
     Alert,
+    AlertEvidenceFrame,
     AlertVerdict,
     CameraCreate,
     CameraInfo,
@@ -607,7 +608,10 @@ async def submit_verdict(
 
 @operator_router.get("/alerts/{alert_id}/similar", response_model=list[SimilarIncident])
 async def similar_incidents(
-    alert_id: str, request: Request, limit: int = Query(default=5, ge=1, le=20)
+    alert_id: str,
+    request: Request,
+    limit: int = Query(default=5, ge=1, le=20),
+    min_similarity: float = Query(default=0.0, ge=0.0, le=1.0),
 ) -> list[SimilarIncident]:
     """Past guard-judged incidents whose rule-engine reason reads similarly to this one's.
 
@@ -625,8 +629,29 @@ async def similar_incidents(
     nothing. That is the already-correct behaviour for "no matches" rather than a gap to
     paper over, and it is why widening the gate needs no change to the lookup itself.
     """
-    rows = await asyncio.to_thread(get_service(request).similar_incidents, alert_id, limit)
+    rows = await asyncio.to_thread(
+        get_service(request).similar_incidents, alert_id, limit, min_similarity
+    )
     return [SimilarIncident(**row) for row in rows]
+
+
+@operator_router.get("/incidents/{alert_id}/frames", response_model=list[AlertEvidenceFrame])
+async def incident_frames(alert_id: str, request: Request) -> list[AlertEvidenceFrame]:
+    """The stored evidence strip for a past incident, for the similar-incidents panel.
+
+    Separate from the neighbour rows themselves, and fetched only when a guard expands one:
+    reconstructing a strip means probing storage key by key (see
+    `MonitoringService.incident_frames`), which on an S3 backend is a network call per frame.
+    Doing that eagerly for every neighbour of every alert would spend those calls on strips
+    nobody opens.
+
+    On the shared operator gate for the same reason `/evidence` is: this serves stored stills
+    to an authenticated operator, and a manager auditing a verdict needs the frames it was
+    based on. Empty list, never a 404, when nothing is stored -- an older incident whose
+    frames have aged out is a panel that shows no strip, not an error.
+    """
+    frames = await asyncio.to_thread(get_service(request).incident_frames, alert_id)
+    return frames
 
 
 @router.get("/events")

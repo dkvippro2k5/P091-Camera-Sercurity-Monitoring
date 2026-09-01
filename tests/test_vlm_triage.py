@@ -24,7 +24,7 @@ from src.models.camera_schemas import Alert
 from src.services import monitoring as monitoring_module
 from src.services.alert_history import AlertHistory
 from src.services.evidence_store import EvidenceStore
-from src.services.monitoring import MonitoringService, _evenly_spaced, _evidence_frames
+from src.services.monitoring import MonitoringService, _evenly_spaced, _evidence_frames, embedding_text
 from src.services.vlm import (
     LocalSmolVLMTriage,
     NullVLMTriage,
@@ -389,6 +389,89 @@ def test_evidence_frames_skip_a_frame_the_store_rejects(tmp_path):
     evidence = _evidence_frames([b"a", b"b", b"c"], 1, "alert-2", store)
 
     assert [frame.index for frame in evidence] == [1, 3]
+
+
+# ------------------------------------------------------------------ similar-incident text
+def test_embedding_text_drops_the_zone_name(make_service):
+    """The zone name is an operator-chosen landmark like 'Kho hàng chính'. Left in a
+    fifteen-word sentence it dominates the vector, and the lookup starts matching *same
+    camera* instead of *same behaviour* — which is what it was actually doing in production.
+    """
+    service = make_service(triage=NullVLMTriage())
+    alert = _emit(service, label="intrusion", reason="t3 entered restricted zone 'Kho hàng chính' during 24/7")
+
+    text = embedding_text(alert)
+
+    assert "Kho hàng chính" not in text
+    assert "a restricted zone" in text
+    # The rest of the sentence has to survive, or there is no behaviour left to match on.
+    assert "t3 entered" in text
+    assert "during 24/7" in text
+
+
+def test_embedding_text_includes_the_vlm_reading(make_service):
+    """The VLM's description was computed, shown to the guard, and then left out of the
+    comparison entirely. It is the richest text in the system, so it belongs in the vector."""
+    service = make_service(triage=NullVLMTriage())
+    alert = _emit(service)
+    alert.triage_rationale = "Người đàn ông ngã xuống sàn và nằm yên."
+    alert.triage_frame_observations = ["Người đứng thẳng.", "Người nằm trên sàn."]
+
+    text = embedding_text(alert)
+
+    assert "2/3 indicators" in text
+    assert "Người đàn ông ngã xuống sàn" in text
+    assert "Người nằm trên sàn." in text
+
+
+def test_embedding_text_without_a_vlm_is_unchanged(make_service):
+    """A deployment with VLM_ENABLED off must produce exactly the text it did before this
+    existed, or its stored vectors stop being comparable for a feature it does not even use."""
+    service = make_service(triage=NullVLMTriage())
+    alert = _emit(service)
+
+    assert embedding_text(alert) == "[rule] 2/3 indicators"
+
+
+def test_similar_incidents_needs_no_reason_when_the_vlm_spoke(make_service):
+    """The old guard was `if not alert.reason: return []`. An alert with no rule reason but a
+    full VLM reading has plenty to compare on, and silently returned nothing."""
+    service = make_service(triage=NullVLMTriage())
+    alert = _emit(service, reason=None)
+    alert.triage_rationale = "Người đàn ông ngã xuống sàn."
+
+    assert embedding_text(alert) == "[ai] Người đàn ông ngã xuống sàn."
+
+
+# ------------------------------------------------------------------ neighbour frame strips
+def test_incident_frames_rebuilds_a_stored_strip(make_service, tmp_path):
+    """`AlertEvidenceFrame` is never persisted, so a past incident's strip has to be
+    reconstructed from the `{alert_id}-f{n}` keys the writer derives."""
+    service = make_service(triage=NullVLMTriage())
+    _evidence_frames([b"a", b"b", b"c"], 2, "alert-9", service.evidence_store)
+
+    frames = service.incident_frames("alert-9")
+
+    assert [frame.index for frame in frames] == [1, 2, 3]
+    # Two thirds before, matching the budget the live strip is sampled with.
+    assert [frame.phase for frame in frames] == ["before", "before", "after"]
+    assert frames[0].image_url == "/api/v1/evidence/alert-9-f1"
+
+
+def test_incident_frames_is_empty_when_nothing_is_stored(make_service):
+    """An older incident whose frames have aged out is a panel with no strip, not an error."""
+    service = make_service(triage=NullVLMTriage())
+    assert service.incident_frames("never-stored") == []
+
+
+def test_incident_frames_stops_at_the_first_gap(make_service):
+    """Bounds the probe. Without the stop, a missing f1 would still cost `vlm_max_frames`
+    storage round trips — per neighbour, and on S3 those are network calls."""
+    service = make_service(triage=NullVLMTriage())
+    _evidence_frames([b"a", b"b"], 1, "alert-8", service.evidence_store)
+    service.evidence_store.local_path("alert-8-f1").unlink()
+
+    assert service.incident_frames("alert-8") == []
 
 
 # ------------------------------------------------------------------ HITL + history

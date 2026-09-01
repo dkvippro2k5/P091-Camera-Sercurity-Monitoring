@@ -116,7 +116,15 @@ export const api = {
 
   // Empty list whenever the feature is off or nothing similar has been judged yet -- never
   // an error the modal needs to handle specially. See docs/database/schema.sql (PLANNED).
-  similarIncidents: (id) => request(`/alerts/${id}/similar`),
+  // `limit` and `minSimilarity` come from the VLM's confidence (`similarIncidentQuery`):
+  // fewer, closer neighbours when the assessment is strong, more context when it is weak.
+  similarIncidents: (id, { limit = 5, minSimilarity = 0 } = {}) =>
+    request(`/alerts/${id}/similar?limit=${limit}&min_similarity=${minSimilarity}`),
+
+  // The evidence strip of one past incident, fetched only when a guard expands that
+  // neighbour -- rebuilding it probes storage per frame, so it is not worth doing for rows
+  // nobody opens.
+  incidentFrames: (id) => request(`/incidents/${id}/frames`),
 
   // The HITL judgement (PRD §3.2). Distinct from acknowledge: this one records whether the
   // incident was real, and is the only call that appends to the labelled history.

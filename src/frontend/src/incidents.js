@@ -76,6 +76,77 @@ export function triageMeta(verdict) {
 }
 
 /**
+ * Confidence bands shared by the modal's eyebrow and the similar-incident lookup.
+ *
+ * `TRIAGE_HIGH` is 0.85 to match `isAutoSuppressed` below rather than to introduce a second
+ * opinion about what "confident" means — an alert one notch under the auto-suppression line
+ * and one just over it should not be described in unrelated language. `TRIAGE_LOW` marks the
+ * point under which the model is not really asserting anything.
+ *
+ * Deliberately not settings: these choose wording and how many neighbours to show, not
+ * detection behaviour, and adding env vars would drag .env.example, both compose files and
+ * the production config into a change that is otherwise contained.
+ */
+export const TRIAGE_HIGH = 0.85
+export const TRIAGE_LOW = 0.6
+
+/**
+ * The line above the headline, graded by what the VLM actually concluded.
+ *
+ * Only the eyebrow. `incidentMeta`'s headline, action and severity stay keyed to the label,
+ * for the reason given on TRIAGE above: the modal's severity styling must never follow the
+ * AI verdict, or a confidently wrong "false positive" would visually downgrade a real
+ * medical emergency. Wording can hedge; the colour of a fall alert cannot.
+ *
+ * Every path that is not a completed triage — VLM off, queue saturated, call failed, or a
+ * null confidence — returns the original fixed string, so a deployment with VLM disabled
+ * reads exactly as it did before this existed.
+ */
+export function alertPriority(alert) {
+  if (alert.triage_status === 'pending') {
+    return { eyebrow: 'Đang xác minh', tone: 'neutral' }
+  }
+  if (alert.triage_status !== 'complete' || typeof alert.triage_confidence !== 'number') {
+    return { eyebrow: 'Cảnh báo ưu tiên', tone: 'high' }
+  }
+
+  const confidence = alert.triage_confidence
+  if (alert.triage_verdict === 'real') {
+    if (confidence >= TRIAGE_HIGH) return { eyebrow: 'Cảnh báo khẩn cấp', tone: 'critical' }
+    if (confidence >= TRIAGE_LOW) return { eyebrow: 'Cảnh báo ưu tiên', tone: 'high' }
+    return { eyebrow: 'Cảnh báo — cần xác minh', tone: 'medium' }
+  }
+  if (alert.triage_verdict === 'false_positive') {
+    // The >= TRIAGE_HIGH case does not reach the modal at all (isAutoSuppressed), so this
+    // only ever describes a false-positive call the system was not confident enough to act on.
+    return { eyebrow: 'Nghi báo động giả — ưu tiên thấp', tone: 'low' }
+  }
+  return { eyebrow: 'Chưa rõ — cần xác minh', tone: 'medium' }
+}
+
+/**
+ * How many past incidents to offer, and how close they must be to be worth offering.
+ *
+ * Both scale with the VLM's confidence, for one reason: when the assessment is strong the
+ * guard needs a quick corroboration and weak matches only muddy it, so we ask for fewer and
+ * demand they be closer. When it is weak the guard is doing the real work of deciding, and
+ * more context — even slightly looser context — is what helps.
+ *
+ * `limit` is a ceiling, never a quota. The floor is applied to whatever comes back, so a
+ * camera with no close history returns fewer rows, or none. That is the honest answer, and
+ * it is why the displayed real/false split is always a measurement of what was retrieved
+ * rather than a ratio anyone chose.
+ */
+export function similarIncidentQuery(alert) {
+  const confidence = typeof alert?.triage_confidence === 'number' ? alert.triage_confidence : null
+  if (alert?.triage_status === 'complete' && confidence !== null) {
+    if (confidence >= TRIAGE_HIGH) return { limit: 3, minSimilarity: 0.8 }
+    if (confidence >= TRIAGE_LOW) return { limit: 5, minSimilarity: 0.7 }
+  }
+  return { limit: 5, minSimilarity: 0.65 }
+}
+
+/**
  * "just now" / "4m ago" — a wall-mounted display is read at a glance, and an absolute
  * "02:14:07" carries no date, so across a shift boundary it cannot be placed in time.
  * The absolute timestamp is still rendered alongside, as a <time> element.

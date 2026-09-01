@@ -44,6 +44,24 @@ class EvidenceStore:
     def local_path(self, evidence_id: str) -> Path:
         return self.local_dir / "evidence" / f"{evidence_id}.jpg"
 
+    def exists(self, evidence_id: str) -> bool:
+        """Whether a stored frame is there, without transferring it.
+
+        The evidence frames of a past alert are not recorded in any table -- they are written
+        under the derived key `{alert_id}-f{n}` and described only on the in-memory Alert,
+        which is gone once the ring buffer rolls. Reconstructing the strip for an older
+        incident therefore means probing those keys, and probing with `fetch` would download
+        every frame just to learn it exists. `head_object` asks the same question for none of
+        the bytes.
+        """
+        if self.backend == "s3":
+            try:
+                self._s3.head_object(Bucket=self.bucket, Key=f"evidence/{evidence_id}.jpg")
+                return True
+            except Exception:  # noqa: BLE001 - a missing key and a transport error both mean "cannot show it"
+                return False
+        return self.local_path(evidence_id).is_file()
+
     def fetch(self, evidence_id: str) -> bytes | None:
         """Read one stored evidence JPEG back, or None when it is not there.
 

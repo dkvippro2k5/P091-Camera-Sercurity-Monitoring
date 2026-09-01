@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -152,6 +153,45 @@ def _evidence_frames(
             )
         )
     return evidence
+
+
+_ZONE_NAME_PATTERN = re.compile(r"restricted zone '[^']*'")
+
+
+def embedding_text(alert: Alert) -> str:
+    """The text compared by the similar-incident lookup, from every source that has one.
+
+    Two problems with embedding `alert.reason` alone, which is what this replaced.
+
+    The first is that the reason is a rule-engine string, and for intrusion it embeds
+    `zone_name` — an operator-chosen label like 'Kho hàng chính'. In a sentence of fifteen
+    words a proper noun that specific dominates the vector, so the lookup matched *same
+    place* rather than *same behaviour*: two intrusions on one camera looked alike however
+    differently they unfolded. Substituting a generic phrase keeps the sentence's shape and
+    drops the landmark. Fall and abandoned-object reasons carry no zone name, so this is a
+    no-op for them.
+
+    The second is that the VLM's own reading of the clip — a sentence describing what
+    happened, plus a note per frame — was computed, shown to the guard, and then left out of
+    the comparison entirely. That was the richest description in the system. Including it is
+    what lets the lookup agree or disagree with the assessment on screen.
+
+    `operator_note` is deliberately absent. This same function builds both the stored vector
+    and the query vector, and at query time the guard has not written their note yet — it is
+    the field they are about to fill in. Adding it to the stored side alone would mean the
+    two sides describe different things, which is worse than leaving it out of both.
+
+    Sections are omitted rather than emptied when a source is missing, so a deployment with
+    VLM disabled produces exactly the pre-existing text and nothing about its results changes.
+    """
+    sections = []
+    if alert.reason:
+        sections.append(f"[rule] {_ZONE_NAME_PATTERN.sub('a restricted zone', alert.reason)}")
+    if alert.triage_rationale:
+        sections.append(f"[ai] {alert.triage_rationale}")
+    if alert.triage_frame_observations:
+        sections.append(f"[frames] {' '.join(alert.triage_frame_observations)}")
+    return "\n".join(sections)
 
 
 class MonitoringService:
@@ -909,15 +949,20 @@ class MonitoringService:
         # asyncio.to_thread call), and an embeddings API call has no business making that
         # click feel slow. The 10s client timeout in embeddings.py bounds it either way, but
         # off the response path a slow embeddings call costs nothing the guard can feel.
-        if self.embeddings is not None and self._embed_text is not None and alert.reason:
+        # Composed from the rule reason *and* the VLM's reading of the clip -- see
+        # `embedding_text`. Built here on the caller's thread rather than inside the worker
+        # because `alert` is shared mutable state guarded by `self._lock`; the worker gets an
+        # immutable string.
+        content = embedding_text(alert)
+        if self.embeddings is not None and self._embed_text is not None and content:
             try:
-                self._embedding_pool.submit(self._store_embedding, alert.id, alert.camera_id, alert.reason)
+                self._embedding_pool.submit(self._store_embedding, alert.id, alert.camera_id, content)
             except RuntimeError:
                 pass  # pool is shut down (process exiting); losing one embedding is fine
         self._publish("alert.acknowledged", snapshot)
         return True
 
-    def _store_embedding(self, alert_id: str, camera_id: str, reason: str) -> None:
+    def _store_embedding(self, alert_id: str, camera_id: str, content: str) -> None:
         """Runs on `_embedding_pool`, off the HITL response path -- see the call site.
 
         Broad except: a flaky embeddings call or a Postgres blip here must not raise on a
@@ -925,36 +970,104 @@ class MonitoringService:
         HITL verdict -- that response was already sent before this ever runs.
         """
         try:
-            embedded = self._embed_text(reason)
+            embedded = self._embed_text(content)
             if embedded is not None:
                 vector, model = embedded
-                self.embeddings.upsert(alert_id, reason, vector, model)
+                self.embeddings.upsert(alert_id, content, vector, model)
         except Exception:  # noqa: BLE001
             logger.exception(f"[{camera_id}] could not store incident embedding for {alert_id}")
 
-    def similar_incidents(self, alert_id: str, limit: int = 5) -> list[dict]:
-        """Past judged incidents whose rule-engine reason reads similarly to this one's.
+    def similar_incidents(
+        self, alert_id: str, limit: int = 5, min_similarity: float = 0.0
+    ) -> list[dict]:
+        """Past judged incidents that read similarly to this one -- see `embedding_text`.
 
         Works on *any* alert, judged or not -- a guard staring at a brand-new alert is
         exactly who this is for, so the alert being looked up does not need a verdict yet.
         Its embedding is computed here and thrown away rather than stored (see
         `record_operator_verdict`: only judged alerts join the comparison library).
+
+        Restricted to the same label. A fall and an abandoned bag are not comparable evidence
+        however closely their text happens to embed, and showing one while judging the other
+        invites exactly the wrong inference.
+
+        `limit` is a ceiling and `min_similarity` a floor, both chosen by the caller from the
+        VLM's confidence: a strong assessment wants a few close neighbours, a weak one wants
+        more context. Neither shapes the real/false mix that comes back -- that stays a
+        measurement of what the library actually holds, which is the only reason it is worth
+        showing a guard at all.
         """
         if self.embeddings is None or self._embed_text is None:
             return []
         with self._lock:
             alert = next((a for a in self._alerts if a.id == alert_id), None)
-        if alert is None or not alert.reason:
+        if alert is None:
             return []
-        embedded = self._embed_text(alert.reason)
+        content = embedding_text(alert)
+        if not content:
+            return []
+        embedded = self._embed_text(content)
         if embedded is None:
             return []
         vector, _ = embedded
         try:
-            return self.embeddings.search(vector, limit=limit, exclude_alert_id=alert_id)
+            return self.embeddings.search(
+                vector,
+                limit=limit,
+                exclude_alert_id=alert_id,
+                label=alert.label,
+                min_similarity=min_similarity,
+            )
         except Exception:  # noqa: BLE001 - a lookup failure should read as "no similar incidents", not 500
             logger.exception(f"[{alert.camera_id}] could not search for similar incidents to {alert_id}")
             return []
+
+    def incident_frames(self, alert_id: str) -> list[AlertEvidenceFrame]:
+        """Rebuild a past incident's evidence strip from storage.
+
+        The guard judging a live alert gets a before/after sequence, because a fall is only
+        legible as a sequence -- a single still of someone mid-crouch and one of someone
+        mid-collapse are the same picture. A past incident offered as comparable evidence is
+        being read for the same judgement, so it needs the same sequence; the one thumbnail
+        on the neighbour row is the detection-moment frame, which is precisely the most
+        ambiguous one.
+
+        Reconstructed rather than looked up because `AlertEvidenceFrame` is never persisted:
+        it lives on the in-memory Alert only. What *is* durable is the frames themselves,
+        under the `{alert_id}-f{n}` key that `_evidence_frames` derives. So the keys are
+        probed in order and the run that exists is returned.
+
+        Stops at the first gap. `_evidence_frames` writes from index 1 upward and drops a
+        frame only when its own write failed, so a gap means the strip ended there -- and
+        stopping bounds the probe at `vlm_max_frames` calls even when nothing is stored.
+        Phase is recomputed from the same two-thirds split `_triage_frame_budget` uses, since
+        which frames were "before" is not recoverable from the keys alone.
+
+        No lock and no exists/serve race to worry about: nothing in the app ever deletes an
+        evidence frame -- there is no retention job, no `EvidenceStore.delete` -- so the set
+        this probes is append-only for the life of the deployment. If a frame did go missing
+        between this call and the browser's fetch, `/evidence/{id}` already 404s cleanly and
+        the panel is best-effort by design (a lookup failure reads as "nothing similar").
+        """
+        settings = get_settings()
+        max_frames = settings.vlm_max_frames
+        stored = 0
+        for index in range(1, max_frames + 1):
+            if not self.evidence_store.exists(f"{alert_id}-f{index}"):
+                break
+            stored = index
+        if stored == 0:
+            return []
+
+        pre_count = max(1, (stored * 2) // 3)
+        return [
+            AlertEvidenceFrame(
+                index=index,
+                phase="before" if index <= pre_count else "after",
+                image_url=f"/api/v1/evidence/{alert_id}-f{index}",
+            )
+            for index in range(1, stored + 1)
+        ]
 
     def list_alerts(self, unacknowledged_only: bool = False) -> list[Alert]:
         with self._lock:
