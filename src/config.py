@@ -91,7 +91,14 @@ class Settings(BaseSettings):
     # default there; leave 0 if sources are already <=1080p or the host has a GPU.
     camera_capture_max_height: int = Field(default=0, ge=0, le=2160)
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
-    model_weights_path: str = "src/vision/weights/yolo26n.pt"
+    # `yolo26n.pt` is not shipped in this repo and no build step fetches it, so that used
+    # to be the default here — a fresh clone with no .env override raised FileNotFoundError
+    # from IncidentDetector on the very first camera. `yolo26s.pt` is the weight file this
+    # repo actually carries (see the .env template's own comment: n was tried and reverted
+    # for missing over half its detections against l on a real clip; s matches l's recall
+    # at ~3x the speed). A GPU deployment should still override to yolo26l.pt via
+    # MODEL_WEIGHTS_PATH, as .env.example documents.
+    model_weights_path: str = "src/vision/weights/yolo26s.pt"
     detector_target_labels: str = "person,backpack,handbag,suitcase"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,

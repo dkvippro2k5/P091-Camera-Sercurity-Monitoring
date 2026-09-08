@@ -14,11 +14,19 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 # Repo-relative on purpose. An absolute path here would short-circuit _resolve_weights
 # (it returns early for absolute paths) and break on every machine but the author's,
-# including CI and Docker. The default is the lightweight YOLO11n checkpoint, which keeps
-# inference latency and memory use low when many people are
-# visible. Benchmark the capacity table in stream_manager.py again before quoting its
-# throughput numbers for the deployed hardware and video streams.
-DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo26n.pt")
+# including CI and Docker.
+#
+# `yolo26n.pt` used to be the default here, but that checkpoint is not shipped in this
+# repo and nothing fetches it — every caller that builds an IncidentDetector (or a bare
+# VisionPipeline()) with no explicit model_path, which is most of the test suite, raised
+# FileNotFoundError on construction (verified 2026-09-08). `yolo26s.pt` is the weight file
+# actually committed under src/vision/weights/: the .env template's own comment records
+# that yolo26n was tried and reverted for missing over half its detections against
+# yolo26l on a real clip, while yolo26s matched yolo26l's recall at ~3x the speed. Settings
+# in src/config.py carries the same value for MonitoringService's real pipeline; this
+# constant is what a bare IncidentDetector()/VisionPipeline() falls back to when
+# Settings is bypassed entirely, which is exactly what construction-only tests do.
+DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo26s.pt")
 
 
 class IncidentDetector:
