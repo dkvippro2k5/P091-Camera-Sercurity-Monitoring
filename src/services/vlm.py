@@ -321,9 +321,13 @@ class OpenAIVLMTriage:
 
         if request.examples:
             lines.append("")
-            lines.append("Past incidents on this camera, as judged by the on-duty guard:")
+            lines.append("Các phán quyết trước đây của bảo vệ (mới nhất ở cuối):")
             lines.extend(f"- {example}" for example in request.examples)
-            lines.append("Use these to calibrate what this particular camera's false alarms look like.")
+            lines.append(
+                "Dùng để hiệu chỉnh: nếu đánh giá của bạn mâu thuẫn với một xu hướng nhất quán "
+                "trong các phán quyết này, hãy hạ confidence hoặc trả 'uncertain'. Chỉ giữ "
+                "confidence cao khi bằng chứng trong các frame tự nó đã rõ ràng."
+            )
 
         return "\n".join(lines)
 

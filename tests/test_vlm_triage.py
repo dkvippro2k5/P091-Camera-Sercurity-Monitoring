@@ -444,6 +444,43 @@ def test_similar_incidents_needs_no_reason_when_the_vlm_spoke(make_service):
     assert embedding_text(alert) == "[ai] Người đàn ông ngã xuống sàn."
 
 
+def test_triage_examples_is_only_recent_history_when_embeddings_are_off(make_service):
+    """The default. `self.embeddings`/`self._embed_text` are None in every test, so the
+    similar-incident lookup contributes nothing and behaviour is exactly as before."""
+    service = make_service(triage=NullVLMTriage())
+    service.history.record("old", "cam_1", "fall_detection", "false", reason="camera-local prior")
+    alert = _emit(service)
+
+    examples = service._triage_examples(alert)
+
+    assert len(examples) == 1
+    assert "camera-local prior" in examples[0]
+
+
+def test_triage_examples_prepends_similar_incidents_when_embeddings_are_on(make_service):
+    """With embeddings on, the pgvector neighbours lead and this camera's own history
+    trails, so the newest on-point judgement is the last thing the model reads."""
+    service = make_service(triage=NullVLMTriage())
+    service.history.record("old", "cam_1", "fall_detection", "false", reason="camera-local prior")
+    alert = _emit(service)
+
+    # Stand in for a configured pgvector store: the guards check both are non-None, and
+    # `similar_incidents` itself is replaced with the rows it would have returned.
+    service.embeddings = object()
+    service._embed_text = lambda _text: ([0.0], "stub-model")
+    service.similar_incidents = lambda alert_id, limit, min_similarity: [
+        {"similarity": 0.91, "camera_name": "Sảnh chính", "operator_verdict": "false",
+         "content": "[rule] người ngồi xổm"},
+    ]
+
+    examples = service._triage_examples(alert)
+
+    assert len(examples) == 2
+    assert "giống 91%" in examples[0]
+    assert "BÁO ĐỘNG GIẢ" in examples[0]
+    assert "camera-local prior" in examples[-1]
+
+
 # ------------------------------------------------------------------ neighbour frame strips
 def test_incident_frames_rebuilds_a_stored_strip(make_service, tmp_path):
     """`AlertEvidenceFrame` is never persisted, so a past incident's strip has to be
@@ -724,6 +761,27 @@ def test_prompt_carries_the_rule_evidence_verbatim():
     assert "Lobby" in prompt
     assert "push-ups" in prompt
     assert "uncontrolled" in prompt
+
+
+def test_prompt_tells_the_model_to_defer_to_contradicting_judgements():
+    """Prior judgements are not just context — a consistent contradiction should pull the
+    model's confidence down."""
+    with_examples = OpenAIVLMTriage._build_prompt(
+        TriageRequest(
+            label="fall_detection",
+            camera_name="Lobby",
+            pre_count=2,
+            frames=[b"x"] * 4,
+            examples=["Bảo vệ kết luận là BÁO ĐỘNG GIẢ: người ngồi xổm"],
+        )
+    )
+    without = OpenAIVLMTriage._build_prompt(
+        TriageRequest(label="fall_detection", camera_name="Lobby", pre_count=2, frames=[b"x"] * 4)
+    )
+
+    assert "hạ confidence" in with_examples
+    assert "mâu thuẫn với một xu hướng nhất quán" in with_examples
+    assert "hạ confidence" not in without
 
 
 def _wait_until(predicate, timeout: float = 5.0) -> None:

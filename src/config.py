@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     vlm_max_frames: int = Field(default=6, ge=2, le=16)
     vlm_timeout_sec: float = Field(default=20.0, gt=0.0)
     vlm_history_examples: int = Field(default=6, ge=0, le=32)
+    # How many semantically-similar past incidents (pgvector lookup, EMBEDDINGS_ENABLED) to
+    # fold into the triage prompt *before* the model answers, so a consistent contradiction
+    # in the neighbours can pull its confidence down. 0 disables. Has no effect when
+    # embeddings are off — the lookup returns nothing.
+    vlm_similar_examples: int = Field(default=3, ge=0, le=16)
+    vlm_similar_min_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
 
     # Monitoring
     # Per (camera, label) floor between alerts. One flickering track would otherwise

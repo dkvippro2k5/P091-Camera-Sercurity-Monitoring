@@ -264,6 +264,8 @@ class MonitoringService:
         self._post_roll_sec = settings.vlm_post_roll_sec
         self._max_frames = settings.vlm_max_frames
         self._history_examples = settings.vlm_history_examples
+        self._similar_examples = settings.vlm_similar_examples
+        self._similar_min_similarity = settings.vlm_similar_min_similarity
         # Sized from the configured capture rate with headroom, so the window covers
         # pre_roll_sec of footage even when a camera runs faster than its target.
         self._default_ring_size = max(8, int(settings.camera_target_fps * settings.vlm_pre_roll_sec * 2))
@@ -793,8 +795,48 @@ class MonitoringService:
             frames,
             pre_count,
             _evidence_frames(frames, pre_count, alert.id, self.evidence_store),
-            self.history.recent_examples(alert.camera_id, alert.label, limit=self._history_examples),
+            self._triage_examples(alert),
         )
+
+    def _triage_examples(self, alert: Alert) -> list[str]:
+        """Prior-incident context for the triage prompt, most relevant last.
+
+        Two sources, kept distinct because they answer different questions:
+        - `recent_examples`: this camera's own recent operator judgements for this label —
+          "what does *this* camera's noise look like".
+        - `similar_incidents`: semantically nearest judged incidents anywhere (pgvector, on
+          the alert's rule reason), fetched *here* rather than after the verdict so the model
+          can see a contradicting precedent and lower its confidence. Empty unless
+          EMBEDDINGS_ENABLED. The alert has no VLM rationale yet, so the query vector is the
+          rule reason alone — which is the evidence the alert actually fired on.
+
+        The similar rows lead and the same-camera history trails, so the newest, most
+        on-point judgement is the last thing the model reads.
+        """
+        history = self.history.recent_examples(
+            alert.camera_id, alert.label, limit=self._history_examples
+        )
+        if self._similar_examples <= 0 or self.embeddings is None or self._embed_text is None:
+            return history
+
+        try:
+            rows = self.similar_incidents(
+                alert.id,
+                limit=self._similar_examples,
+                min_similarity=self._similar_min_similarity,
+            )
+        except Exception:  # noqa: BLE001 - a lookup failure must not cost the alert its triage
+            logger.exception(f"[{alert.camera_id}] similar-incident lookup failed for {alert.id}")
+            return history
+
+        rendered = [
+            f'Sự cố tương tự (giống {round(row["similarity"] * 100)}%) tại '
+            f'{row.get("camera_name") or row.get("camera_id") or "camera khác"} — '
+            f'bảo vệ kết luận là {"SỰ CỐ THẬT" if row.get("operator_verdict") == "real" else "BÁO ĐỘNG GIẢ"}'
+            + (f': {row["content"]}' if row.get("content") else "")
+            for row in rows
+        ]
+        return rendered + history
 
     def _assess_triage_evidence(
         self,
