@@ -1,8 +1,31 @@
 # Kế hoạch: tăng thông lượng triage và xử lý nhiều sự kiện đồng thời
 
-Trạng thái: **ĐỀ XUẤT — chờ duyệt**
+Trạng thái: **ĐÃ THỰC THI — giai đoạn 1, 2, 3 và phần dọn dẹp giai đoạn 5**
 Nhánh hiện tại: `fix/vlm-triage-robustness`
 Ngày: 2026-09-08
+
+## Kết quả thực thi
+
+| Giai đoạn | Trạng thái | Commit |
+| --- | --- | --- |
+| 1 — Sửa `.env` (pre/post-roll, max_frames) | ✅ Xong | không commit code — `.env` bị gitignore, áp dụng runtime-only |
+| 2 — Tách post-roll wait khỏi triage pool | ✅ Xong | `fix(vlm): stop the post-roll wait from occupying a triage worker` |
+| 3 — Crop theo `track_id` | ✅ Xong | `feat(vlm): crop the triage clip to the alerting track` |
+| Dọn dẹp GĐ5 — default weights `yolo26n.pt` không tồn tại | ✅ Xong | `fix(vision): stop defaulting to a YOLO checkpoint that is not in the repo` |
+| Dọn dẹp GĐ5 — `DETECTOR_IMGSZ` biến chết | ✅ Xong | comment cảnh báo trong `.env`, chưa nối dây thật |
+| 4 — Gộp alert đồng thời | Hoãn theo plan | — |
+| 5 — Giảm tải YOLO (MotionGate, imgsz thật) | Chưa làm, cần đo trước | — |
+
+Toàn bộ 271 test xanh (15 skip do thiếu footage/GPU) sau mỗi giai đoạn. 20 test mới được
+thêm: 5 cho giai đoạn 2 (post-roll timer), 6 cho crop trong `_collect_clip`, 2 cho
+`VisionPipeline.last_tracks`, cộng các test đã sửa để dùng `RingFrame` thay vì tuple thô.
+
+**Phát hiện phụ ngoài dự kiến:** khi chạy full suite sau giai đoạn 2, phát hiện
+`IncidentDetector.DEFAULT_WEIGHTS_PATH` (hằng số riêng trong `detector.py`, độc lập với
+`config.py`) cũng trỏ vào `yolo26n.pt` không tồn tại — đây là default thực sự mà một
+`VisionPipeline()`/`IncidentDetector()` không tham số dùng, và là lý do 5 test trong
+`test_vision.py` fail ngay cả sau khi `config.py` đã được sửa. Đã sửa cả hai hằng số về
+`yolo26s.pt` (file thực sự có trong repo).
 
 ---
 
