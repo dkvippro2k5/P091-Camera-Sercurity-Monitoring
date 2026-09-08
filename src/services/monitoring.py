@@ -266,6 +266,7 @@ class MonitoringService:
         self._history_examples = settings.vlm_history_examples
         self._similar_examples = settings.vlm_similar_examples
         self._similar_min_similarity = settings.vlm_similar_min_similarity
+        self._auto_suppress_confidence = settings.vlm_auto_suppress_confidence
         # Sized from the configured capture rate with headroom, so the window covers
         # pre_roll_sec of footage even when a camera runs faster than its target.
         self._default_ring_size = max(8, int(settings.camera_target_fps * settings.vlm_pre_roll_sec * 2))
@@ -1143,6 +1144,7 @@ class MonitoringService:
             max_concurrent_inferences=int(raw["max_concurrent_inferences"]),
             replaced_frame_callbacks=int(raw["replaced_frame_callbacks"]),
             unacknowledged_alerts=len(self.list_alerts(unacknowledged_only=True)),
+            auto_suppress_confidence=self._auto_suppress_confidence,
         )
 
     def operational_stats(self) -> dict:

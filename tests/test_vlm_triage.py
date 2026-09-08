@@ -784,6 +784,15 @@ def test_prompt_tells_the_model_to_defer_to_contradicting_judgements():
     assert "hạ confidence" not in without
 
 
+def test_system_prompt_describes_the_confidence_bands_and_the_suppression_cost():
+    """Confidence is self-reported and drives auto-suppression, so the prompt has to say
+    what the numbers mean and that a wrong high-confidence false_positive is the worst call."""
+    from src.services.vlm import _SYSTEM_PROMPT
+
+    assert "0.9-1.0" in _SYSTEM_PROMPT
+    assert "tự động ẩn" in _SYSTEM_PROMPT
+
+
 def _wait_until(predicate, timeout: float = 5.0) -> None:
     """Poll a condition set by a worker thread instead of sleeping a fixed amount."""
     deadline = time.monotonic() + timeout

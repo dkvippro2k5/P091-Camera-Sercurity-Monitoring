@@ -264,6 +264,24 @@ def test_abandon_sec_setting_reaches_the_rule_engine(monkeypatch, isolated_data)
         get_settings.cache_clear()
 
 
+def test_auto_suppress_confidence_is_served_in_status(monkeypatch, isolated_data):
+    """The frontend reads this from monitoring/status instead of hardcoding the threshold."""
+    from src.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "src.services.monitoring.get_settings",
+        lambda: Settings(vlm_auto_suppress_confidence=0.97),
+    )
+
+    instance = MonitoringService()
+    try:
+        assert instance.status().auto_suppress_confidence == 0.97
+    finally:
+        instance.shutdown()
+        get_settings.cache_clear()
+
+
 # ------------------------------------------------------------------ alerts
 def test_alert_carries_the_frame_and_the_rule_reason(service):
     """An event must publish immediately, carrying its own evidence.

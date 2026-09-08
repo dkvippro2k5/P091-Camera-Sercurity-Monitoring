@@ -78,14 +78,10 @@ export function triageMeta(verdict) {
 /**
  * Confidence bands shared by the modal's eyebrow and the similar-incident lookup.
  *
- * `TRIAGE_HIGH` is 0.85 to match `isAutoSuppressed` below rather than to introduce a second
- * opinion about what "confident" means — an alert one notch under the auto-suppression line
- * and one just over it should not be described in unrelated language. `TRIAGE_LOW` marks the
- * point under which the model is not really asserting anything.
- *
- * Deliberately not settings: these choose wording and how many neighbours to show, not
- * detection behaviour, and adding env vars would drag .env.example, both compose files and
- * the production config into a change that is otherwise contained.
+ * `TRIAGE_HIGH` is 0.85 and `TRIAGE_LOW` marks the point under which the model is not really
+ * asserting anything. These two only choose wording and how many neighbours to show, so they
+ * stay constants — unlike the auto-suppression threshold (`isAutoSuppressed`), which governs
+ * whether a guard sees the alert at all and is therefore a served setting.
  */
 export const TRIAGE_HIGH = 0.85
 export const TRIAGE_LOW = 0.6
@@ -117,8 +113,9 @@ export function alertPriority(alert) {
     return { eyebrow: 'Cảnh báo — cần xác minh', tone: 'medium' }
   }
   if (alert.triage_verdict === 'false_positive') {
-    // The >= TRIAGE_HIGH case does not reach the modal at all (isAutoSuppressed), so this
-    // only ever describes a false-positive call the system was not confident enough to act on.
+    // A false-positive confident enough to auto-suppress never reaches the modal (see
+    // isAutoSuppressed and its configurable threshold), so this only ever describes one the
+    // system was not confident enough to act on.
     return { eyebrow: 'Nghi báo động giả — ưu tiên thấp', tone: 'low' }
   }
   return { eyebrow: 'Chưa rõ — cần xác minh', tone: 'medium' }
@@ -168,6 +165,24 @@ export function formatClock(iso) {
 }
 
 /**
+ * The confidence at or above which a false-positive verdict is auto-hidden from the guard.
+ *
+ * Unlike TRIAGE_HIGH/TRIAGE_LOW (which pick wording), this one governs whether a guard ever
+ * sees the alert -- a confidently wrong false-positive here is a real incident dropped from
+ * the queue silently -- so it *is* a setting: the backend serves it in `monitoring/status`
+ * from VLM_AUTO_SUPPRESS_CONFIDENCE, and `setAutoSuppressConfidence` below is called once
+ * when that loads. The literal is only the value used before the first status poll.
+ *
+ * A module-level setter rather than a prop because `requiresGuardReview` is passed around as
+ * a bare predicate (`alerts.filter(requiresGuardReview)`).
+ */
+let autoSuppressConfidence = 0.9
+
+export function setAutoSuppressConfidence(value) {
+  if (typeof value === 'number' && value >= 0 && value <= 1) autoSuppressConfidence = value
+}
+
+/**
  * High-confidence false positives filtered by VLM.
  * They do not open the big modal and do not count as active attention backlog.
  */
@@ -176,7 +191,7 @@ export function isAutoSuppressed(alert) {
     alert.triage_status === 'complete' &&
     alert.triage_verdict === 'false_positive' &&
     typeof alert.triage_confidence === 'number' &&
-    alert.triage_confidence >= 0.85
+    alert.triage_confidence >= autoSuppressConfidence
   )
 }
 

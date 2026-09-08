@@ -10,7 +10,7 @@ import EventHistory from './components/EventHistory'
 import VerifyingCard from './components/VerifyingCard'
 import NotificationToggle from './components/NotificationToggle'
 import { api, clearApiCache, setUnauthorizedHandler } from './api'
-import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview } from './incidents'
+import { triageOrder, isAutoSuppressed, isPendingTriage, requiresGuardReview, setAutoSuppressConfidence } from './incidents'
 
 const MAX_HISTORY = 60
 
@@ -120,7 +120,11 @@ export default function App() {
 
   const loadStatus = useCallback(async () => {
     try {
-      setStatus(await api.status())
+      const next = await api.status()
+      setStatus(next)
+      if (typeof next?.auto_suppress_confidence === 'number') {
+        setAutoSuppressConfidence(next.auto_suppress_confidence)
+      }
     } catch (err) {
       console.error('Failed to load status:', err)
     }

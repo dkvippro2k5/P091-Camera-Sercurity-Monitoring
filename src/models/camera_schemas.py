@@ -300,3 +300,6 @@ class SystemStatus(BaseModel):
     max_concurrent_inferences: int = 0
     replaced_frame_callbacks: int = 0
     unacknowledged_alerts: int = 0
+    # Client config: the confidence at/above which a VLM false_positive is auto-hidden from
+    # the guard queue. Served here so the frontend does not hardcode it.
+    auto_suppress_confidence: float = 0.9

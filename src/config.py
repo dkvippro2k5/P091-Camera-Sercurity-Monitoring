@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # embeddings are off — the lookup returns nothing.
     vlm_similar_examples: int = Field(default=3, ge=0, le=16)
     vlm_similar_min_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
+    # A false_positive verdict at or above this confidence hides the alert from the guard
+    # queue entirely (frontend isAutoSuppressed). Confidence is self-reported by the model
+    # with no calibration, so keep this high; raise it toward 1.0 while trust in a new
+    # deployment is still being established. Served to the client in monitoring/status.
+    vlm_auto_suppress_confidence: float = Field(default=0.9, ge=0.0, le=1.0)
 
     # Monitoring
     # Per (camera, label) floor between alerts. One flickering track would otherwise

@@ -74,7 +74,9 @@ QUY TẮC:
 
 Các frame được sắp theo thời gian, nhãn BEFORE/AFTER. Đánh giá diễn biến của cả chuỗi, không dựa vào một frame.
 
-CHỈ trả JSON theo schema. `rationale` phải đúng một câu tiếng Việt, tối đa 35 từ, nêu đối tượng, diễn biến và bằng chứng chính; không lặp lại máy móc tên cảnh báo. `frame_observations` phải có đúng một ghi chú tiếng Việt cho mỗi frame, chỉ mô tả điều nhìn thấy. Không suy đoán danh tính, nguyên nhân hoặc ý định. Dùng uncertain nếu thiếu bằng chứng; confidence từ 0 đến 1 phản ánh độ chắc chắn."""
+CHỈ trả JSON theo schema. `rationale` phải đúng một câu tiếng Việt, tối đa 35 từ, nêu đối tượng, diễn biến và bằng chứng chính; không lặp lại máy móc tên cảnh báo. `frame_observations` phải có đúng một ghi chú tiếng Việt cho mỗi frame, chỉ mô tả điều nhìn thấy. Không suy đoán danh tính, nguyên nhân hoặc ý định.
+
+Dùng uncertain nếu thiếu bằng chứng. confidence từ 0 đến 1: chỉ dùng 0.9-1.0 khi bản thân các frame đã đủ chắc chắn không còn nghi ngờ; 0.6-0.8 khi có khả năng cao nhưng chưa chắc; 0.5 trở xuống (hoặc uncertain) khi chuỗi hình mơ hồ hoặc mâu thuẫn với các phán quyết trước của camera này. Một phán quyết 'false_positive' mà bạn không chắc là câu trả lời tệ nhất: 'false_positive' confidence cao có thể bị tự động ẩn, nên bảo vệ sẽ không bao giờ thấy cảnh báo đó. Khi phân vân, hãy trả uncertain."""
 
 _LABEL_GUIDANCE = {
     "fall_detection": "Tập trung vào chuyển đổi tư thế và khả năng hồi phục sau khi xuống sàn.",
@@ -92,7 +94,14 @@ _RESPONSE_SCHEMA = {
             "type": "object",
             "properties": {
                 "verdict": {"type": "string", "enum": ["real", "false_positive", "uncertain"]},
-                "confidence": {"type": "number"},
+                "confidence": {
+                    "type": "number",
+                    "description": (
+                        "0-1. Chỉ 0.9-1.0 khi các frame tự nó đã rõ ràng; 0.6-0.8 khi có khả "
+                        "năng cao nhưng chưa chắc; <=0.5 hoặc verdict 'uncertain' khi chuỗi hình "
+                        "mơ hồ hoặc mâu thuẫn với các phán quyết trước của camera này."
+                    ),
+                },
                 "rationale": {"type": "string"},
                 "frame_observations": {
                     "type": "array",
