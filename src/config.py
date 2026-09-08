@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # Per (camera, label) floor between alerts. One flickering track would otherwise
     # open a modal on every frame it flickers.
     alert_cooldown_sec: float = Field(default=30.0, ge=0.0)
+    # Abandoned-object rule. 2s is a demo/illustration default so a short clip shows the
+    # alert fire; PETS2006/AVSS-style production deployments use 30-60s. Not a RuleEngine
+    # default because that module is pinned by its test suite — this is the one construction
+    # site that reads Settings, and stream_manager already copies these onto every worker.
+    abandon_sec: float = Field(default=2.0, gt=0.0)
+    owner_radius_ratio: float = Field(default=0.25, gt=0.0, le=1.0)
+    stationary_tolerance_ratio: float = Field(default=0.02, gt=0.0, le=1.0)
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     camera_max_concurrent_inferences: int = Field(default=0, ge=0, le=32)

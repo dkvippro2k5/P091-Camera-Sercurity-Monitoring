@@ -217,8 +217,10 @@ class MonitoringService:
         self.zone_manager = ZoneManager()
 
         # Template pipeline: MultiStreamManager clones its *config* per worker, because
-        # tracker state and dwell timers must not be shared across cameras.
-        template = VisionPipeline(
+        # tracker state and dwell timers must not be shared across cameras. Retained on the
+        # instance so a test (and the abandonment tunables above) can read back what every
+        # worker's rule engine was built with.
+        self._pipeline_template = VisionPipeline(
             detector=IncidentDetector(
                 model_path=settings.model_weights_path,
                 conf_threshold=settings.detector_confidence,
@@ -227,11 +229,14 @@ class MonitoringService:
             rule_engine=RuleEngine(
                 zone_manager=self.zone_manager,
                 alert_cooldown_sec=(settings.alert_cooldown_sec if alert_cooldown_sec is None else alert_cooldown_sec),
+                abandon_sec=settings.abandon_sec,
+                owner_radius_ratio=settings.owner_radius_ratio,
+                stationary_tolerance_ratio=settings.stationary_tolerance_ratio,
             ),
             draw_overlays=True,
         )
         self.manager = MultiStreamManager(
-            shared_pipeline=template,
+            shared_pipeline=self._pipeline_template,
             global_on_frame_callback=self._on_frame,
             global_on_incident_callback=self._on_incident,
             max_concurrent_inferences=(

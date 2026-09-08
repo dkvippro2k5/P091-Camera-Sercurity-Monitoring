@@ -242,6 +242,28 @@ def test_removing_a_never_watched_camera_clears_the_pending_flag(service, monkey
     assert info.id not in service._awaiting_viewer
 
 
+# ------------------------------------------------------------------ config wiring
+def test_abandon_sec_setting_reaches_the_rule_engine(monkeypatch, isolated_data):
+    """`abandon_sec` is deliberately not a RuleEngine default (that module is test-pinned).
+    It travels config -> template engine, and stream_manager copies it to each worker."""
+    from src.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "src.services.monitoring.get_settings",
+        lambda: Settings(abandon_sec=45.0, owner_radius_ratio=0.3),
+    )
+
+    instance = MonitoringService()
+    try:
+        engine = instance._pipeline_template.rule_engine
+        assert engine.abandon_sec == 45.0
+        assert engine.owner_radius_ratio == 0.3
+    finally:
+        instance.shutdown()
+        get_settings.cache_clear()
+
+
 # ------------------------------------------------------------------ alerts
 def test_alert_carries_the_frame_and_the_rule_reason(service):
     """An event must publish immediately, carrying its own evidence.
