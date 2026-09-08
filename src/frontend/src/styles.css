@@ -3261,6 +3261,37 @@ textarea:focus {
   font-size: var(--fs-sm);
 }
 
+.verdict-choice {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-strong, var(--border-subtle));
+  border-radius: var(--radius-2, 8px);
+}
+
+.verdict-choice legend {
+  padding: 0 var(--sp-2);
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.verdict-choice label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-primary);
+  font-size: var(--fs-md, var(--fs-sm));
+  cursor: pointer;
+}
+
+.verdict-choice input[type='radio'] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent, currentColor);
+}
+
 ::placeholder {
   color: var(--text-muted);
 }
