@@ -230,6 +230,66 @@ def test_null_triage_leaves_status_skipped(make_service):
     assert alert.triage_verdict is None
 
 
+# ------------------------------------------------------------------ post-roll scheduling
+def test_submit_triage_returns_immediately_despite_the_post_roll_wait(make_service):
+    """The post-roll wait must not block the caller — it runs on a `threading.Timer`,
+    never inside `_submit_triage` itself, so a slow post-roll cannot stall the camera's
+    processor thread that calls `_emit_alert`."""
+    service = make_service(triage=FakeTriage(), post_roll_sec=2.0)
+
+    started = time.perf_counter()
+    _emit(service)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5, f"_emit_alert (and thus _submit_triage) took {elapsed:.2f}s"
+
+
+def test_verdict_still_arrives_after_the_post_roll_elapses(make_service):
+    """The timer must actually fire and hand the alert to the triage pool."""
+    triage = FakeTriage()
+    service = make_service(triage=triage, post_roll_sec=0.2)
+
+    alert = _emit(service)
+    assert alert.triage_status == "pending"
+
+    assert triage.called.wait(timeout=5), "triage never ran after the post-roll timer fired"
+    _wait_until(lambda: alert.triage_status == "complete")
+    assert alert.triage_verdict == "real"
+
+
+def test_post_roll_wait_does_not_occupy_a_triage_pool_worker(make_service):
+    """Regression guard for the bug this stage fixes: sleeping for the post-roll used to
+    happen *inside* a `_triage_pool` worker (`_wait_for_post_roll`'s old `time.sleep`), so
+    a handful of alerts firing close together could leave most of the pool asleep instead
+    of answering API calls. All pool workers must be free to run `assess()` concurrently
+    even while several alerts are still waiting out their post-roll window."""
+    triage = FakeTriage(delay=0.3)
+    service = make_service(triage=triage, post_roll_sec=0.3)
+
+    # One more alert than there are pool workers, fired back to back. If the post-roll wait
+    # occupied a pool worker, the pool would be fully consumed by sleeping alone and later
+    # alerts would queue behind it instead of running concurrently once their timers fire.
+    alert_count = monitoring_module._TRIAGE_POOL_WORKERS + 1
+    for i in range(alert_count):
+        _emit(service, camera_id=f"cam_{i}")
+
+    _wait_until(lambda: triage.called.is_set(), timeout=5.0)
+    _wait_until(lambda: len(triage.requests) == alert_count, timeout=5.0)
+    assert len(triage.requests) == alert_count
+
+
+def test_shutdown_cancels_pending_post_roll_timers(make_service):
+    """A timer scheduled just before shutdown must not fire into a closed pool."""
+    service = make_service(triage=FakeTriage(), post_roll_sec=5.0)
+
+    _emit(service)
+    assert len(service._pending_triage_timers) == 1
+
+    service.shutdown()
+
+    assert service._pending_triage_timers == set()
+
+
 # ------------------------------------------------------------------ frame ring
 def test_ring_holds_distinct_frames(make_service):
     """Guards the aliasing bug.

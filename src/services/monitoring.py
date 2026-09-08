@@ -319,6 +319,14 @@ class MonitoringService:
         # concern instead of a foreground wait.
         self._embedding_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embeddings")
         self._triage_in_flight = 0
+        # Post-roll wait, done as a `threading.Timer` rather than inside a `_triage_pool`
+        # worker. A worker that blocks on `time.sleep(post_roll_sec)` before doing any real
+        # work is a worker not answering the API call it exists for — with a handful of
+        # alerts firing close together, most of the pool could be asleep at once while the
+        # in-flight count still climbs toward `_MAX_TRIAGE_IN_FLIGHT` and later alerts get
+        # skipped as "queue saturated" even though no network call is actually running.
+        # Tracked so `shutdown()` can cancel pending timers instead of leaking threads.
+        self._pending_triage_timers: set[threading.Timer] = set()
         self._incident_workflow = build_incident_workflow(
             wait_for_post_roll=self._wait_for_post_roll,
             collect_evidence=self._collect_triage_evidence,
@@ -358,6 +366,16 @@ class MonitoringService:
 
     def shutdown(self) -> None:
         self.manager.stop_all()
+        # Cancel post-roll timers that have not fired yet. Without this, a timer started
+        # just before shutdown would fire seconds later and submit into an already-shutdown
+        # `_triage_pool`, which `_enqueue_triage`'s `RuntimeError` handler already tolerates
+        # — but there is no reason to let it fire at all on a process that is exiting.
+        # `cancel()` on an already-fired timer is a harmless no-op.
+        with self._lock:
+            pending = list(self._pending_triage_timers)
+            self._pending_triage_timers.clear()
+        for timer in pending:
+            timer.cancel()
         # wait=False: a triage call already blocked on a 20s API timeout must not hold the
         # process open on Ctrl-C. Its verdict is lost, which is the right trade — the
         # verdict is advisory and the alert it belongs to has already been shown.
@@ -791,11 +809,35 @@ class MonitoringService:
             return True
 
     def _submit_triage(self, alert: Alert) -> None:
-        """Queue the second-stage assessment, or mark it skipped and move on.
+        """Schedule the second-stage assessment after the post-roll wait.
 
         Called from the camera's processor thread, so it must return immediately — the
-        submit is the only work done here.
+        work here is scheduling a timer, never blocking. The wait itself used to be a
+        `time.sleep(post_roll_sec)` inside a `_triage_pool` worker (see `_wait_for_post_roll`),
+        which meant every alert occupied one of the pool's few worker threads for the whole
+        post-roll window before it made a single network call. A `threading.Timer` does the
+        same wait off the pool entirely, so all `_TRIAGE_POOL_WORKERS` stay free for actual
+        API calls even when several alerts fire within the same post-roll window.
         """
+        if self._post_roll_sec <= 0:
+            self._enqueue_triage(alert, timer=None)
+            return
+        timer = threading.Timer(self._post_roll_sec, lambda: self._enqueue_triage(alert, timer=timer))
+        timer.daemon = True
+        with self._lock:
+            self._pending_triage_timers.add(timer)
+        timer.start()
+
+    def _enqueue_triage(self, alert: Alert, timer: threading.Timer | None) -> None:
+        """Submit the assessment to the triage pool once the post-roll wait is over.
+
+        Runs on the `threading.Timer`'s own thread (see `_submit_triage`), not the camera's
+        processor thread — submitting to a `ThreadPoolExecutor` is cheap but not guaranteed
+        instant, and nothing here may stall frame processing.
+        """
+        if timer is not None:
+            with self._lock:
+                self._pending_triage_timers.discard(timer)
         try:
             self._triage_pool.submit(self._run_triage, alert)
         except RuntimeError:
@@ -836,10 +878,15 @@ class MonitoringService:
             self._publish("alert.verdict", snapshot)
 
     def _wait_for_post_roll(self, alert: Alert) -> None:
-        """Wait until the camera ring contains evidence after the alert."""
+        """No-op: the post-roll wait already happened before this workflow was invoked.
+
+        Kept as a graph node (rather than removed) so `build_incident_workflow`'s shape
+        still matches its five documented steps one-to-one. The actual wait moved to a
+        `threading.Timer` in `_submit_triage` / `_enqueue_triage`, off the `_triage_pool`
+        entirely — by the time `_run_triage` calls into this graph, the ring already holds
+        the post-roll frames `_collect_triage_evidence` is about to read.
+        """
         del alert
-        if self._post_roll_sec > 0:
-            time.sleep(self._post_roll_sec)
 
     def _collect_triage_evidence(
         self, alert: Alert
