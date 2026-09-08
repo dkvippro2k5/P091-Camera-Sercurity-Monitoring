@@ -670,6 +670,48 @@ def test_build_triage_client_builds_the_real_one_when_configured():
     assert isinstance(build_triage_client(settings), OpenAIVLMTriage)
 
 
+def test_thinking_mode_is_disabled_only_for_a_qwen3_model_on_a_compatible_endpoint():
+    """qwen3* models default to a thinking mode that adds 8-25s/alert; `enable_thinking: False`
+    is a DashScope-only extension. The vision models (qwen-vl-*) don't run thinking mode and
+    some reject the field, and the real OpenAI API rejects any unknown field."""
+    base = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    qwen3_flash = OpenAIVLMTriage(api_key="sk-x", model="qwen3.7-flash", base_url=base)
+    qwen_vl_plus = OpenAIVLMTriage(api_key="sk-x", model="qwen-vl-plus", base_url=base)
+    openai = OpenAIVLMTriage(api_key="sk-x", model="gpt-4o-mini")
+    qwen3_no_base_url = OpenAIVLMTriage(api_key="sk-x", model="qwen3.7-flash")
+
+    assert qwen3_flash._extra_body == {"enable_thinking": False}
+    assert qwen_vl_plus._extra_body == {}
+    assert openai._extra_body == {}
+    assert qwen3_no_base_url._extra_body == {}
+
+
+def test_assess_passes_extra_body_through_to_the_client():
+    captured = {}
+
+    class _CapturingClient:
+        def __init__(self) -> None:
+            message = type("M", (), {"content": '{"verdict": "uncertain", "confidence": 0.0, '
+                                                '"rationale": "x", "frame_observations": []}'})()
+            choice = type("C", (), {"message": message})()
+            response = type("R", (), {"choices": [choice]})()
+
+            class _Completions:
+                def create(self, **kwargs):
+                    captured.update(kwargs)
+                    return response
+
+            self.chat = type("Chat", (), {"completions": _Completions()})()
+
+    triage = OpenAIVLMTriage.__new__(OpenAIVLMTriage)
+    triage.model = "qwen3.7-flash"
+    triage._client = _CapturingClient()
+    triage._extra_body = {"enable_thinking": False}
+    triage.assess(TriageRequest(label="fall_detection", pre_count=1, frames=[b"x", b"y"]))
+
+    assert captured["extra_body"] == {"enable_thinking": False}
+
+
 def test_prompt_carries_the_rule_evidence_verbatim():
     """The measured indicator values are the evidence; paraphrasing them loses the point."""
     reason = "2/3 indicators [+V_y=1.62H/s(>=1.2) -AR=0.83(>=1.2) +dH=65%(>=50%)]"

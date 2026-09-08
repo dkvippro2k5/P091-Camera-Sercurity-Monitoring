@@ -182,6 +182,16 @@ class OpenAIVLMTriage:
         # OPENAI_BASE_URL was silently ignored and every call went to the real OpenAI API with
         # a key that API had never issued, failing 401 on every single alert.
         self._client = OpenAI(api_key=api_key, base_url=base_url or None, timeout=timeout_sec, max_retries=max_retries)
+        # Qwen's "thinking" models (qwen3*, e.g. qwen3.7-flash) default to an extended
+        # reasoning mode that burns thousands of hidden tokens per call — billed as output,
+        # not bounded by max_tokens — which llm_reasoner.py measured at 8-25s latency for a
+        # task that should take ~1s. Triage is a temperature=0.0 classification, so we opt
+        # out with the DashScope-only `enable_thinking: False` extension. The vision models
+        # (qwen-vl-plus/-max, qwen3-vl-*) do not run thinking mode and some reject the
+        # parameter, and the real OpenAI API rejects any unknown extra field — so send it
+        # only for a qwen3* model reached through a configured base_url.
+        wants_no_thinking = bool(base_url) and str(model).lower().startswith("qwen3")
+        self._extra_body = {"enable_thinking": False} if wants_no_thinking else {}
 
     def assess(self, request: TriageRequest) -> TriageVerdict:
         """Judge one alert. Never raises.
@@ -203,6 +213,8 @@ class OpenAIVLMTriage:
                 # Deterministic-ish: this is a classification, not a writing task.
                 temperature=0.0,
                 max_tokens=600,
+                # See __init__: disables Qwen's default thinking mode; empty for real OpenAI.
+                extra_body=getattr(self, "_extra_body", {}),
             )
             payload = json.loads(response.choices[0].message.content or "{}")
             frame_observations = [
