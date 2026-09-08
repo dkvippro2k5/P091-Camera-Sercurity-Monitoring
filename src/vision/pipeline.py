@@ -58,6 +58,11 @@ class VisionPipeline:
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
+        # The (width, height) `_last_detections`' bboxes are in pixel terms of, so
+        # `last_tracks()` can normalize them regardless of what resolution the caller reads
+        # them back at. See `last_tracks` for why normalized is what a cross-thread reader
+        # actually needs.
+        self._last_detections_frame_size: tuple[int, int] = (0, 0)
 
     def process_frame(
         self,
@@ -165,6 +170,7 @@ class VisionPipeline:
         processing_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
         self._last_detections = detections
+        self._last_detections_frame_size = (width, height)
 
         result = FrameAnalysisResult(
             frame_id=frame_id,
@@ -197,6 +203,42 @@ class VisionPipeline:
         zones = self.rule_engine.zone_manager.zones_for(camera_id)
         output_frame = draw_zones(output_frame, zones, wall_time)
         return draw_tracks(output_frame, self._last_detections, [])
+
+    def last_tracks(self) -> dict[str, tuple[float, float, float, float]]:
+        """The most recent inference's tracked boxes, by `track_id`, normalized to [0, 1].
+
+        Read from a different thread than the one running `process_frame` — the ring feed
+        in `MonitoringService._on_raw_frame` runs on the display loop, while this dict is
+        written on the processor loop (see `CameraStreamWorker`'s two threads). Normalized
+        coordinates are what makes that safe to read without a lock: `_last_detections` and
+        `_last_detections_frame_size` are captured together here, but the *ring's* frame at
+        the moment a caller uses this result may already be a different capture, possibly at
+        a different resolution (a mid-session capture_max_height change, a source that
+        changed its native size). Pixel coordinates from one frame silently misapply to
+        another; a normalized box only needs the ring frame's own shape to scale correctly.
+
+        Only `person` boxes are returned — this exists for the VLM crop, which only ever
+        wants to isolate the person a fall/intrusion alert is about.
+
+        Returns an empty dict before the first inference, or if the last inference had no
+        recorded frame size (should not happen outside tests that hand-set
+        `_last_detections`).
+        """
+        width, height = self._last_detections_frame_size
+        if width <= 0 or height <= 0:
+            return {}
+        tracks: dict[str, tuple[float, float, float, float]] = {}
+        for det in self._last_detections:
+            if det.label != "person" or not det.track_id:
+                continue
+            box = det.bbox
+            tracks[det.track_id] = (
+                box.xmin / width,
+                box.ymin / height,
+                box.xmax / width,
+                box.ymax / height,
+            )
+        return tracks
 
     def _skipped_result(
         self,

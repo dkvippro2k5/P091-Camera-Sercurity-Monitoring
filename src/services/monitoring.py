@@ -33,6 +33,7 @@ import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from typing import NamedTuple, TypeVar
 
 import cv2
 import numpy as np
@@ -84,6 +85,17 @@ _RING_MAX_EDGE = 1280
 # Feeding it a few times a second is plenty and leaves the CPU for inference.
 _RING_FEED_FPS = 4.0
 _MAX_ALERTS = 50
+# How much wider/taller than the raw person bbox a triage crop pads on each side. A cut
+# tight to the box loses exactly the context a fall verdict needs most — the floor the
+# person is on or near — and stitching bugs across pre/post-roll (track_id changes) are
+# more forgiving with a wider box. Same padding fraction on both axes: bboxes vary in
+# aspect ratio (a fallen person is wide, a standing one is tall) and a wider ratio in one
+# axis than the other would arbitrarily favor one orientation.
+_TRIAGE_CROP_PADDING = 0.4
+# Below this, either dimension after padding, a crop is not worth sending: the model would
+# be reasoning from a thumbnail instead of a clip. Falls back to the full frame instead of
+# risking an uninformative crop that reads as evidence when it is not.
+_TRIAGE_CROP_MIN_EDGE_PX = 64
 
 # Triage runs on a small thread pool and refuses work beyond this many alerts in flight. A
 # camera flickering between states would otherwise queue an unbounded backlog of paid API
@@ -109,12 +121,68 @@ def _detector_labels(csv: str) -> list[str] | None:
     return labels or None
 
 
-def _evenly_spaced(items: list[bytes], budget: int) -> list[bytes]:
+class RingFrame(NamedTuple):
+    """One still in a camera's pre-roll ring.
+
+    `tracks` maps `track_id` -> normalized (xmin, ymin, xmax, ymax) for every person YOLO
+    was tracking at the moment this frame was captured — see `VisionPipeline.last_tracks`
+    for why normalized. Empty before the first inference, or for a camera with no VLM
+    triage in play; `_collect_clip` falls back to the untouched frame whenever a lookup
+    into this dict comes up empty, so an empty `tracks` degrades to the pre-crop behavior
+    rather than failing.
+    """
+
+    timestamp: float
+    jpeg: bytes
+    tracks: dict[str, tuple[float, float, float, float]]
+
+
+def _crop_track(
+    jpeg: bytes, bbox: tuple[float, float, float, float], padding: float = _TRIAGE_CROP_PADDING
+) -> bytes | None:
+    """Crop `jpeg` to `bbox` (normalized xmin/ymin/xmax/ymax) padded by `padding` per side.
+
+    Returns None rather than raising when the crop is not usable — a bad JPEG, a
+    degenerate box, or a result too small to carry information (`_TRIAGE_CROP_MIN_EDGE_PX`)
+    — so the caller can fall back to the uncropped frame instead of losing the frame
+    entirely over one bad box.
+    """
+    array = np.frombuffer(jpeg, dtype=np.uint8)
+    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    if frame is None:
+        return None
+    height, width = frame.shape[:2]
+    xmin, ymin, xmax, ymax = bbox
+    box_w = max(0.0, xmax - xmin)
+    box_h = max(0.0, ymax - ymin)
+    if box_w <= 0 or box_h <= 0:
+        return None
+    pad_x, pad_y = box_w * padding, box_h * padding
+    x0 = max(0, int((xmin - pad_x) * width))
+    y0 = max(0, int((ymin - pad_y) * height))
+    x1 = min(width, int((xmax + pad_x) * width))
+    y1 = min(height, int((ymax + pad_y) * height))
+    if x1 - x0 < _TRIAGE_CROP_MIN_EDGE_PX or y1 - y0 < _TRIAGE_CROP_MIN_EDGE_PX:
+        return None
+    cropped = frame[y0:y1, x0:x1]
+    ok, buffer = cv2.imencode(".jpg", cropped, [int(cv2.IMWRITE_JPEG_QUALITY), _RING_JPEG_QUALITY])
+    return buffer.tobytes() if ok else None
+
+
+_T = TypeVar("_T")
+
+
+def _evenly_spaced(items: list[_T], budget: int) -> list[_T]:
     """Thin a list down to at most `budget` items, keeping the first, last, and even spread.
 
     Consecutive frames at 8 fps are near-duplicates, so taking the first N of a window would
     describe the first half-second and nothing else. Spacing them is what makes a handful of
     stills still cover the whole transition.
+
+    Generic over the item type (JPEG bytes or a `RingFrame`) so `_collect_clip` can thin the
+    ring's `RingFrame` entries — keeping each frame's `tracks` alongside its JPEG — before
+    deciding per-frame whether to crop, rather than thinning post-encode bytes that have
+    already lost that information.
     """
     if budget <= 0 or not items:
         return []
@@ -269,7 +337,11 @@ class MonitoringService:
         # thread's shared buffer, so a ring of arrays would quietly become N references to
         # whatever the newest frame is — a "clip" of identical images. These are the same
         # bytes `_on_frame` already encodes for the preview, so this costs no extra encode.
-        self._ring: dict[str, deque[tuple[float, bytes]]] = {}
+        # Each entry also carries that moment's tracked person boxes (see `RingFrame`), so
+        # `_collect_clip` can crop a clip down to the one track an alert is about instead of
+        # always sending the full scene — see docs/plans/vlm-throughput-and-concurrent-events.md
+        # stage 3 for why that matters when several people are in frame at once.
+        self._ring: dict[str, deque[RingFrame]] = {}
         # Cameras registered but not yet decoding, waiting for their first viewer. Only ever
         # holds finite file sources — see `add_camera`. Guarded by `self._lock`, because two
         # viewers attaching at once must still start the worker exactly once.
@@ -633,7 +705,7 @@ class MonitoringService:
         """
         return self.manager.h264_encoder(camera_id)
 
-    def _ring_for(self, camera_id: str) -> deque:
+    def _ring_for(self, camera_id: str) -> deque[RingFrame]:
         """The camera's pre-roll ring, created on first use.
 
         Sized from `_RING_FEED_FPS` (the throttled feed rate below), not the camera's
@@ -668,6 +740,12 @@ class MonitoringService:
             return
         self._ring_last_fed[camera_id] = now
         try:
+            # Read tracks before any resize: they are normalized to [0, 1] (see
+            # VisionPipeline.last_tracks), so they stay correct regardless of what this
+            # frame gets resized to below or what size the camera was capturing at when
+            # the last inference ran. This is what lets _collect_clip crop a clip down to
+            # the one person an alert's track_id names — see the ring's docstring above.
+            tracks = self.manager.last_tracks(camera_id)
             height, width = frame.shape[:2]
             longest = max(height, width)
             if longest > _RING_MAX_EDGE:
@@ -678,7 +756,7 @@ class MonitoringService:
                 )
             ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _RING_JPEG_QUALITY])
             if ok:
-                self._ring_for(camera_id).append((now, buffer.tobytes()))
+                self._ring_for(camera_id).append(RingFrame(now, buffer.tobytes(), tracks))
         except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the display loop
             logger.error(f"[{camera_id}] ring encode failed: {exc}")
 
@@ -891,7 +969,19 @@ class MonitoringService:
     def _collect_triage_evidence(
         self, alert: Alert
     ) -> tuple[list[bytes], int, list[AlertEvidenceFrame], list[str]]:
-        frames, pre_count = self._collect_clip(alert.camera_id)
+        """Gather the clip, cropped to the alerting track when the alert has one.
+
+        `alert.track_id` is the id RuleEngine assigned at the moment it fired — see
+        `_emit_alert`. A frame in the ring may have re-detected the same person under a
+        *different* track_id if YOLO's tracker dropped and RuleEngine's own stitching
+        re-linked it (`RuleEngine._stitch_or_create`, `aliased_from`): that link lives on
+        RuleEngine's internal track state, not on the `IncidentDetection` objects
+        `VisionPipeline.last_tracks` reads, so it is not visible here. In that case
+        `_collect_clip`'s per-frame fallback to the full scene is what actually degrades
+        gracefully — a wider clip for the frames where the id changed, not a dropped frame
+        or a crop of the wrong person.
+        """
+        frames, pre_count = self._collect_clip(alert.camera_id, alert.track_id)
         return (
             frames,
             pre_count,
@@ -984,6 +1074,14 @@ class MonitoringService:
                 frames=frames,
                 pre_count=pre_count,
                 examples=examples,
+                # Mirrors the condition _collect_triage_evidence used to decide whether to
+                # crop (`alert.track_id is not None`), not a guarantee every frame in
+                # `frames` actually got cropped — a per-frame tracking gap falls back to
+                # the full scene for that one frame (see `_crop_for_triage`). True here
+                # tells the model to expect a mostly-cropped clip, which is the honest
+                # signal either way: a model warned about crops it did not get is unaffected,
+                # one not warned about crops it did get can misread empty space as absence.
+                cropped=alert.track_id is not None,
             )
         )
 
@@ -1014,15 +1112,25 @@ class MonitoringService:
             alert.triage_verdict = "uncertain"
             alert.triage_error = error
 
-    def _collect_clip(self, camera_id: str) -> tuple[list[bytes], int]:
+    def _collect_clip(self, camera_id: str, track_id: str | None = None) -> tuple[list[bytes], int]:
         """Sample an evenly-spaced clip from the ring: `(frames, how many precede the event)`.
 
         The split point is `now - post_roll_sec`, which is when the rule actually fired —
-        this runs after sleeping through the post-roll, so "now" is already too late.
+        this runs after the post-roll timer has fired (see `_submit_triage`), so "now" is
+        already past it.
 
         Sampling matters: every frame is a billed image and accuracy degrades with long
         sequences, so a 5-second window at 8 fps is reduced to a handful of stills that still
         span the whole transition.
+
+        `track_id`, when given, crops every sampled frame down to that one person (padded —
+        see `_crop_track`) instead of sending the full scene. This is what makes several
+        alerts firing on the same camera at once separable: without it, N simultaneous
+        alerts on N different people all asked the model to judge the same full-scene clip,
+        which has no well-defined answer to "is this alert real" once more than one person
+        is in frame. A frame where the track cannot be found, or the crop comes out too
+        small to be useful, falls back to that one frame's full scene rather than dropping
+        it — a slightly wider clip beats a clip with the transition missing.
         """
         ring = self._ring.get(camera_id)
         if not ring:
@@ -1033,8 +1141,8 @@ class MonitoringService:
         event_time = time.monotonic() - self._post_roll_sec
         window_start = event_time - self._pre_roll_sec
 
-        pre = [jpeg for stamp, jpeg in samples if window_start <= stamp <= event_time]
-        post = [jpeg for stamp, jpeg in samples if stamp > event_time]
+        pre = [frame for frame in samples if window_start <= frame.timestamp <= event_time]
+        post = [frame for frame in samples if frame.timestamp > event_time]
 
         # Two thirds before, one third after. The lead-up is what distinguishes a fall from
         # someone already lying down; the aftermath only has to confirm they stayed there.
@@ -1043,7 +1151,27 @@ class MonitoringService:
         pre = _evenly_spaced(pre, pre_budget)
         post = _evenly_spaced(post, post_budget)
 
-        return pre + post, len(pre)
+        selected = pre + post
+        jpegs = [self._crop_for_triage(frame, track_id) for frame in selected]
+        return jpegs, len(pre)
+
+    @staticmethod
+    def _crop_for_triage(frame: RingFrame, track_id: str | None) -> bytes:
+        """This one sampled frame's JPEG, cropped to `track_id` when possible.
+
+        Falls back to the untouched frame — never raises, never drops the frame — whenever
+        there is nothing to crop to: no `track_id` (triage layer called without one, or the
+        alert never had a track), the track missing from this particular frame (tracking
+        gap, or stitching changed the id — see `_collect_triage_evidence`'s docstring), or
+        `_crop_track` deciding the result would be too small to be useful.
+        """
+        if not track_id:
+            return frame.jpeg
+        bbox = frame.tracks.get(track_id)
+        if bbox is None:
+            return frame.jpeg
+        cropped = _crop_track(frame.jpeg, bbox)
+        return cropped if cropped is not None else frame.jpeg
 
     def record_operator_verdict(
         self,

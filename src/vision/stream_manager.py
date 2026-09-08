@@ -375,6 +375,15 @@ class MultiStreamManager:
             worker = self.workers.get(camera_id)
         return worker.get_latest_display_jpeg() if worker else None
 
+    def last_tracks(self, camera_id: str) -> dict[str, tuple[float, float, float, float]]:
+        """The named camera's most recent tracked person boxes, normalized [0, 1]. Empty
+        dict if the camera has no worker or no inference has run yet. See
+        `VisionPipeline.last_tracks` for why normalized and why this is safe to read from
+        another thread."""
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.pipeline.last_tracks() if worker else {}
+
     def h264_encoder(self, camera_id: str):
         """The named camera's fMP4 encoder, or None if it has no worker or H.264 is off.
 

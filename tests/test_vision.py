@@ -119,6 +119,42 @@ def test_camera_id_propagates_into_detections():
     assert all(d.camera_id == "cam_lobby_07" for d in result.detections)
 
 
+def test_last_tracks_normalizes_person_boxes_to_the_frame_size():
+    """`last_tracks` is what MonitoringService crops the VLM clip to a track with (see
+    docs/plans/vlm-throughput-and-concurrent-events.md stage 3) -- it must report boxes as
+    fractions of the frame, not pixels, since the ring reads them back at whatever
+    resolution that particular frame happens to be at.
+    """
+    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
+    # Bypass detection entirely -- this pins the normalization math in last_tracks, not
+    # YOLO's output, so it needs no model weights and no real footage.
+    pipeline._last_detections = [
+        IncidentDetection(
+            label="person",
+            track_id="person_1",
+            confidence=0.9,
+            bbox=BoundingBox(xmin=100, ymin=50, xmax=300, ymax=450),
+        ),
+        IncidentDetection(
+            label="backpack",
+            track_id="bag_1",
+            confidence=0.8,
+            bbox=BoundingBox(xmin=10, ymin=10, xmax=20, ymax=20),
+        ),
+    ]
+    pipeline._last_detections_frame_size = (400, 500)  # (width, height)
+
+    tracks = pipeline.last_tracks()
+
+    assert set(tracks) == {"person_1"}, "only person tracks are returned"
+    assert tracks["person_1"] == pytest.approx((0.25, 0.1, 0.75, 0.9))
+
+
+def test_last_tracks_is_empty_before_the_first_inference():
+    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
+    assert pipeline.last_tracks() == {}
+
+
 def test_torch_thread_tuning_is_idempotent():
     """Tuning is process-global, so it must apply once and then no-op.
 

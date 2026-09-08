@@ -18,6 +18,7 @@ import threading
 import time
 from collections import deque
 
+import cv2
 import numpy as np
 import pytest
 
@@ -25,7 +26,13 @@ from src.models.camera_schemas import Alert
 from src.services import monitoring as monitoring_module
 from src.services.alert_history import AlertHistory
 from src.services.evidence_store import EvidenceStore
-from src.services.monitoring import MonitoringService, _evenly_spaced, _evidence_frames, embedding_text
+from src.services.monitoring import (
+    MonitoringService,
+    _crop_track,
+    _evenly_spaced,
+    _evidence_frames,
+    embedding_text,
+)
 from src.services.vlm import (
     LocalSmolVLMTriage,
     NullVLMTriage,
@@ -96,11 +103,29 @@ def _frame(value: int = 0) -> np.ndarray:
     return np.full((60, 80, 3), value, dtype=np.uint8)
 
 
+def _jpeg(width: int = 200, height: int = 100) -> bytes:
+    """A real, decodable JPEG -- `_crop_track` needs something `cv2.imdecode` can read,
+    unlike the placeholder `b"fake_jpeg"` bytes most other tests use."""
+    array = np.zeros((height, width, 3), dtype=np.uint8)
+    ok, buffer = cv2.imencode(".jpg", array)
+    assert ok
+    return buffer.tobytes()
+
+
+def _ring_frame(
+    stamp: float, jpeg: bytes, tracks: dict[str, tuple[float, float, float, float]] | None = None
+) -> monitoring_module.RingFrame:
+    """Build one ring entry. `tracks` defaults to empty -- most tests care about pre/post-roll
+    splitting, not cropping, and an empty dict is exactly what a camera with no inference yet
+    (or no track match) leaves in a real ring entry."""
+    return monitoring_module.RingFrame(stamp, jpeg, tracks or {})
+
+
 def _emit(service, camera_id="cam_1", label="fall_detection", reason="2/3 indicators") -> Alert:
     now = time.monotonic()
     ring = service._ring.setdefault(camera_id, deque(maxlen=service._default_ring_size))
-    ring.append((now - 1.0, b"fake_jpeg_before"))
-    ring.append((now + 0.1, b"fake_jpeg_after"))
+    ring.append(_ring_frame(now - 1.0, b"fake_jpeg_before"))
+    ring.append(_ring_frame(now + 0.1, b"fake_jpeg_after"))
     service._emit_alert(camera_id=camera_id, label=label, confidence=0.9, frame=_frame(), reason=reason)
     return service._alerts[0]
 
@@ -305,7 +330,7 @@ def test_ring_holds_distinct_frames(make_service):
         service._ring_last_fed["cam_1"] = 0.0
         service._on_raw_frame("cam_1", _frame(value))
 
-    stored = [jpeg for _, jpeg in service._ring["cam_1"]]
+    stored = [frame.jpeg for frame in service._ring["cam_1"]]
     assert len(stored) == 3
     assert len(set(stored)) == 3, "ring collapsed to duplicate frames"
 
@@ -317,12 +342,12 @@ def test_clip_splits_into_pre_and_post_roll(make_service):
     service._pre_roll_sec = 5.0
 
     now = time.monotonic()
-    ring = service._ring.setdefault("cam_1", __import__("collections").deque(maxlen=64))
+    ring = service._ring.setdefault("cam_1", deque(maxlen=64))
     # Four frames before the event, two after (event is at now - 0.2).
     for offset, payload in [(-3.0, b"a"), (-2.0, b"b"), (-1.0, b"c"), (-0.5, b"d")]:
-        ring.append((now + offset, payload))
+        ring.append(_ring_frame(now + offset, payload))
     for offset, payload in [(-0.1, b"e"), (0.0, b"f")]:
-        ring.append((now + offset, payload))
+        ring.append(_ring_frame(now + offset, payload))
 
     frames, pre_count = service._collect_clip("cam_1")
 
@@ -364,7 +389,9 @@ def test_a_one_sided_clip_is_still_assessed(make_service):
     service.triage = triage
     # Two frames, both before the split point — `post` is empty.
     stale = time.monotonic() - service._post_roll_sec - 1.0
-    service._ring["cam_1"] = deque([(stale - 1.0, b"before1"), (stale, b"before2")], maxlen=8)
+    service._ring["cam_1"] = deque(
+        [_ring_frame(stale - 1.0, b"before1"), _ring_frame(stale, b"before2")], maxlen=8
+    )
     service._triage_in_flight = 1
 
     service._run_triage(alert)
@@ -383,7 +410,7 @@ def test_a_single_frame_clip_is_refused(make_service):
     service.triage = NullVLMTriage()
     alert = _emit(service)
     service.triage = triage
-    service._ring["cam_1"] = deque([(time.monotonic() + 1.0, b"only-one")], maxlen=8)
+    service._ring["cam_1"] = deque([_ring_frame(time.monotonic() + 1.0, b"only-one")], maxlen=8)
     service._triage_in_flight = 1
 
     service._run_triage(alert)
@@ -412,6 +439,99 @@ def test_evenly_spaced_keeps_the_ends():
     assert _evenly_spaced(items, 20) == items
     assert _evenly_spaced([], 4) == []
     assert _evenly_spaced(items, 0) == []
+
+
+# ------------------------------------------------------------------ track-cropped clips
+def test_collect_clip_crops_to_the_given_track(make_service):
+    """The whole point of stage 3: a clip asked for one track_id isolates that person."""
+    service = make_service()
+    jpeg = _jpeg(width=200, height=100)
+    now = time.monotonic()
+    ring = service._ring.setdefault("cam_1", deque(maxlen=64))
+    ring.append(_ring_frame(now - 1.0, jpeg, tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+    ring.append(_ring_frame(now + 0.1, jpeg, tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+
+    full_frames, _ = service._collect_clip("cam_1", track_id=None)
+    cropped_frames, _ = service._collect_clip("cam_1", track_id="person_1")
+
+    assert cropped_frames != full_frames
+    assert all(frame != jpeg for frame in cropped_frames)
+    # The crop must actually be smaller -- it is a sub-region of the original image.
+    for frame in cropped_frames:
+        decoded = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert decoded.shape[1] < 200 or decoded.shape[0] < 100
+
+
+def test_collect_clip_with_no_track_id_matches_pre_crop_behavior(make_service):
+    """Backward compatibility: omitting track_id must reproduce the old, uncropped clip."""
+    service = make_service()
+    jpeg = _jpeg()
+    now = time.monotonic()
+    ring = service._ring.setdefault("cam_1", deque(maxlen=64))
+    ring.append(_ring_frame(now - 1.0, jpeg, tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+    ring.append(_ring_frame(now + 0.1, jpeg, tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+
+    frames, pre_count = service._collect_clip("cam_1")
+
+    assert frames == [jpeg, jpeg]
+    assert pre_count == 1
+
+
+def test_collect_clip_falls_back_to_full_frame_when_the_track_is_missing(make_service):
+    """A track absent from a frame (tracking gap, or an id that never existed here) must not
+    raise or drop the frame -- it degrades to that frame's full scene."""
+    service = make_service()
+    jpeg = _jpeg()
+    now = time.monotonic()
+    ring = service._ring.setdefault("cam_1", deque(maxlen=64))
+    ring.append(_ring_frame(now - 1.0, jpeg, tracks={"person_other": (0.1, 0.1, 0.4, 0.9)}))
+    ring.append(_ring_frame(now + 0.1, jpeg))
+
+    frames, _ = service._collect_clip("cam_1", track_id="person_1")
+
+    assert frames == [jpeg, jpeg]
+
+
+def test_crop_track_returns_none_below_the_minimum_useful_size(make_service):
+    """A crop too small to carry information must not be sent as if it were evidence."""
+    jpeg = _jpeg(width=200, height=100)
+    tiny_box = (0.0, 0.0, 0.01, 0.01)  # a couple of pixels wide even with padding
+
+    assert _crop_track(jpeg, tiny_box) is None
+
+
+def test_triage_request_is_marked_cropped_when_the_alert_has_a_track(make_service):
+    """The prompt annotation (`TriageRequest.cropped`) must track whether a crop was
+    attempted, not just whether the ring happened to have a match for every frame."""
+    triage = FakeTriage()
+    service = make_service(triage=triage)
+    now = time.monotonic()
+    ring = service._ring.setdefault("cam_1", deque(maxlen=service._default_ring_size))
+    ring.append(_ring_frame(now - 1.0, _jpeg(), tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+    ring.append(_ring_frame(now + 0.1, _jpeg(), tracks={"person_1": (0.1, 0.1, 0.4, 0.9)}))
+
+    service._emit_alert(
+        camera_id="cam_1",
+        label="fall_detection",
+        confidence=0.9,
+        frame=_frame(),
+        reason="2/3 indicators",
+        track_id="person_1",
+    )
+
+    assert triage.called.wait(timeout=5)
+    assert triage.requests[0].cropped is True
+
+
+def test_triage_request_is_not_marked_cropped_without_a_track_id(make_service):
+    """An alert with no track_id (e.g. abandoned_object has none) must not claim a crop."""
+    triage = FakeTriage()
+    service = make_service(triage=triage)
+
+    _emit(service)  # _emit's alert carries no track_id
+
+    assert triage.called.wait(timeout=5)
+    assert triage.requests[0].cropped is False
 
 
 def test_evidence_frames_are_labelled_for_the_frontend(tmp_path):

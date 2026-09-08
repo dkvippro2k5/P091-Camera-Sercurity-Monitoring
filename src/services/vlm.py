@@ -148,6 +148,14 @@ class TriageRequest(BaseModel):
     pre_count: int = 0
     # Rendered lines from past operator-labelled incidents on this camera (alert_history).
     examples: list[str] = Field(default_factory=list)
+    # True when `frames` were cropped to the one person this alert's track_id names
+    # (MonitoringService._collect_clip), rather than showing the full camera scene. The
+    # prompt needs to say so explicitly: without it, a model seeing a tight, single-person
+    # frame could read "nobody else visible" as evidence, when the truth is only that
+    # everyone else was cropped out of shot. See docs/plans/vlm-throughput-and-concurrent-
+    # events.md stage 3 — this is what makes several simultaneous alerts on one camera
+    # separable, each judged on the person it is actually about.
+    cropped: bool = False
 
 
 class VLMTriage(Protocol):
@@ -319,6 +327,12 @@ class OpenAIVLMTriage:
             f"Frames: {request.pre_count} before the trigger, "
             f"{max(0, len(request.frames) - request.pre_count)} after, in chronological order."
         )
+        if request.cropped:
+            lines.append(
+                "These frames are cropped to the one person this alert is about, padded to "
+                "keep nearby context. Other people or objects may exist just outside the "
+                "crop -- do not conclude anyone is alone or unattended from the crop alone."
+            )
         lines.append(f"Incident-specific focus: {_LABEL_GUIDANCE.get(request.label, 'Describe the visible event progression.')}" )
         if request.label == "fall_detection":
             lines.append(
