@@ -4,21 +4,15 @@ import { useFocusTrap } from '../useFocusTrap'
 import { incidentMeta, relativeTime, formatClock, triageMeta, alertPriority, similarIncidentQuery } from '../incidents'
 
 /**
- * `actual_event_type` from the guard's one verdict choice, plus an optional category.
+ * `actual_event_type` derived from the guard's verdict.
  *
- * The modal used to ask an open question ("Thực tế đã xảy ra điều gì?", optional, default
- * blank) *and* offer two verdict buttons — a guard could not tell which one was the
- * decision, and pressing a button without touching the dropdown wrote a null actual-event.
- * Now there is a single required verdict control ("Sự cố thật" / "Báo động giả") and one
- * Submit button. The category dropdown is a *why*, shown after a verdict is picked, and no
- * longer repeats the verdict itself.
- *
- * The two string values are unchanged on purpose — history rows and the stored-procedure
- * tests already read `real_incident`/`false_alarm`, so this changes where they come from,
- * never what they are. An explicit category still wins over the derived value.
+ * The two-button verdict ("Sự cố thật" / "Báo động giả") is the whole decision; the modal no
+ * longer carries a separate category dropdown. The button supplies the actual-event value
+ * itself so the field the false-alarm rate is computed from is never left null. The two
+ * strings are unchanged — history rows and the stored-procedure tests already read
+ * `real_incident`/`false_alarm`.
  */
-function resolveActualEventType(verdict, selected) {
-  if (selected) return selected
+function resolveActualEventType(verdict) {
   return verdict === 'real' ? 'real_incident' : 'false_alarm'
 }
 
@@ -49,10 +43,6 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
   const priority = alertPriority(alert)
   const dialogRef = useFocusTrap(true)
   const [note, setNote] = useState(alert.operator_note || '')
-  const [actualEventType, setActualEventType] = useState(alert.actual_event_type || '')
-  // The guard's decision, made before Submit is enabled. Null until chosen; drives both the
-  // recorded operator_verdict and the fallback actual_event_type.
-  const [verdict, setVerdict] = useState(null)
   // The verdict write is a real network round trip to the database (recording history and
   // training context, not just an in-memory flag), so it is not instant. Without this, the
   // guard gets no feedback for that whole span and a slow response reads as the click not
@@ -60,11 +50,11 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
   // frozen-looking modal invites a second click (a duplicate submission) or the guard
   // wrongly concluding the queue is stuck.
   const [submitting, setSubmitting] = useState(false)
-  const submit = async () => {
-    if (submitting || !verdict) return
+  const submit = async (verdict) => {
+    if (submitting) return
     setSubmitting(true)
     try {
-      await onVerdict(alert.id, verdict, note, resolveActualEventType(verdict, actualEventType))
+      await onVerdict(alert.id, verdict, note, resolveActualEventType(verdict))
     } finally {
       // No reset-to-false-then-leave-mounted case to worry about here: a successful verdict
       // acknowledges this alert, which drops it out of the queue and unmounts this instance
@@ -123,51 +113,10 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
           )}
           {!readOnly && !alert.operator_verdict && (
             <div className="operator-feedback">
-              <fieldset className="verdict-choice">
-                <legend>
-                  {alert.triage_verdict === 'false_positive'
-                    ? 'Kết luận của bạn (ghi đè AI):'
-                    : 'Kết luận của bạn:'}
-                </legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="operator-verdict"
-                    value="real"
-                    checked={verdict === 'real'}
-                    onChange={() => setVerdict('real')}
-                    data-autofocus
-                  />
-                  Sự cố thật
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="operator-verdict"
-                    value="false"
-                    checked={verdict === 'false'}
-                    onChange={() => setVerdict('false')}
-                  />
-                  Báo động giả
-                </label>
-              </fieldset>
-              {verdict && (
-                <>
-                  <label htmlFor="actual-event-type">
-                    Phân loại (không bắt buộc)
-                    <select id="actual-event-type" value={actualEventType} onChange={(event) => setActualEventType(event.target.value)}>
-                      <option value="">Không xác định</option>
-                      <option value="normal_activity">Hoạt động bình thường</option>
-                      <option value="maintenance">Bảo trì / dịch vụ</option>
-                      <option value="other">Khác</option>
-                    </select>
-                  </label>
-                  <label htmlFor="guard-note">
-                    Ghi chú của bảo vệ
-                    <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Mô tả sự việc…" />
-                  </label>
-                </>
-              )}
+              <label htmlFor="guard-note">
+                Ghi chú của bảo vệ (không bắt buộc)
+                <textarea id="guard-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={3} placeholder="Mô tả sự việc…" />
+              </label>
             </div>
           )}
         </div>
@@ -200,14 +149,17 @@ export default function AlertModal({ alert, queued = 0, isHistory = false, readO
                   ? 'Đang ghi nhận…'
                   : isHistory
                     ? alert.triage_verdict === 'false_positive'
-                      ? 'AI đã lọc — ghi đè kết luận'
-                      : 'Cảnh báo cũ — ghi nhận kết luận'
+                      ? 'AI đã lọc — ghi đè kết luận:'
+                      : 'Cảnh báo cũ — ghi nhận kết luận:'
                     : queued > 0
                       ? `Còn ${queued} sự cố đang chờ`
                       : ''}
               </span>
-              <button className="primary" onClick={submit} disabled={submitting || !verdict}>
-                {submitting ? 'Đang xử lý…' : 'Gửi kết luận'}
+              <button className="verdict-false" onClick={() => submit('false')} disabled={submitting}>
+                Báo động giả
+              </button>
+              <button className="primary" data-autofocus onClick={() => submit('real')} disabled={submitting}>
+                Sự cố thật
               </button>
             </>
           )}
