@@ -77,12 +77,16 @@ _PREVIEW_JPEG_QUALITY = 65
 _RING_JPEG_QUALITY = 85
 _MAX_ALERTS = 50
 
-# Triage runs on at most two threads and refuses work beyond this many alerts in flight. A
+# Triage runs on a small thread pool and refuses work beyond this many alerts in flight. A
 # camera flickering between states would otherwise queue an unbounded backlog of paid API
 # calls whose verdicts arrive long after the operator has moved on. RuleEngine's
 # alert_cooldown_sec (30s per camera+label) already caps the common case; this is the
-# backstop for the uncommon one.
-_MAX_TRIAGE_IN_FLIGHT = 4
+# backstop for the uncommon one. Sized for several cameras alerting at once: an assess()
+# call is a network round trip (I/O-bound, not CPU), so more concurrency here costs almost
+# nothing and stops a real incident on camera 4 being dropped as "queue saturated" while
+# cameras 1-3 are mid-call.
+_TRIAGE_POOL_WORKERS = 4
+_MAX_TRIAGE_IN_FLIGHT = 8
 
 _DEMO_HINTS = {
     "fall": "fall_detection",
@@ -238,6 +242,7 @@ class MonitoringService:
         self.manager = MultiStreamManager(
             shared_pipeline=self._pipeline_template,
             global_on_frame_callback=self._on_frame,
+            global_on_raw_frame_callback=self._on_raw_frame,
             global_on_incident_callback=self._on_incident,
             max_concurrent_inferences=(
                 settings.camera_max_concurrent_inferences or None
@@ -267,9 +272,11 @@ class MonitoringService:
         self._similar_examples = settings.vlm_similar_examples
         self._similar_min_similarity = settings.vlm_similar_min_similarity
         self._auto_suppress_confidence = settings.vlm_auto_suppress_confidence
-        # Sized from the configured capture rate with headroom, so the window covers
-        # pre_roll_sec of footage even when a camera runs faster than its target.
-        self._default_ring_size = max(8, int(settings.camera_target_fps * settings.vlm_pre_roll_sec * 2))
+        # The cadence `_on_raw_frame` is called at — CameraStreamWorker.display_fps. Used
+        # only to size the pre-roll ring; the actual feed rate is whatever the display loop
+        # achieves. Kept a plain constant because display_fps is not itself configurable.
+        self._raw_frame_fps = 20.0
+        self._default_ring_size = max(16, int(self._raw_frame_fps * self._pre_roll_sec * 2))
 
         self.triage = triage or build_triage_client(settings)
         self.history = history or AlertHistory()
@@ -292,7 +299,7 @@ class MonitoringService:
         )
         # Two workers: enough to overlap a slow API call with a second camera's alert,
         # small enough that a burst cannot spawn threads without bound.
-        self._triage_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vlm-triage")
+        self._triage_pool = ThreadPoolExecutor(max_workers=_TRIAGE_POOL_WORKERS, thread_name_prefix="vlm-triage")
         # Same reasoning as _triage_pool: record_operator_verdict is what a guard's
         # "Confirm real"/"False alarm" click is waiting on, and embedding the reason text is
         # an annotation on top of that judgement, not part of it. Even with the 10s client
@@ -597,36 +604,53 @@ class MonitoringService:
         """
         return self.manager.h264_encoder(camera_id)
 
+    def _ring_for(self, camera_id: str) -> deque:
+        """The camera's pre-roll ring, created on first use.
+
+        Sized from `display_fps` (the raw-frame feed's actual cadence), not `target_fps`:
+        the ring is fed by `_on_raw_frame` from the display loop now, so what matters is how
+        fast *that* runs, not how fast YOLO does. Doubled so the window still covers
+        `pre_roll_sec` when a source runs a little over its display rate.
+        """
+        ring = self._ring.get(camera_id)
+        if ring is None:
+            ring = self._ring.setdefault(camera_id, deque(maxlen=self._default_ring_size))
+        return ring
+
+    def _on_raw_frame(self, camera_id: str, frame: np.ndarray) -> None:
+        """Raw frame from a worker's display loop, at display_fps: the pre-roll ring feed.
+
+        Decoupled from `_on_frame` (the inference callback) on purpose. On a CPU host with
+        several cameras the inference callback can fall to ~1 fps, which left the ring too
+        sparse for `_collect_clip` to build a VLM clip at all — every alert then surfaced as
+        "insufficient visual evidence" without an API call ever being made. This loop runs
+        at a fixed cadence regardless of inference load.
+        """
+        try:
+            ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _RING_JPEG_QUALITY])
+            if ok:
+                self._ring_for(camera_id).append((time.monotonic(), buffer.tobytes()))
+        except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the display loop
+            logger.error(f"[{camera_id}] ring encode failed: {exc}")
+
     def _on_frame(self, camera_id: str, result: FrameAnalysisResult, frame: np.ndarray) -> None:
-        """Every analysed frame: refresh the preview buffer and the triage ring.
+        """Every analysed frame: refresh the preview buffer.
 
         Driving the preview off the incident callback instead would leave the grid frozen
-        between events, which reads as a broken demo.
+        between events, which reads as a broken demo. The pre-roll ring is fed separately by
+        `_on_raw_frame`, so a slow inference cadence no longer starves it.
         """
         try:
             ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _PREVIEW_JPEG_QUALITY])
             if ok:
-                jpeg = buffer.tobytes()
                 # Plain assignment, no lock: dict item assignment is atomic under the GIL
                 # and readers only ever want the newest frame.
-                self._frames[camera_id] = jpeg
-                # Same bytes into the pre-roll ring — one encode serves both. deque.append
-                # is atomic too, and the eviction is what bounds memory per camera.
-                ring = self._ring.get(camera_id)
-                if ring is None:
-                    camera = self.get_camera(camera_id)
-                    fps = camera.target_fps if camera else None
-                    ring_size = (
-                        max(8, int(fps * self._pre_roll_sec * 2))
-                        if fps is not None
-                        else self._default_ring_size
-                    )
-                    ring = self._ring.setdefault(camera_id, deque(maxlen=ring_size))
-                ok_ring, ring_buffer = cv2.imencode(
-                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _RING_JPEG_QUALITY]
-                )
-                if ok_ring:
-                    ring.append((time.monotonic(), ring_buffer.tobytes()))
+                self._frames[camera_id] = buffer.tobytes()
+                # Belt-and-braces: if the display loop has not produced a frame yet (its
+                # first ~50ms), still seed the ring off this path so an alert in that window
+                # is not clipless.
+                if camera_id not in self._ring:
+                    self._on_raw_frame(camera_id, frame)
         except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the worker
             logger.error(f"[{camera_id}] preview encode failed: {exc}")
 
@@ -858,15 +882,22 @@ class MonitoringService:
         # đánh giá" — a failure they can do nothing about, on exactly the alerts a freshly
         # started clip produces.
         #
-        # A clip with only aftermath still carries most of the signal: whether someone stayed
-        # down is what separates a fall from a stumble. `pre_count` is passed through and the
-        # prompt states the split ("Frames: 0 before the trigger, N after"), so the model is
-        # told what it is missing and can answer `uncertain` itself if that matters — which
-        # is the judgement it exists to make, and a better one than this branch guessing.
-        if not frames or len(frames) - pre_count < 1:
+        # A one-sided clip still carries most of the signal, and which side it has depends on
+        # the failure: a clip with only aftermath (camera stalled at the event) still shows
+        # whether the person stayed down; one with only lead-up (event at the very end of the
+        # ring, common on a slow CPU host) still shows the fall itself. `pre_count` and the
+        # split line in the prompt tell the model what it is missing, so it can answer
+        # `uncertain` itself — a better judgement than this branch refusing to call the API.
+        #
+        # The one genuinely unassessable case is too few frames to show any transition. Two
+        # is the floor: one frame cannot show a change.
+        if len(frames) < 2:
             return TriageVerdict(
                 verdict="uncertain",
-                error="insufficient visual evidence: no frames after the event",
+                error=(
+                    f"insufficient visual evidence: only {len(frames)} frame(s) in the pre-roll "
+                    "window — the camera's effective FPS is too low for this clip length"
+                ),
             )
         return self.triage.assess(
             TriageRequest(

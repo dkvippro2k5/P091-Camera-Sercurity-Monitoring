@@ -234,13 +234,14 @@ def test_null_triage_leaves_status_skipped(make_service):
 def test_ring_holds_distinct_frames(make_service):
     """Guards the aliasing bug.
 
-    `process_frame` may return the reader thread's shared buffer, so a ring of ndarrays
-    would silently become N references to the newest frame — a "clip" of identical images
-    that looks fine in every log line. Encoding to JPEG at push time is what prevents it.
+    The raw frame handed to `_on_raw_frame` may be the reader thread's shared buffer, so a
+    ring of ndarrays would silently become N references to the newest frame — a "clip" of
+    identical images that looks fine in every log line. Encoding to JPEG at push time is
+    what prevents it.
     """
     service = make_service()
     for value in (10, 120, 240):
-        service._on_frame("cam_1", None, _frame(value))
+        service._on_raw_frame("cam_1", _frame(value))
 
     stored = [jpeg for _, jpeg in service._ring["cam_1"]]
     assert len(stored) == 3
@@ -285,69 +286,59 @@ def test_empty_ring_yields_no_frames(make_service):
     assert service._collect_clip("cam_unknown") == ([], 0)
 
 
-def test_missing_after_evidence_is_uncertain(make_service):
-    """No aftermath means no outcome to judge, so the call is not worth making.
+def test_a_one_sided_clip_is_still_assessed(make_service):
+    """One-sided clips are now sent to the model, not refused here.
 
-    The camera died at the moment of the event. Whatever the lead-up showed, nothing can say
-    whether the person got up — which is the question the assessment exists to answer.
+    A clip with only lead-up still shows the fall itself; one with only aftermath still
+    shows whether the person stayed down. `pre_count` and the prompt's split line tell the
+    model what it is missing, so it can answer `uncertain` itself — a better judgement than
+    this branch refusing to call the API. On a slow CPU host, an event landing at the very
+    end of the ring (all "before") is the common case, not an edge one.
     """
     triage = FakeTriage(verdict="real")
     service = make_service(triage=triage)
     service.triage = NullVLMTriage()
     alert = _emit(service)
     service.triage = triage
-    # Everything sits before the split point, so `post` is empty.
+    # Two frames, both before the split point — `post` is empty.
     stale = time.monotonic() - service._post_roll_sec - 1.0
-    service._ring["cam_1"] = deque([(stale, b"before")], maxlen=8)
-    service._triage_in_flight = 1
-
-    service._run_triage(alert)
-
-    assert alert.triage_verdict == "uncertain"
-    assert "no frames after the event" in (alert.triage_error or "")
-    assert triage.requests == []
-
-
-def test_missing_before_evidence_is_still_assessed(make_service):
-    """The regression this pair exists to prevent: a startup alert must still be judged.
-
-    Both sides used to be required, which quietly made every alert in a camera's first
-    seconds unassessable — the ring fills from empty, so `pre` is 0 at t≈1s on a 5fps camera
-    with a 5s pre-roll. The operator saw "không thể đánh giá" on exactly the alerts a freshly
-    started clip produces, with nothing they could do about it.
-
-    Aftermath alone still answers most of the question, and the prompt tells the model the
-    split is 0-before so it can weigh a thin clip itself rather than being second-guessed here.
-    """
-    triage = FakeTriage(verdict="real")
-    service = make_service(triage=triage)
-    service.triage = NullVLMTriage()
-    alert = _emit(service)
-    service.triage = triage
-    # Stamped ahead of the split so the frame counts as "after". `_collect_clip` computes the
-    # split as `now - post_roll` at call time, and post_roll is 0 in these tests — so a frame
-    # stamped at the current instant would already be in the past by the time the split is
-    # taken, and would land on the "before" side instead of the side under test.
-    service._ring["cam_1"] = deque([(time.monotonic() + 1.0, b"after")], maxlen=8)
+    service._ring["cam_1"] = deque([(stale - 1.0, b"before1"), (stale, b"before2")], maxlen=8)
     service._triage_in_flight = 1
 
     service._run_triage(alert)
 
     assert alert.triage_verdict == "real"
     assert alert.triage_error is None
-    # The model was actually consulted, and told there is no lead-up to reason from.
     assert len(triage.requests) == 1
-    assert triage.requests[0].pre_count == 0
+    # Everything landed on the "before" side.
+    assert triage.requests[0].pre_count == len(triage.requests[0].frames)
 
 
-def test_ring_capacity_uses_camera_target_fps(make_service):
+def test_a_single_frame_clip_is_refused(make_service):
+    """The one genuinely unassessable case: too few frames to show any transition."""
+    triage = FakeTriage(verdict="real")
+    service = make_service(triage=triage)
+    service.triage = NullVLMTriage()
+    alert = _emit(service)
+    service.triage = triage
+    service._ring["cam_1"] = deque([(time.monotonic() + 1.0, b"only-one")], maxlen=8)
+    service._triage_in_flight = 1
+
+    service._run_triage(alert)
+
+    assert alert.triage_verdict == "uncertain"
+    assert "too low" in (alert.triage_error or "")
+    assert triage.requests == []
+
+
+def test_ring_capacity_is_sized_from_the_raw_frame_cadence(make_service):
+    """The ring is fed by `_on_raw_frame` at display_fps now, so it is sized from that, not
+    from the camera's (much lower, often unmet) target_fps."""
     service = make_service()
-    camera = type("Camera", (), {"target_fps": 30.0})()
-    service._cameras["cam_1"] = camera
+    service._on_raw_frame("cam_1", _frame(10))
 
-    service._on_frame("cam_1", None, _frame(10))
-
-    assert service._ring["cam_1"].maxlen >= int(30 * service._pre_roll_sec * 2)
+    assert service._ring["cam_1"].maxlen == service._default_ring_size
+    assert service._default_ring_size >= int(service._raw_frame_fps * service._pre_roll_sec * 2)
 
 
 def test_evenly_spaced_keeps_the_ends():

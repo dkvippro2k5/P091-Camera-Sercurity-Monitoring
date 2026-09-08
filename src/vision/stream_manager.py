@@ -141,6 +141,7 @@ class MultiStreamManager:
         pipeline_factory: Callable[[], VisionPipeline] | None = None,
         global_on_incident_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
         global_on_frame_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
+        global_on_raw_frame_callback: Callable[[str, np.ndarray], None] | None = None,
         tune_torch_threads: bool = True,
         max_concurrent_inferences: int | None = None,
     ):
@@ -170,6 +171,10 @@ class MultiStreamManager:
         self._pipeline_factory = pipeline_factory or self._make_default_factory(shared_pipeline)
         self.global_on_incident_callback = global_on_incident_callback
         self.global_on_frame_callback = global_on_frame_callback
+        # Raw frame straight from each worker's display loop, at display_fps — the pre-roll
+        # ring's feed, decoupled from the inference cadence. Called on the display thread,
+        # so it must be cheap (a JPEG encode + deque append).
+        self.global_on_raw_frame_callback = global_on_raw_frame_callback
         concurrency = (
             self._default_inference_concurrency()
             if max_concurrent_inferences is None
@@ -314,6 +319,7 @@ class MultiStreamManager:
                 rtsp_url=rtsp_url,
                 pipeline=self._pipeline_factory(),
                 on_result_callback=self._handle_worker_result,
+                on_raw_frame_callback=self.global_on_raw_frame_callback,
                 target_fps=target_fps,
                 max_reconnect_attempts=max_reconnect_attempts,
                 loop_finite_sources=loop_finite_sources,

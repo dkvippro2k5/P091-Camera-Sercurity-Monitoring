@@ -59,6 +59,7 @@ class CameraStreamWorker:
         rtsp_url: str,
         pipeline: VisionPipeline | None = None,
         on_result_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
+        on_raw_frame_callback: Callable[[str, np.ndarray], None] | None = None,
         target_fps: float = 15.0,
         reconnect_interval_sec: float = 3.0,
         max_reconnect_attempts: int = 0,
@@ -75,6 +76,11 @@ class CameraStreamWorker:
         self.rtsp_url = rtsp_url
         self.pipeline = pipeline or VisionPipeline()
         self.on_result_callback = on_result_callback
+        # Called from the display loop at display_fps with the raw (un-annotated) frame, so
+        # the VLM pre-roll ring fills at a fixed cadence independent of how fast — or slow —
+        # YOLO is keeping up. On a CPU host with several cameras the inference callback can
+        # drop to ~1 fps, which left the ring too sparse for _collect_clip to build a clip.
+        self.on_raw_frame_callback = on_raw_frame_callback
         self.target_fps = target_fps
         # Decoupled from target_fps on purpose: the live view can be smooth without paying for
         # YOLO at that rate — see docs/plans/multi-camera-streaming-scale.md's "phương pháp 0".
@@ -543,6 +549,15 @@ class CameraStreamWorker:
 
             try:
                 if frame is not None:
+                    # Feed the raw frame to the pre-roll ring before any drawing/resizing, at
+                    # this loop's fixed cadence. Isolated so a slow ring write cannot stall
+                    # the live view.
+                    if self.on_raw_frame_callback is not None:
+                        try:
+                            self.on_raw_frame_callback(self.camera_id, frame)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(f"[{self.camera_id}] raw-frame callback failed: {exc}")
+
                     annotated = self.pipeline.overlay_last_known(frame, self.camera_id)
                     height, width = annotated.shape[:2]
                     if height > self.display_max_height:
