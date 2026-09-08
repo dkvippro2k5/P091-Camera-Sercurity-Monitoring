@@ -241,6 +241,8 @@ def test_ring_holds_distinct_frames(make_service):
     """
     service = make_service()
     for value in (10, 120, 240):
+        # The feed is throttled to a few fps; reset the per-camera clock so all three land.
+        service._ring_last_fed["cam_1"] = 0.0
         service._on_raw_frame("cam_1", _frame(value))
 
     stored = [jpeg for _, jpeg in service._ring["cam_1"]]
@@ -331,14 +333,15 @@ def test_a_single_frame_clip_is_refused(make_service):
     assert triage.requests == []
 
 
-def test_ring_capacity_is_sized_from_the_raw_frame_cadence(make_service):
-    """The ring is fed by `_on_raw_frame` at display_fps now, so it is sized from that, not
-    from the camera's (much lower, often unmet) target_fps."""
+def test_ring_capacity_covers_the_whole_clip_window(make_service):
+    """The ring must hold pre_roll + post_roll seconds of frames at the throttled feed rate,
+    with headroom, so nothing is evicted before _collect_clip reads it."""
     service = make_service()
     service._on_raw_frame("cam_1", _frame(10))
 
     assert service._ring["cam_1"].maxlen == service._default_ring_size
-    assert service._default_ring_size >= int(service._raw_frame_fps * service._pre_roll_sec * 2)
+    window = service._pre_roll_sec + service._post_roll_sec
+    assert service._default_ring_size >= monitoring_module._RING_FEED_FPS * window
 
 
 def test_evenly_spaced_keeps_the_ends():

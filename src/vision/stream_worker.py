@@ -69,6 +69,7 @@ class CameraStreamWorker:
         inference_semaphore: threading.Semaphore | None = None,
         display_fps: float = 20.0,
         display_max_height: int = 480,
+        capture_max_height: int = 0,
         h264_enabled: bool = True,
         h264_bitrate: int = 1_200_000,
     ):
@@ -88,6 +89,13 @@ class CameraStreamWorker:
         # this only redraws the same source's frames at a cheaper cadence.
         self.display_fps = display_fps
         self.display_max_height = display_max_height
+        # Downscale every decoded frame to this height before anything else sees it (0 =
+        # keep native). This is the one knob that helps a CPU host with 1440p/4K sources:
+        # detection, tracking, optical flow, the overlay copy, the display encode and the
+        # VLM ring all then work on the smaller frame. A 4K frame costs ~5x a 720p one
+        # through the full pipeline, and with several cameras that is the difference between
+        # a few fps each and a fraction of one.
+        self.capture_max_height = capture_max_height
         self.reconnect_interval_sec = reconnect_interval_sec
         # 0 means unlimited retries (original behavior); >0 is a circuit-breaker.
         self.max_reconnect_attempts = max_reconnect_attempts
@@ -437,6 +445,15 @@ class CameraStreamWorker:
             ret, frame = cap.retrieve()
             if not ret or frame is None or frame.size == 0:
                 continue
+
+            # Downscale once, here, so every consumer downstream works on the smaller frame.
+            if self.capture_max_height and frame.shape[0] > self.capture_max_height:
+                scale = self.capture_max_height / frame.shape[0]
+                frame = cv2.resize(
+                    frame,
+                    (max(1, round(frame.shape[1] * scale)), self.capture_max_height),
+                    interpolation=cv2.INTER_AREA,
+                )
 
             # A frame actually arrived: the connection is healthy, so re-arm the breaker
             # and the backoff. Doing this on open() instead would credit a connection that

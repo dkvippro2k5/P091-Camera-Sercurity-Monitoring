@@ -144,6 +144,7 @@ class MultiStreamManager:
         global_on_raw_frame_callback: Callable[[str, np.ndarray], None] | None = None,
         tune_torch_threads: bool = True,
         max_concurrent_inferences: int | None = None,
+        capture_max_height: int = 0,
     ):
         """Initialize the multi-stream manager.
 
@@ -175,6 +176,8 @@ class MultiStreamManager:
         # ring's feed, decoupled from the inference cadence. Called on the display thread,
         # so it must be cheap (a JPEG encode + deque append).
         self.global_on_raw_frame_callback = global_on_raw_frame_callback
+        # Passed to every worker: downscale decoded frames to this height (0 = native).
+        self._capture_max_height = capture_max_height
         concurrency = (
             self._default_inference_concurrency()
             if max_concurrent_inferences is None
@@ -324,6 +327,7 @@ class MultiStreamManager:
                 max_reconnect_attempts=max_reconnect_attempts,
                 loop_finite_sources=loop_finite_sources,
                 inference_semaphore=self._inference_semaphore,
+                capture_max_height=self._capture_max_height,
             )
             self.workers[camera_id] = worker
 

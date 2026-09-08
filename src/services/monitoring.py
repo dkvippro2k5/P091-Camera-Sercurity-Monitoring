@@ -74,7 +74,15 @@ REGISTRY_PATH = os.path.join(_PROJECT_ROOT, "data", "cameras.json")
 # Grid tiles are small and there may be a dozen of them; 65 is visually indistinguishable
 # from 95 at tile size and roughly a third of the bytes over the wire.
 _PREVIEW_JPEG_QUALITY = 65
-_RING_JPEG_QUALITY = 85
+_RING_JPEG_QUALITY = 80
+# The ring feeds the VLM, which downsamples to 1024px on its longest edge anyway, so
+# storing anything larger just burns CPU on every encode — and the ring encode now runs
+# on the display loop, several times a second per camera. Encoding a native 4K frame is
+# ~40ms; at 4 cameras that alone saturates the box. Cap it here.
+_RING_MAX_EDGE = 1280
+# The ring does not need display_fps; a clip is a handful of stills spanning a few seconds.
+# Feeding it a few times a second is plenty and leaves the CPU for inference.
+_RING_FEED_FPS = 4.0
 _MAX_ALERTS = 50
 
 # Triage runs on a small thread pool and refuses work beyond this many alerts in flight. A
@@ -247,6 +255,7 @@ class MonitoringService:
             max_concurrent_inferences=(
                 settings.camera_max_concurrent_inferences or None
             ),
+            capture_max_height=settings.camera_capture_max_height,
         )
 
         self._cameras: dict[str, CameraInfo] = {}
@@ -272,11 +281,13 @@ class MonitoringService:
         self._similar_examples = settings.vlm_similar_examples
         self._similar_min_similarity = settings.vlm_similar_min_similarity
         self._auto_suppress_confidence = settings.vlm_auto_suppress_confidence
-        # The cadence `_on_raw_frame` is called at — CameraStreamWorker.display_fps. Used
-        # only to size the pre-roll ring; the actual feed rate is whatever the display loop
-        # achieves. Kept a plain constant because display_fps is not itself configurable.
-        self._raw_frame_fps = 20.0
-        self._default_ring_size = max(16, int(self._raw_frame_fps * self._pre_roll_sec * 2))
+        # Ring holds pre_roll + post_roll seconds of frames at the throttled feed rate, with
+        # headroom so nothing is evicted before _collect_clip reads it.
+        self._default_ring_size = max(
+            16, int(_RING_FEED_FPS * (self._pre_roll_sec + self._post_roll_sec + 2.0) * 1.5)
+        )
+        # Per-camera timestamp of the last frame accepted into the ring, for the feed throttle.
+        self._ring_last_fed: dict[str, float] = {}
 
         self.triage = triage or build_triage_client(settings)
         self.history = history or AlertHistory()
@@ -607,10 +618,10 @@ class MonitoringService:
     def _ring_for(self, camera_id: str) -> deque:
         """The camera's pre-roll ring, created on first use.
 
-        Sized from `display_fps` (the raw-frame feed's actual cadence), not `target_fps`:
-        the ring is fed by `_on_raw_frame` from the display loop now, so what matters is how
-        fast *that* runs, not how fast YOLO does. Doubled so the window still covers
-        `pre_roll_sec` when a source runs a little over its display rate.
+        Sized from `_RING_FEED_FPS` (the throttled feed rate below), not the camera's
+        target_fps — the feed rate is what actually governs how many frames land in the
+        window, and it is deliberately low so encoding the ring cannot compete with
+        inference for CPU.
         """
         ring = self._ring.get(camera_id)
         if ring is None:
@@ -618,18 +629,38 @@ class MonitoringService:
         return ring
 
     def _on_raw_frame(self, camera_id: str, frame: np.ndarray) -> None:
-        """Raw frame from a worker's display loop, at display_fps: the pre-roll ring feed.
+        """Raw frame from a worker's display loop: the pre-roll ring feed.
 
         Decoupled from `_on_frame` (the inference callback) on purpose. On a CPU host with
         several cameras the inference callback can fall to ~1 fps, which left the ring too
         sparse for `_collect_clip` to build a VLM clip at all — every alert then surfaced as
-        "insufficient visual evidence" without an API call ever being made. This loop runs
-        at a fixed cadence regardless of inference load.
+        "insufficient visual evidence" without an API call ever being made.
+
+        Two costs are controlled here so this cannot itself starve inference:
+        - Throttled to `_RING_FEED_FPS`. The display loop calls this ~20x/s per camera; a
+          clip only needs a handful of stills over a few seconds, so most of those are
+          dropped before any work is done.
+        - Downscaled to `_RING_MAX_EDGE` before the JPEG encode. A native 4K encode is
+          ~40ms; at 4 cameras that alone saturates the box, and the VLM downsamples to
+          1024px anyway.
         """
+        now = time.monotonic()
+        last = self._ring_last_fed.get(camera_id, 0.0)
+        if now - last < 1.0 / _RING_FEED_FPS:
+            return
+        self._ring_last_fed[camera_id] = now
         try:
+            height, width = frame.shape[:2]
+            longest = max(height, width)
+            if longest > _RING_MAX_EDGE:
+                scale = _RING_MAX_EDGE / longest
+                frame = cv2.resize(
+                    frame, (max(1, int(width * scale)), max(1, int(height * scale))),
+                    interpolation=cv2.INTER_AREA,
+                )
             ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _RING_JPEG_QUALITY])
             if ok:
-                self._ring_for(camera_id).append((time.monotonic(), buffer.tobytes()))
+                self._ring_for(camera_id).append((now, buffer.tobytes()))
         except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the display loop
             logger.error(f"[{camera_id}] ring encode failed: {exc}")
 
@@ -638,7 +669,9 @@ class MonitoringService:
 
         Driving the preview off the incident callback instead would leave the grid frozen
         between events, which reads as a broken demo. The pre-roll ring is fed separately by
-        `_on_raw_frame`, so a slow inference cadence no longer starves it.
+        `_on_raw_frame`, so a slow inference cadence no longer starves it — and this path
+        also seeds the ring (subject to the same throttle) so an alert in the first ~50ms,
+        before the display loop has produced a frame, still gets a clip.
         """
         try:
             ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), _PREVIEW_JPEG_QUALITY])
@@ -646,11 +679,7 @@ class MonitoringService:
                 # Plain assignment, no lock: dict item assignment is atomic under the GIL
                 # and readers only ever want the newest frame.
                 self._frames[camera_id] = buffer.tobytes()
-                # Belt-and-braces: if the display loop has not produced a frame yet (its
-                # first ~50ms), still seed the ring off this path so an alert in that window
-                # is not clipless.
-                if camera_id not in self._ring:
-                    self._on_raw_frame(camera_id, frame)
+            self._on_raw_frame(camera_id, frame)
         except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the worker
             logger.error(f"[{camera_id}] preview encode failed: {exc}")
 

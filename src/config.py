@@ -81,7 +81,15 @@ class Settings(BaseSettings):
     stationary_tolerance_ratio: float = Field(default=0.02, gt=0.0, le=1.0)
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
+    # On a CPU host DO NOT raise this above the default: several 4K inferences in parallel
+    # thrash the cores and drop each camera to a fraction of an fps. Measured on this box,
+    # 4 cameras: sem=2 -> ~3.6 fps/cam, sem=4 -> ~0.2 fps/cam.
     camera_max_concurrent_inferences: int = Field(default=0, ge=0, le=32)
+    # Downscale every decoded frame to this height before detection / tracking / display /
+    # the VLM ring (0 = keep native). The single most effective knob for a CPU host with
+    # 1440p or 4K sources: a 4K frame is ~5x the pipeline cost of a 720p one. 720 is a good
+    # default there; leave 0 if sources are already <=1080p or the host has a GPU.
+    camera_capture_max_height: int = Field(default=0, ge=0, le=2160)
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
     model_weights_path: str = "src/vision/weights/yolo26n.pt"
     detector_target_labels: str = "person,backpack,handbag,suitcase"
