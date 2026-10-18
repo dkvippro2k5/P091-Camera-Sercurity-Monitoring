@@ -4,8 +4,10 @@ from src.benchmark.run_fall_benchmark import (
     ONSET_TOLERANCE_SEC,
     ClipRun,
     ClipTruth,
+    load_gmdcsa24,
     load_urfall,
     match_clip,
+    parse_gmdcsa24_segments,
     score,
     wilson_interval,
 )
@@ -107,3 +109,38 @@ def test_load_urfall_derives_onset_from_one_based_frame_labels(tmp_path):
     assert truths["fall-01"].lying_start_sec == 2.0
     assert truths["adl-01"].kind == "adl"
     assert truths["adl-01"].has_lying
+
+
+def test_gmdcsa24_segments_tolerate_the_stray_punctuation_in_the_published_csvs():
+    segments = parse_gmdcsa24_segments(" Falling (SW)[1.8 to 5]:; Walking[0 to 1.8]")
+
+    assert segments == [("falling (sw)", 1.8, 5.0), ("walking", 0.0, 1.8)]
+    assert parse_gmdcsa24_segments("Falling (BW)[2.3 6]; Sitting[0 to 2]")[0] == ("falling (bw)", 2.3, 6.0)
+    assert parse_gmdcsa24_segments("Falling (FW); Sitting[0 to 1.7]") == [("sitting", 0.0, 1.7)]
+
+
+def test_load_gmdcsa24_takes_onset_from_the_falling_segment_and_flags_lying_adls(tmp_path):
+    subject = tmp_path / "Subject 1"
+    (subject / "Fall").mkdir(parents=True)
+    (subject / "ADL").mkdir()
+    (subject / "Fall" / "01.mp4").write_bytes(b"x")
+    (subject / "ADL" / "01.mp4").write_bytes(b"x")
+    (subject / "ADL" / "02.mp4").write_bytes(b"x")
+    header = "File Name,Length (seconds),Time of Recording,Attire,Description, Classes\n"
+    (subject / "Fall.csv").write_text(
+        header + "01.mp4,06, Day (Light On),Shirt, Falling from the chair, Falling (SW)[3.4 to 6]; Sitting[0 to 3.4]\n",
+        encoding="utf-8",
+    )
+    (subject / "ADL.csv").write_text(
+        header
+        + "01.mp4,08, Day (Light On), Shirt, Sitting on the bed, Sitting[0 to 1]; Sleeping[2 to 8]\n"
+        + "02.mp4,05, Night, Shirt, Walking, Walking[0 to 5]\n",
+        encoding="utf-8",
+    )
+
+    truths = {t.clip_id: t for t in load_gmdcsa24(tmp_path)}
+
+    assert truths["s1-fall-01"].fall_start_sec == 3.4
+    assert truths["s1-adl-01"].has_lying
+    assert not truths["s1-adl-02"].has_lying
+    assert truths["s1-adl-02"].fall_start_sec is None

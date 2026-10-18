@@ -1,4 +1,4 @@
-"""Clip-level fall-detection benchmark on the UR Fall Detection Dataset.
+"""Clip-level fall-detection benchmark on public labelled datasets (UR Fall, GMDCSA24).
 
 `src/services/eval_report.py` measures precision from guard verdicts but deliberately refuses
 to print recall: a missed fall never became an alert, so it is not in the history. This script
@@ -12,6 +12,11 @@ Dataset: UR Fall Detection Dataset (Kwolek & Kepski, 2014), http://fenix.ur.edu.
   - The `*-cam0.mp4` files place depth (left) and RGB (right) side by side at 320x240 each;
     only the RGB half is fed to the pipeline. That is a quarter of the 640x480 the RGB PNG
     archives offer (~4 GB in total), which is a stated limitation of these numbers.
+
+Dataset: GMDCSA24 (Alam et al., 2024, MIT), https://github.com/ekramalam/GMDCSA24-A-Dataset-for-Human-Fall-Detection-in-Videos
+  - 4 subjects, 3 home setups, day and night recordings; `Subject N/{Fall,ADL}/NN.mp4`.
+  - `Subject N/{Fall,ADL}.csv` give second-level segments, e.g. `Falling (SW)[3.4 to 6]`.
+  - Kept as the held-out set: rule changes are not tuned against it.
 
 **Protocol — read before quoting a number.**
 
@@ -32,6 +37,8 @@ Usage:
     python -m src.benchmark.run_fall_benchmark --download        # fetch UR Fall (~94 MB) once
     python -m src.benchmark.run_fall_benchmark                    # padded run, writes results
     python -m src.benchmark.run_fall_benchmark --pad-sec 0 --label unpadded
+    python -m src.benchmark.run_fall_benchmark --dataset gmdcsa24 --download   # ~1.1 GB
+    python -m src.benchmark.run_fall_benchmark --dataset gmdcsa24
 """
 
 import argparse
@@ -39,8 +46,10 @@ import csv
 import inspect
 import json
 import math
+import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -55,11 +64,17 @@ if sys.platform == "win32":
         pass
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = REPO_ROOT / "data" / "benchmark" / "urfall"
+BENCHMARK_DATA_DIR = REPO_ROOT / "data" / "benchmark"
+DEFAULT_DATA_DIR = BENCHMARK_DATA_DIR / "urfall"
 RESULTS_DIR = REPO_ROOT / "eval" / "results"
 URFALL_BASE_URL = "https://fenix.ur.edu.pl/~mkepski/ds/data"
 URFALL_FALLS = 30
 URFALL_ADLS = 40
+GMDCSA24_REPO = "ekramalam/GMDCSA24-A-Dataset-for-Human-Fall-Detection-in-Videos"
+GMDCSA24_SUBJECTS = 4
+# "Falling (SW)[3.4 to 6]" — tolerant of the stray spaces and colons in the published CSVs.
+_GMDCSA24_SEGMENT = re.compile(r"([A-Za-z][^\[\];:,]*?)\s*\[\s*([\d.]+)\s*(?:to)?\s*([\d.]+)\s*\]")
+_LYING_CLASSES = ("lying", "sleeping", "laying")
 
 LABEL_FALL = "fall_detection"
 # The CSV marks the first "falling" frame; a detector that latches on the first frames of the
@@ -78,6 +93,8 @@ class ClipTruth:
     lying_start_sec: float | None = None
     # ADLs that include a lying-down segment (bed, floor exercise) — the hard negatives.
     has_lying: bool = False
+    # UR Fall mp4s carry depth on the left half; only the RGB half is a camera view.
+    crop_right_half: bool = False
 
 
 @dataclass
@@ -232,6 +249,7 @@ def load_urfall(data_dir: Path, source_fps: float = 30.0) -> list[ClipTruth]:
                 fall_start_sec=(min(falling) - 1) / source_fps if falling else None,
                 lying_start_sec=(min(lying) - 1) / source_fps if lying else None,
                 has_lying=bool(lying),
+                crop_right_half=True,
             )
         )
 
@@ -247,9 +265,78 @@ def load_urfall(data_dir: Path, source_fps: float = 30.0) -> list[ClipTruth]:
                 path=str(path),
                 kind="adl",
                 has_lying=any(label == 1 for label in frames.values()),
+                crop_right_half=True,
             )
         )
     return truths
+
+
+def parse_gmdcsa24_segments(classes: str) -> list[tuple[str, float, float]]:
+    """`"Falling (SW)[3.4 to 6]; Sitting[0 to 3.4]"` -> [("falling (sw)", 3.4, 6.0), ...]."""
+    return [
+        (name.strip().lower(), float(start), float(end))
+        for name, start, end in _GMDCSA24_SEGMENT.findall(classes)
+    ]
+
+
+def load_gmdcsa24(data_dir: Path) -> list[ClipTruth]:
+    """Ground truth from each subject's Fall.csv / ADL.csv (last column holds the segments)."""
+    truths: list[ClipTruth] = []
+    for subject in range(1, GMDCSA24_SUBJECTS + 1):
+        for kind, folder in (("fall", "Fall"), ("adl", "ADL")):
+            csv_path = data_dir / f"Subject {subject}" / f"{folder}.csv"
+            if not csv_path.exists():
+                continue
+            with open(csv_path, newline="", encoding="utf-8-sig") as handle:
+                rows = list(csv.reader(handle))
+            for row in rows[1:]:
+                if not row or not row[0].strip():
+                    continue
+                path = data_dir / f"Subject {subject}" / folder / row[0].strip()
+                if not path.exists():
+                    continue
+                # Whole row, not column 5: a comma inside the description shifts the columns,
+                # and only the class column contains "[a to b]" segments.
+                segments = parse_gmdcsa24_segments(",".join(row[1:]))
+                falls = [start for name, start, _ in segments if name.startswith("fall")]
+                if kind == "fall" and not falls:
+                    # A fall row with no time range (Subject 4 / 15.mp4 publishes "Falling (FW)"
+                    # bare) cannot be scored; guessing its onset would be inventing ground truth.
+                    print(f"  skipping {path.relative_to(data_dir)}: fall has no annotated time range")
+                    continue
+                lying = any(name.startswith(_LYING_CLASSES) for name, _, _ in segments)
+                truths.append(
+                    ClipTruth(
+                        clip_id=f"s{subject}-{kind}-{path.stem}",
+                        path=str(path),
+                        kind=kind,
+                        fall_start_sec=min(falls) if kind == "fall" and falls else None,
+                        # The CSVs mark one "Falling" segment through to the end of the clip,
+                        # with no separate landing time; latency is measured from the onset.
+                        lying_start_sec=min(falls) if kind == "fall" and falls else None,
+                        has_lying=lying or kind == "fall",
+                    )
+                )
+    return truths
+
+
+def download_gmdcsa24(data_dir: Path) -> None:
+    """Fetch every mp4 and csv in the GMDCSA24 GitHub repository, skipping files present."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    tree_url = f"https://api.github.com/repos/{GMDCSA24_REPO}/git/trees/master?recursive=1"
+    with urllib.request.urlopen(tree_url) as response:
+        tree = json.load(response)["tree"]
+    for entry in tree:
+        name = entry["path"]
+        if entry["type"] != "blob" or not name.endswith((".mp4", ".csv")):
+            continue
+        target = data_dir / name
+        if target.exists() and target.stat().st_size > 0:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        print(f"  downloading {name}")
+        quoted = urllib.parse.quote(name)
+        urllib.request.urlretrieve(f"https://raw.githubusercontent.com/{GMDCSA24_REPO}/master/{quoted}", target)
 
 
 def download_urfall(data_dir: Path) -> None:
@@ -264,6 +351,13 @@ def download_urfall(data_dir: Path) -> None:
             continue
         print(f"  downloading {name}")
         urllib.request.urlretrieve(f"{URFALL_BASE_URL}/{name}", target)
+
+
+DATASETS = {
+    # name: (default data dir, loader, downloader, description)
+    "urfall": (DEFAULT_DATA_DIR, load_urfall, download_urfall, "UR Fall Detection Dataset, cam0 RGB half (320x240)"),
+    "gmdcsa24": (BENCHMARK_DATA_DIR / "gmdcsa24", load_gmdcsa24, download_gmdcsa24, "GMDCSA24 (4 subjects, day/night)"),
+}
 
 
 def _build_pipeline():
@@ -295,7 +389,7 @@ def _build_pipeline():
 
 
 def run_clip(truth: ClipTruth, target_fps: float, pad_sec: float) -> ClipRun:
-    """Feed one clip (RGB half only) through a fresh pipeline at the live sampling rate."""
+    """Feed one clip through a fresh pipeline at the live sampling rate."""
     import cv2
 
     pipeline = _build_pipeline()
@@ -308,17 +402,20 @@ def run_clip(truth: ClipTruth, target_fps: float, pad_sec: float) -> ClipRun:
 
     camera_id = f"bench_{truth.clip_id}"
     alert_times: list[float] = []
-    sampled = person_frames = 0
+    sampled = real_sampled = person_frames = 0
     next_sample = 0.0
     last_frame = None
     frame_index = 0
 
-    def analyse(frame, timestamp: float) -> None:
-        nonlocal sampled, person_frames
+    def analyse(frame, timestamp: float, padding: bool = False) -> None:
+        nonlocal sampled, real_sampled, person_frames
         _, result = pipeline.process_frame(frame, frame_id=sampled, camera_id=camera_id, timestamp=timestamp)
         sampled += 1
-        if any(d.label == "person" for d in result.detections):
-            person_frames += 1
+        # Real footage only: the padded tail repeats one frame and would swamp the fraction.
+        if not padding:
+            real_sampled += 1
+            if any(d.label == "person" for d in result.detections):
+                person_frames += 1
         alert_times.extend(round(timestamp, 3) for e in result.events if e.label == LABEL_FALL)
 
     try:
@@ -328,8 +425,8 @@ def run_clip(truth: ClipTruth, target_fps: float, pad_sec: float) -> ClipRun:
                 break
             timestamp = frame_index / source_fps
             frame_index += 1
-            # Depth on the left, RGB on the right — keep only what a camera would see.
-            frame = frame[:, frame.shape[1] // 2 :]
+            if truth.crop_right_half:
+                frame = frame[:, frame.shape[1] // 2 :]
             last_frame = frame
             if timestamp + 1e-9 >= next_sample:
                 analyse(frame, timestamp)
@@ -342,7 +439,7 @@ def run_clip(truth: ClipTruth, target_fps: float, pad_sec: float) -> ClipRun:
     if last_frame is not None and pad_sec > 0:
         timestamp = max(next_sample, footage_sec)
         while timestamp < end:
-            analyse(last_frame, timestamp)
+            analyse(last_frame, timestamp, padding=True)
             timestamp += step or 1.0 / source_fps
 
     return ClipRun(
@@ -351,7 +448,7 @@ def run_clip(truth: ClipTruth, target_fps: float, pad_sec: float) -> ClipRun:
         footage_sec=round(footage_sec, 3),
         analysed_sec=round(max(footage_sec, end), 3),
         sampled_frames=sampled,
-        person_frame_fraction=round(person_frames / sampled, 3) if sampled else 0.0,
+        person_frame_fraction=round(person_frames / real_sampled, 3) if real_sampled else 0.0,
         alert_times=alert_times,
     )
 
@@ -369,7 +466,7 @@ def render_markdown(report: dict) -> str:
     cfg = report["config"]
     far = s["false_alarms_per_hour"]
     lines = [
-        f"# Fall benchmark — UR Fall Detection Dataset ({report['label']})",
+        f"# Fall benchmark — {cfg['dataset']} ({report['label']})",
         "",
         f"Run {report['run_at'][:19]}Z · weights `{cfg['weights']}` · conf {cfg['detector_confidence']} · "
         f"{cfg['target_fps']} fps · pad {cfg['pad_sec']} s · fall dwell {cfg['fall_dwell_sec']} s",
@@ -416,21 +513,25 @@ def render_markdown(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--download", action="store_true", help="Fetch the UR Fall cam0 clips and labels, then exit.")
+    parser.add_argument("--dataset", choices=sorted(DATASETS), default="urfall")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Defaults to data/benchmark/<dataset>.")
+    parser.add_argument("--download", action="store_true", help="Fetch the dataset's clips and labels, then exit.")
     parser.add_argument("--fps", type=float, default=5.0, help="Analysis rate (CAMERA_TARGET_FPS default: 5).")
     parser.add_argument("--pad-sec", type=float, default=4.0, help="Seconds of last-frame hold appended to every clip.")
     parser.add_argument("--label", default="padded", help="Suffix for the result files.")
     parser.add_argument("--limit", type=int, default=0, help="Only the first N fall and N ADL clips (smoke test).")
     args = parser.parse_args()
 
+    default_dir, loader, downloader, description = DATASETS[args.dataset]
+    data_dir = args.data_dir or default_dir
+
     if args.download:
-        download_urfall(args.data_dir)
+        downloader(data_dir)
         return 0
 
-    truths = load_urfall(args.data_dir)
+    truths = loader(data_dir)
     if not truths:
-        print(f"No UR Fall clips under {args.data_dir}. Run with --download first.")
+        print(f"No {args.dataset} clips under {data_dir}. Run with --download first.")
         return 1
     if args.limit:
         truths = [t for t in truths if t.kind == "fall"][: args.limit] + [t for t in truths if t.kind == "adl"][: args.limit]
@@ -445,7 +546,7 @@ def main() -> int:
         run = run_clip(truth, args.fps, args.pad_sec)
         runs.append(run)
         print(
-            f"  [{index:>2}/{len(truths)}] {truth.clip_id:<8} person {run.person_frame_fraction * 100:5.1f}%  "
+            f"  [{index:>3}/{len(truths)}] {truth.clip_id:<12} person {run.person_frame_fraction * 100:5.1f}%  "
             f"alerts {run.alert_times or '-'}"
         )
 
@@ -454,7 +555,7 @@ def main() -> int:
         "run_at": datetime.now(UTC).isoformat(),
         "elapsed_sec": round(time.perf_counter() - started, 1),
         "config": {
-            "dataset": "UR Fall Detection Dataset, cam0 RGB half (320x240)",
+            "dataset": description,
             "weights": settings.model_weights_path,
             "detector_confidence": settings.detector_confidence,
             "target_fps": args.fps,
@@ -468,8 +569,8 @@ def main() -> int:
     }
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    json_path = RESULTS_DIR / f"fall-benchmark-urfall-{args.label}.json"
-    md_path = RESULTS_DIR / f"fall-benchmark-urfall-{args.label}.md"
+    json_path = RESULTS_DIR / f"fall-benchmark-{args.dataset}-{args.label}.json"
+    md_path = RESULTS_DIR / f"fall-benchmark-{args.dataset}-{args.label}.md"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     md_path.write_text(render_markdown(report), encoding="utf-8")
 
@@ -480,7 +581,7 @@ def main() -> int:
     print(f"  Precision   {_pct(s['precision'])} {_ci(s['precision_ci95'])}")
     print(f"  F1          {_pct(s['f1'])}")
     print(f"  FA / hour   {s['false_alarms_per_hour']}")
-    print(f"  Wrote {json_path.relative_to(REPO_ROOT)} and {md_path.name}")
+    print(f"  Wrote {json_path} and {md_path.name}")
     return 0
 
 
