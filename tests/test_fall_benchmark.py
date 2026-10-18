@@ -4,6 +4,7 @@ from src.benchmark.run_fall_benchmark import (
     ONSET_TOLERANCE_SEC,
     ClipRun,
     ClipTruth,
+    load_caucafall,
     load_gmdcsa24,
     load_urfall,
     match_clip,
@@ -144,3 +145,20 @@ def test_load_gmdcsa24_takes_onset_from_the_falling_segment_and_flags_lying_adls
     assert truths["s1-adl-01"].has_lying
     assert not truths["s1-adl-02"].has_lying
     assert truths["s1-adl-02"].fall_start_sec is None
+
+
+def test_load_caucafall_takes_onset_from_the_first_frame_labelled_fall(tmp_path):
+    fall_dir = tmp_path / "Subject.3" / "Fall forward"
+    kneel_dir = tmp_path / "Subject.3" / "Kneel"
+    fall_dir.mkdir(parents=True)
+    kneel_dir.mkdir(parents=True)
+    (fall_dir / "FallForwardS3.avi").write_bytes(b"x")  # undecodable -> fps falls back to 30
+    (kneel_dir / "KneelS3.avi").write_bytes(b"x")
+    rows = ["file,label"] + [f"cas{i:06d}.txt,{0 if i <= 60 else 1}" for i in range(1, 91)]
+    (fall_dir / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    truths = {t.clip_id: t for t in load_caucafall(tmp_path)}
+
+    assert truths["s03-fall-forward"].fall_start_sec == 2.0  # 61st frame at 30 fps
+    assert truths["s03-kneel"].kind == "adl"
+    assert truths["s03-kneel"].has_lying

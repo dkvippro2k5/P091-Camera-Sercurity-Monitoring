@@ -75,6 +75,8 @@ GMDCSA24_SUBJECTS = 4
 # "Falling (SW)[3.4 to 6]" — tolerant of the stray spaces and colons in the published CSVs.
 _GMDCSA24_SEGMENT = re.compile(r"([A-Za-z][^\[\];:,]*?)\s*\[\s*([\d.]+)\s*(?:to)?\s*([\d.]+)\s*\]")
 _LYING_CLASSES = ("lying", "sleeping", "laying")
+CAUCAFALL_DATASET = "7w7fccy7ky"
+CAUCAFALL_VERSION = 5
 
 LABEL_FALL = "fall_detection"
 # The CSV marks the first "falling" frame; a detector that latches on the first frames of the
@@ -353,10 +355,103 @@ def download_urfall(data_dir: Path) -> None:
         urllib.request.urlretrieve(f"{URFALL_BASE_URL}/{name}", target)
 
 
+def _mendeley_get(url: str):
+    # Mendeley answers 403 to urllib's default User-Agent.
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (fall-benchmark)"})
+    return urllib.request.urlopen(request, timeout=120)
+
+
+def download_caucafall(data_dir: Path) -> None:
+    """Fetch each activity's .avi and, for falls, collapse its per-frame YOLO .txt labels into labels.csv.
+
+    The per-frame .png images (~5 GB) are skipped; the .avi carries the same frames.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    api = f"https://data.mendeley.com/public-api/datasets/{CAUCAFALL_DATASET}"
+    with _mendeley_get(f"{api}/folders/{CAUCAFALL_VERSION}") as response:
+        folders = json.load(response)
+    by_id = {f["id"]: f for f in folders}
+    leaves = [f for f in folders if by_id.get(f.get("parent_id"), {}).get("name", "").startswith("Subject.")]
+
+    def fetch_text(url: str) -> str:
+        with _mendeley_get(url) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    for leaf in sorted(leaves, key=lambda f: (by_id[f["parent_id"]]["name"], f["name"])):
+        target_dir = data_dir / by_id[leaf["parent_id"]]["name"] / leaf["name"]
+        is_fall = leaf["name"].lower().startswith("fall")
+        if any(target_dir.glob("*.avi")) and (not is_fall or (target_dir / "labels.csv").exists()):
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with _mendeley_get(f"{api}/files?folder_id={leaf['id']}&version={CAUCAFALL_VERSION}") as response:
+            files = json.load(response)
+        print(f"  downloading {target_dir.relative_to(data_dir)}")
+        for entry in files:
+            if entry["filename"].lower().endswith(".avi"):
+                with _mendeley_get(entry["content_details"]["download_url"]) as response:
+                    (target_dir / entry["filename"]).write_bytes(response.read())
+        if is_fall:
+            labels = sorted((e for e in files if e["filename"].endswith(".txt")), key=lambda e: e["filename"])
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                texts = list(pool.map(lambda e: fetch_text(e["content_details"]["download_url"]), labels))
+            rows = ["file,label"]
+            for entry, text in zip(labels, texts):
+                first = text.split()
+                rows.append(f"{entry['filename']},{first[0] if first else ''}")
+            (target_dir / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def load_caucafall(data_dir: Path) -> list[ClipTruth]:
+    """One clip per Subject.N/<activity>; fall onset is the first frame labelled 1 (fall)."""
+    truths: list[ClipTruth] = []
+    for activity_dir in sorted(data_dir.glob("Subject.*/*")):
+        videos = sorted(activity_dir.glob("*.avi"))
+        if not videos:
+            continue
+        subject = activity_dir.parent.name.split(".")[-1]
+        clip_id = f"s{int(subject):02d}-{activity_dir.name.lower().replace(' ', '-')}"
+        is_fall = activity_dir.name.lower().startswith("fall")
+        fall_start = None
+        if is_fall:
+            labels_path = activity_dir / "labels.csv"
+            if not labels_path.exists():
+                continue
+            with open(labels_path, newline="", encoding="utf-8") as handle:
+                # Each folder also holds a class-names file ("nofall"/"fall"), not a frame label.
+                rows = [r for r in csv.DictReader(handle) if r["label"].strip().isdigit()]
+            fall_indices = [i for i, r in enumerate(rows) if r["label"].strip() == "1"]
+            if not fall_indices:
+                print(f"  skipping {clip_id}: no frame labelled as a fall")
+                continue
+            import cv2
+
+            capture = cv2.VideoCapture(str(videos[0]))
+            reported = capture.get(cv2.CAP_PROP_FPS)
+            capture.release()
+            # OpenCV reports -1 or NaN for an unreadable file, which `or` would not catch.
+            fps = reported if reported and math.isfinite(reported) and reported > 0 else 30.0
+            # Label files are numbered from 1 in frame order, one per frame.
+            fall_start = fall_indices[0] / fps
+        truths.append(
+            ClipTruth(
+                clip_id=clip_id,
+                path=str(videos[0]),
+                kind="fall" if is_fall else "adl",
+                fall_start_sec=fall_start,
+                lying_start_sec=fall_start,
+                # Kneeling, sitting down and picking things up are the hard negatives here.
+                has_lying=activity_dir.name.lower() in ("kneel", "sit down", "pick up object"),
+            )
+        )
+    return truths
+
+
 DATASETS = {
     # name: (default data dir, loader, downloader, description)
     "urfall": (DEFAULT_DATA_DIR, load_urfall, download_urfall, "UR Fall Detection Dataset, cam0 RGB half (320x240)"),
     "gmdcsa24": (BENCHMARK_DATA_DIR / "gmdcsa24", load_gmdcsa24, download_gmdcsa24, "GMDCSA24 (4 subjects, day/night)"),
+    "caucafall": (BENCHMARK_DATA_DIR / "caucafall", load_caucafall, download_caucafall, "CAUCAFall (10 subjects, home, uncontrolled light)"),
 }
 
 
