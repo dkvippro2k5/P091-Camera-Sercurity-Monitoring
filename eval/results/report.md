@@ -9,18 +9,24 @@ Detector + RuleEngine đúng cấu hình production, chạy offline trên hai b�
 Cách chạy và giao thức đánh giá nằm trong docstring của `src/benchmark/run_fall_benchmark.py`.
 
 - **UR Fall Detection Dataset** — 30 clip té ngã, 40 ADL, một phòng, 320×240. Dùng để chẩn đoán.
-- **GMDCSA24** — 78 clip té ngã, 81 ADL, 4 người, 3 căn nhà, ngày và đêm, 720p/480p. Tập kiểm
-  chứng: các thay đổi bên dưới không được chỉnh theo nó.
+- **GMDCSA24** — 78 clip té ngã, 81 ADL, 4 người, 3 căn nhà, ngày và đêm, 720p/480p. Là tập
+  kiểm chứng cho bước 1; sau đó đã được dùng để chẩn đoán nên không còn độc lập.
+- **CAUCAFall** — 50 clip té ngã, 50 ADL (đi, nhảy, quỳ, ngồi, nhặt đồ), 10 người, 720×480,
+  ánh sáng tự nhiên/nhân tạo/đêm. Tập kiểm chứng từ bước 2.
+
+Cả ba đều quay trong nhà, phần lớn là ngã dàn dựng (chậm, có chủ đích). Chưa có dữ liệu ngoài
+trời, đông người hay ngã thật.
 
 Mặc định: 5 fps, giữ frame cuối 4 s. Ngoặc vuông là khoảng tin cậy 95% (Wilson).
 
-| Phiên bản | UR Fall recall | UR Fall ADL bị báo | GMDCSA24 recall | GMDCSA24 ADL bị báo |
-| --- | --- | --- | --- | --- |
-| Baseline | 46.7% (14/30) [30–64%] | 3/40 | 44.9% (35/78) [34–56%] | 13/81 |
-| 1a: cố định ByteTrack, detection yếu giữ track | 76.7% (23/30) | 6/40 | 48.7% (38/78) | 11/81 |
-| 1 đầy đủ: + stitch theo cú ngã, + `recovered` phải giữ 0.6 s | 76.7% (23/30) [59–88%] | 6/40 | 51.3% (40/78) [40–62%] | 11/81 |
+| Phiên bản | UR Fall recall | UR Fall ADL bị báo | GMDCSA24 recall | GMDCSA24 ADL bị báo | CAUCAFall recall | CAUCAFall ADL bị báo |
+| --- | --- | --- | --- | --- | --- | --- |
+| Baseline | 46.7% (14/30) [30–64%] | 3/40 | 44.9% (35/78) [34–56%] | 13/81 | — | — |
+| 1a: cố định ByteTrack, detection yếu giữ track | 76.7% (23/30) | 6/40 | 48.7% (38/78) | 11/81 | — | — |
+| 1 đầy đủ: + stitch theo cú ngã, + `recovered` phải giữ 0.6 s (**hiện tại**) | 76.7% (23/30) [59–88%] | 6/40 | 51.3% (40/78) [40–62%] | 11/81 | 46.0% (23/50) [33–60%] | 10/50 |
+| 2: chặn ngã có tốc độ rơi < 0.5 H/s (**tắt mặc định**) | 73.3% (22/30) | 2/40 | 42.3% (33/78) | 4/81 | 24.0% (12/50) [14–37%] | 5/50 |
 
-Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24}-{baseline,step1a-tracker,step1}.md`.
+Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24,caucafall}-{baseline,step1a-tracker,step1,step2-descent}.md`.
 
 ### Nguyên nhân bỏ sót ở baseline (UR Fall, 16/30)
 
@@ -44,9 +50,22 @@ phần lớn các clip đó. Nguyên nhân thật gần như đều là tracking
   dưới; detection chỉ 0.1–0.3 hoặc mất hẳn trước khi kịp vào pha ngã. ByteTrack chỉ dùng
   detection yếu cho track *đang* theo dõi, không hồi sinh track đã mất. Cần detector/pose tốt hơn
   cho người nằm, không sửa được bằng logic rule.
-- **GMDCSA24, recall chỉ 51%**: kiểu lỗi chủ đạo ở bộ này khác UR Fall và chưa được phân tích.
+- **GMDCSA24, 38 ca bỏ sót**: 25 ca hỏng ở máy trạng thái "cùng một track đi từ đứng sang nằm"
+  — 13 đã arm nhưng chưa bao giờ được xác nhận nằm hoặc đồng hồ dwell bị reset khi người cựa quậy
+  trên sàn, 6 ngã từ tư thế ngồi nên không có baseline đứng, 6 không đủ 2 chỉ báo (ngã chúi về phía
+  camera, ngã chậm). 9 ca detector mất người (4 ca ban đêm); 4 ca chưa phân loại được.
+- **CAUCAFall, báo nhầm 10/50**: 7 trong số đó là đi bộ hoặc nhảy, không phải nằm xuống.
 - **Báo nhầm tăng trên UR Fall (3 → 6)**: tracker giữ được người nằm thì cũng giữ được người chủ
-  động nằm xuống (giường, sàn). Phân biệt ngã với chủ động nằm là bước tiếp theo (vận tốc rơi).
+  động nằm xuống (giường, sàn).
+
+### Bước 2 — tốc độ rơi: kết quả âm tính
+
+Ngưỡng 0.5 chiều cao/giây được chọn trên UR Fall + GMDCSA24 (giữ 53/63 alert đúng, loại 13/17
+alert nhầm). Trên CAUCAFall nó làm recall rơi từ 46% xuống 24%. Đo lại không bật bộ lọc: ngã thật
+có tốc độ 0.0–1.1, alert nhầm 0.14–0.95 — gần như chồng lên nhau. Hai lý do: ngã dàn dựng trong
+các bộ này chậm như chủ động nằm, và ngã về phía/ra xa camera gần như không làm mép trên bbox di
+chuyển trong ảnh. Code được giữ (`fall_min_descent_speed`, mặc định 0) để dùng làm một tầng lọc
+phụ phía sau tầng khác; tốc độ rơi đo được luôn có trong `reason` của alert.
 
 **Tốc độ lấy mẫu:** trước bước 1, 15 fps đẩy recall UR Fall lên 66.7% so với 46.7% ở 5 fps
 ([md](fall-benchmark-urfall-padded-15fps.md)). Cấu hình 3 fps đang dùng để giảm tải CPU chưa đo.

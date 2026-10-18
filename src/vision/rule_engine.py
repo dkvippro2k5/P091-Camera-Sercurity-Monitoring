@@ -51,6 +51,10 @@ _MIN_VELOCITY_DT_SEC = 0.05
 _UPRIGHT_PREFIX = "upright"
 
 _UPRIGHT_BASELINE_WINDOW_SEC = 3.0
+# Window around the arming frame over which the peak descent speed is taken. The indicators
+# often arm partway through the drop, so the fastest part may already be just behind them.
+_DESCENT_LOOKBACK_SEC = 0.6
+_DESCENT_LOOKAHEAD_SEC = 1.0
 _FALL_TRANSITION_TIMEOUT_SEC = 1.0
 
 FallPhase = Literal["upright", "descending", "prone", "persistent", "recovered"]
@@ -106,6 +110,12 @@ class TrackState:
     # First frame of an unbroken run that looks like standing back up; see
     # _evaluate_fall_indicators for why one such frame is not enough.
     recovery_candidate_since: float | None = None
+    # Descent speed: (timestamp, box top, baseline height) of the previous evaluated frame,
+    # recent (timestamp, speed) samples for the pre-arm look-back, and the peak around arming.
+    last_top_sample: tuple[float, float, float | None] | None = None
+    descent_speeds: list[tuple[float, float]] = field(default_factory=list)
+    descent_peak_speed: float = 0.0
+    fall_suppressed_slow: bool = False
     upright_samples: list[tuple[float, float, float, float, float, float]] = field(default_factory=list)
     upright_baseline: UprightBaseline | None = None
     # Abandoned: when the object was last near a person, and where it settled.
@@ -146,6 +156,10 @@ class RuleEngine:
             suspected. The spec lists the indicators but not how they combine; 2 of 3 is
             this module's choice — 3/3 only ever catches a textbook fall, while 1/3 lets a
             crouch near a wide-angle lens through on aspect ratio alone.
+        fall_min_descent_speed: A fall that reaches the dwell is still not reported if the
+            peak drop speed of the box top, from 0.6 s before arming to 1 s after, stayed
+            under this many standing heights per second. 0 (the default) disables the gate;
+            the peak is measured and reported in the alert reason either way.
         abandon_sec: Seconds an object must sit unattended before it is abandoned.
         owner_radius_ratio: Owner search radius as a fraction of frame width (PRD's radius R).
         stationary_tolerance_ratio: Movement below this fraction of frame width counts as still.
@@ -190,6 +204,14 @@ class RuleEngine:
         fall_persistence_grace_sec: float = 0.6,
         fall_recovery_ratio: float = 0.3,
         fall_min_indicators: int = 2,
+        # Peak drop speed of the box top around the moment the rule armed, in standing
+        # heights per second. Off by default: it does not hold up as a stand-alone gate.
+        # Chosen on UR Fall + GMDCSA24 at 5 fps (2026-10-18), 0.5 kept 53/63 true alerts and
+        # removed 13/17 false ones; on held-out CAUCAFall it cut recall from 46% to 24%. Its
+        # staged falls are slow, and a fall toward or away from the camera barely moves the
+        # box top in the image, so true falls measured 0.0-1.1 against 0.14-0.95 for false
+        # alarms. Kept for use as one layer behind another filter, not as the gate itself.
+        fall_min_descent_speed: float = 0.0,
         abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
@@ -217,6 +239,7 @@ class RuleEngine:
         self.fall_persistence_grace_sec = fall_persistence_grace_sec
         self.fall_recovery_ratio = fall_recovery_ratio
         self.fall_min_indicators = fall_min_indicators
+        self.fall_min_descent_speed = fall_min_descent_speed
         self.abandon_sec = abandon_sec
         self.owner_radius_ratio = owner_radius_ratio
         self.stationary_tolerance_ratio = stationary_tolerance_ratio
@@ -881,12 +904,36 @@ class RuleEngine:
         )
 
     @staticmethod
+    def _record_descent_speed(person: IncidentDetection, state: TrackState, timestamp: float) -> float | None:
+        """Drop speed of the box top since this track's previous frame, in standing heights/s.
+
+        Taken from the previous *evaluated* frame of this state rather than pos_history, which
+        is cleared on a stitch: the jump from the last mid-fall box to the first lying box of
+        a new track ID is exactly the fast part of the fall.
+        """
+        top = float(person.bbox.ymin)
+        reference = state.upright_baseline.height if state.upright_baseline else None
+        previous = state.last_top_sample
+        state.last_top_sample = (timestamp, top, reference)
+        if previous is None or timestamp <= previous[0]:
+            return None
+        height = reference or previous[2]
+        if not height:
+            return None
+        speed = (top - previous[1]) / height / (timestamp - previous[0])
+        state.descent_speeds.append((timestamp, speed))
+        state.descent_speeds = [s for s in state.descent_speeds if timestamp - s[0] <= _DESCENT_LOOKBACK_SEC]
+        return speed
+
+    @staticmethod
     def _clear_fall_transition(state: TrackState, phase: FallPhase = "upright") -> None:
         state.fall_phase = phase
         state.fall_transition_since = None
         state.prone_candidate_since = None
         state.nonprone_since = None
         state.recovery_candidate_since = None
+        state.descent_peak_speed = 0.0
+        state.fall_suppressed_slow = False
         state.fallen_since = None
         state.fall_fired = False
         state.fall_latched = False
@@ -941,11 +988,19 @@ class RuleEngine:
             motion_evidence,
         )
         profile = self._fall_profile(camera_id)
+        speed = self._record_descent_speed(person, state, timestamp)
         # A zero dwell is used by the indicator-only tests to inspect whether a single
         # transition arms the rule. Production paths have a positive dwell and therefore
         # receive the extra prone confirmation interval.
         confirmation_sec = profile.confirmation_sec if self.fall_dwell_sec > 0 else 0.0
         upright = self._is_confidently_upright(person) and hits < self.fall_min_indicators
+        if (
+            speed is not None
+            and state.fall_phase in ("descending", "prone", "persistent")
+            and state.fall_transition_since is not None
+            and timestamp - state.fall_transition_since <= _DESCENT_LOOKAHEAD_SEC
+        ):
+            state.descent_peak_speed = max(state.descent_peak_speed, speed)
 
         if state.fall_phase == "recovered":
             if upright:
@@ -978,6 +1033,10 @@ class RuleEngine:
 
             state.fall_phase = "descending"
             state.fall_transition_since = timestamp
+            state.descent_peak_speed = max(
+                (s for t, s in state.descent_speeds if timestamp - t <= _DESCENT_LOOKBACK_SEC),
+                default=0.0,
+            )
             state.prone_candidate_since = None
             state.fall_latched = True
             state.fall_impact_bbox = person.bbox
@@ -1078,6 +1137,17 @@ class RuleEngine:
 
             elapsed = timestamp - state.fallen_since
             if elapsed >= self.fall_dwell_sec and not state.fall_fired:
+                if state.descent_peak_speed < self.fall_min_descent_speed:
+                    # Down for the full dwell, but got there slowly: lying down on a bed or
+                    # the floor, kneeling, sitting. Not reported; cleared like any other fall
+                    # state once the person is up again.
+                    if not state.fall_suppressed_slow:
+                        state.fall_suppressed_slow = True
+                        logger.debug(
+                            f"{person.track_id}: down {elapsed:.1f}s but peak descent "
+                            f"{state.descent_peak_speed:.2f} H/s < {self.fall_min_descent_speed}; not reported"
+                        )
+                    continue
                 state.fall_fired = True
                 state.fall_phase = "persistent"
                 events.append(
@@ -1090,7 +1160,8 @@ class RuleEngine:
                         bbox=person.bbox,
                         reason=(
                             f"{person.track_id} transitioned upright->prone and stayed down {elapsed:.1f}s "
-                            f"(threshold {self.fall_dwell_sec}s) — {state.fall_reason}"
+                            f"(threshold {self.fall_dwell_sec}s), peak descent "
+                            f"{state.descent_peak_speed:.2f} H/s — {state.fall_reason}"
                         ),
                     )
                 )

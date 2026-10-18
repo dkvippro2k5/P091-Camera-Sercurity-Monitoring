@@ -265,6 +265,7 @@ class MultiStreamManager:
                     fall_persistence_grace_sec=engine.fall_persistence_grace_sec,
                     fall_recovery_ratio=engine.fall_recovery_ratio,
                     fall_min_indicators=engine.fall_min_indicators,
+                    fall_min_descent_speed=engine.fall_min_descent_speed,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,

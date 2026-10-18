@@ -429,3 +429,43 @@ def test_the_default_dwell_is_the_prds_three_seconds():
     assert len(events) == 1
     assert events[0].label == LABEL_FALL
     assert events[0].timestamp == pytest.approx(2 * FRAME_DT + 3.0, abs=FRAME_DT)
+
+
+# ---------------------------------------------------------------------------
+# Descent speed: lying down on purpose is slow, falling is not
+# ---------------------------------------------------------------------------
+
+
+def _slow_lie_down() -> list[tuple[float, IncidentDetection]]:
+    """Box flattens into a lying shape while its top creeps down 12 px per 0.2 s (~0.35 H/s)."""
+    top = STAND_TOP
+    frames = [(i * FRAME_DT, standing()) for i in range(4)]
+    for i, (width, height) in enumerate(((STAND_W + 30, 140), (STAND_W + 90, 100), (FLAT_W, FLAT_H)), 1):
+        frames.append(((3 + i) * FRAME_DT, box(width, height, top + 12 * i)))
+    lying = box(FLAT_W, FLAT_H, top + 36)
+    return frames + hold(lying, 6 * FRAME_DT, 4.0)
+
+
+def test_with_the_gate_on_a_slow_lie_down_that_reaches_the_dwell_is_not_reported():
+    engine = RuleEngine(fall_min_descent_speed=0.5)
+    events = run(engine, _slow_lie_down())
+
+    state = engine._tracks[(None, "person_1")]
+    assert events == []
+    assert state.fall_phase == "prone"  # armed and down for the full dwell...
+    assert state.fall_suppressed_slow  # ...but stopped by the speed gate
+    assert state.descent_peak_speed < engine.fall_min_descent_speed
+
+
+def test_the_descent_speed_gate_is_off_by_default():
+    """On held-out CAUCAFall the gate halved recall (46% -> 24%): staged falls are slow too."""
+    assert len(run(RuleEngine(), _slow_lie_down())) == 1
+
+
+def test_with_the_gate_on_a_fast_collapse_still_fires_and_reports_its_descent_speed():
+    engine = RuleEngine(fall_min_descent_speed=0.5)
+    events = run(engine, collapse() + hold(flat(), 2 * FRAME_DT, 3.4))
+
+    assert len(events) == 1
+    assert engine._tracks[(None, "person_1")].descent_peak_speed >= engine.fall_min_descent_speed
+    assert "peak descent" in events[0].reason
