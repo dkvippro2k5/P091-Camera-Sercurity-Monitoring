@@ -100,8 +100,9 @@ _TRIAGE_CROP_MIN_EDGE_PX = 64
 # Triage runs on a small thread pool and refuses work beyond this many alerts in flight. A
 # camera flickering between states would otherwise queue an unbounded backlog of paid API
 # calls whose verdicts arrive long after the operator has moved on. RuleEngine's
-# alert_cooldown_sec (30s per camera+label) already caps the common case; this is the
-# backstop for the uncommon one. Sized for several cameras alerting at once: an assess()
+# alert_cooldown_sec (30s per track and label, with fall alerts merged per incident) already
+# caps the common case; this is the backstop for the uncommon one. Sized for several
+# cameras alerting at once: an assess()
 # call is a network round trip (I/O-bound, not CPU), so more concurrency here costs almost
 # nothing and stops a real incident on camera 4 being dropped as "queue saturated" while
 # cameras 1-3 are mid-call.

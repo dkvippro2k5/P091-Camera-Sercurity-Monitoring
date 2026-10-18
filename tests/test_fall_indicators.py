@@ -131,9 +131,12 @@ def test_wide_box_alone_is_not_a_fall():
     This is the false positive pose confirmation used to absorb. With pose gone, requiring
     two indicators is what rejects it — a box that holds still has no velocity and loses no
     height, so it scores 1 of 3 no matter how flat it looks.
+
+    The static-lying layer is switched off here: this pins what the *transition* layer
+    rejects. The static layer does fire on a crouch held this long; see its tests below.
     """
     crouched = box(200, 150, 200)  # AR 1.33, comfortably over the 1.2 threshold
-    assert run(scoring_engine(), [(0.0, crouched)] + hold(crouched, 0.0, 3.0)) == []
+    assert run(scoring_engine(fall_static_dwell_sec=0.0), [(0.0, crouched)] + hold(crouched, 0.0, 3.0)) == []
 
 
 def test_lowering_yourself_slowly_does_not_fire():
@@ -192,15 +195,12 @@ def test_walking_toward_camera_without_downward_center_does_not_fire():
     assert run(scoring_engine(), frames) == []
 
 
-def test_person_already_on_the_ground_never_fires():
-    """A documented coverage gap, pinned so it cannot change without a test failing.
-
-    Indicators 1 and 3 are *changes*, so someone the camera first sees lying still scores
-    aspect ratio alone: 1 of 3. The spec asks for "sự thay đổi đột ngột về hình dáng và vị
-    trí", so this rule detects *falling*, not *lying* — anyone who fell before the camera
-    started, or during a stretch of dropped frames, is invisible to it.
+def test_the_transition_layer_never_fires_on_someone_already_on_the_ground():
+    """Indicators 1 and 3 are *changes*, so someone the camera first sees lying still scores
+    aspect ratio alone: 1 of 3. The transition layer detects *falling*, not *lying*; anyone
+    who fell before the camera saw them is the static-lying layer's job (tests below).
     """
-    assert run(scoring_engine(), [(0.0, flat())] + hold(flat(), 0.0, 5.0)) == []
+    assert run(scoring_engine(fall_static_dwell_sec=0.0), [(0.0, flat())] + hold(flat(), 0.0, 5.0)) == []
 
 
 # ---------------------------------------------------------------------------
@@ -469,3 +469,100 @@ def test_with_the_gate_on_a_fast_collapse_still_fires_and_reports_its_descent_sp
     assert len(events) == 1
     assert engine._tracks[(None, "person_1")].descent_peak_speed >= engine.fall_min_descent_speed
     assert "peak descent" in events[0].reason
+
+
+# ---------------------------------------------------------------------------
+# Static-lying layer: lying for the dwell with no transition seen
+# ---------------------------------------------------------------------------
+
+
+def _bed(xmin: int = 150, ymin: int = 240, xmax: int = 450, ymax: int = 360) -> IncidentDetection:
+    """A bed under flat(), whose box spans x 200-370, y 270-320."""
+    return IncidentDetection(
+        label="bed", track_id="bed_1", confidence=0.9, bbox=BoundingBox(xmin=xmin, ymin=ymin, xmax=xmax, ymax=ymax)
+    )
+
+
+def test_someone_first_seen_lying_fires_once_after_the_dwell():
+    """The coverage gap the transition layer leaves: a fall from sitting, or a track first
+    picked up on the floor. On GMDCSA24 these were most of the falls step 1 still missed."""
+    events = run(RuleEngine(), [(0.0, flat())] + hold(flat(), 0.0, 5.0))
+
+    assert len(events) == 1
+    assert events[0].timestamp == pytest.approx(3.0)
+    assert "static layer" in events[0].reason
+
+
+def test_lying_on_a_bed_does_not_fire():
+    engine = RuleEngine()
+    now = datetime.now()
+    events = []
+    for i in range(26):  # 5 s
+        events += engine.evaluate([flat(), _bed()], WIDTH, HEIGHT, i * FRAME_DT, now)
+    assert events == []
+
+
+def test_a_bed_seen_once_still_counts_while_its_detection_flickers():
+    engine = RuleEngine()
+    now = datetime.now()
+    events = engine.evaluate([flat(), _bed()], WIDTH, HEIGHT, 0.0, now)
+    for i in range(1, 26):
+        events += engine.evaluate([flat()], WIDTH, HEIGHT, i * FRAME_DT, now)
+    assert events == []
+
+
+def test_a_crouch_held_past_the_dwell_fires_on_the_static_layer():
+    """The known cost of this layer, pinned: a box shape cannot tell a crouch or someone
+    sitting on the floor from a person lying there. Measured on the benchmarks."""
+    crouched = box(200, 150, 200)
+    assert len(run(RuleEngine(), [(0.0, crouched)] + hold(crouched, 0.0, 3.4))) == 1
+
+
+def test_getting_up_rearms_the_static_layer():
+    frames = [(0.0, flat())] + hold(flat(), 0.0, 3.4)
+    frames += [(3.4 + i * FRAME_DT, standing()) for i in range(1, 6)]
+    frames += hold(flat(), 4.4, 3.4)
+    assert len(run(RuleEngine(), frames)) == 2
+
+
+# ---------------------------------------------------------------------------
+# One incident, one alert: falls merged across tracks
+# ---------------------------------------------------------------------------
+
+
+def _lying_at(xmin: int, track_id: str) -> IncidentDetection:
+    return IncidentDetection(
+        label="person",
+        track_id=track_id,
+        confidence=0.9,
+        bbox=BoundingBox(xmin=xmin, ymin=FLAT_TOP, xmax=xmin + FLAT_W, ymax=FLAT_TOP + FLAT_H),
+    )
+
+
+def _run_tracks(engine: RuleEngine, tracks: list[IncidentDetection], seconds: float) -> list[IncidentDetection]:
+    now = datetime.now()
+    events = []
+    for i in range(int(round(seconds / FRAME_DT)) + 1):
+        events += engine.evaluate(tracks, WIDTH, HEIGHT, i * FRAME_DT, now)
+    return events
+
+
+def test_one_person_split_across_two_tracks_raises_one_fall_alert():
+    """GMDCSA24 s2-fall-04: a full-body box and a partial box of the same person on the
+    floor are two tracks; each reached the dwell and alerted, 2.8 s apart."""
+    engine = RuleEngine(alert_cooldown_sec=30.0)
+    events = _run_tracks(engine, [_lying_at(200, "person_1"), _lying_at(230, "person_2")], 5.0)
+    assert len(events) == 1
+
+
+def test_two_people_down_apart_raise_two_alerts():
+    engine = RuleEngine(alert_cooldown_sec=30.0)
+    events = _run_tracks(engine, [_lying_at(10, "person_1"), _lying_at(450, "person_2")], 5.0)
+    assert len(events) == 2
+
+
+def test_a_merged_track_does_not_report_once_the_window_lapses():
+    """The duplicate's own layer already marked it fired; the merge must not just delay it."""
+    engine = RuleEngine(alert_cooldown_sec=5.0)
+    events = _run_tracks(engine, [_lying_at(200, "person_1"), _lying_at(230, "person_2")], 12.0)
+    assert len(events) == 1

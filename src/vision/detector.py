@@ -77,6 +77,8 @@ class IncidentDetector:
         # track_id -> call index it was last reported at, for tracks that have cleared
         # conf_threshold at least once.
         self._established: dict[str, int] = {}
+        # track_id -> call index last reported, for tracks that have been a person.
+        self._person_tracks: dict[str, int] = {}
         self._calls = 0
 
         self._initialize_model()
@@ -173,8 +175,6 @@ class IncidentDetector:
                 cls_id = int(box.cls[0].cpu().numpy())
 
                 label_name = r.names[cls_id] if hasattr(r, "names") and cls_id in r.names else f"class_{cls_id}"
-                if self.target_labels and label_name not in self.target_labels:
-                    continue
 
                 # Left as None when the tracker gave us nothing. A synthesized ID would
                 # collide across objects and silently corrupt every temporal rule.
@@ -182,8 +182,21 @@ class IncidentDetector:
                 if getattr(box, "id", None) is not None:
                     track_id = f"track_{int(box.id[0].cpu().numpy())}"
 
+                # The tracker associates boxes regardless of class, and YOLO often calls a
+                # person lying on the floor "bed" or "couch". The track carries on under the
+                # wrong label: filtered out, the person vanishes mid-fall; kept, a "bed"
+                # overwrites the person's track state (GMDCSA24 s2-fall-04). Once a track has
+                # been a person, it stays one.
+                if track_id is not None and label_name != "person" and track_id in self._person_tracks:
+                    label_name = "person"
+
+                if self.target_labels and label_name not in self.target_labels:
+                    continue
+
                 if not self._passes_confidence(track_id, conf):
                     continue
+                if label_name == "person" and track_id is not None:
+                    self._person_tracks[track_id] = self._calls
 
                 detections.append(
                     IncidentDetection(
@@ -216,6 +229,7 @@ class IncidentDetector:
         return False
 
     def _forget_stale_tracks(self) -> None:
-        stale = [tid for tid, seen in self._established.items() if self._calls - seen > _ESTABLISHED_TRACK_TTL_CALLS]
-        for tid in stale:
-            del self._established[tid]
+        for registry in (self._established, self._person_tracks):
+            stale = [tid for tid, seen in registry.items() if self._calls - seen > _ESTABLISHED_TRACK_TTL_CALLS]
+            for tid in stale:
+                del registry[tid]

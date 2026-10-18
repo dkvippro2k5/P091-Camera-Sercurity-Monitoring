@@ -73,6 +73,46 @@ def test_confidence_gates_new_tracks_but_lets_an_established_track_continue():
     assert not detector._passes_confidence("track_8", 0.3)
 
 
+def _fake_tracking_model(frames: list[list[tuple[int, int, float]]]):
+    """A stand-in for YOLO.track(): each call returns the next frame's (track id, class, conf)."""
+    import torch
+
+    class _Box:
+        def __init__(self, track_id: int, cls: int, conf: float):
+            self.xyxy = torch.tensor([[10.0, 10.0, 60.0, 40.0]])
+            self.conf = torch.tensor([conf])
+            self.cls = torch.tensor([float(cls)])
+            self.id = torch.tensor([float(track_id)])
+
+    class _Result:
+        names = {0: "person", 59: "bed"}
+
+        def __init__(self, boxes):
+            self.boxes = boxes
+
+    class _Model:
+        def __init__(self):
+            self.calls = iter(frames)
+
+        def track(self, frame, **kwargs):
+            return [_Result([_Box(*b) for b in next(self.calls)])]
+
+    return _Model()
+
+
+def test_a_person_track_stays_a_person_when_yolo_calls_it_a_bed():
+    """YOLO often labels someone lying on the floor "bed"; the tracker keeps the same ID.
+    Dropped, the person vanished mid-fall; kept as "bed", it overwrote their track state."""
+    detector = IncidentDetector(model_path=None, conf_threshold=0.4, target_labels=["person", "bed"])
+    detector.model = _fake_tracking_model([[(1, 0, 0.9)], [(1, 59, 0.5)], [(2, 59, 0.8)]])
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_1", "person")]
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_1", "person")]
+    # A track that was never a person is a real bed.
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_2", "bed")]
+
+
 def test_the_pinned_tracker_config_ships_with_the_repo():
     """Unpinned, model.track() follows the installed ultralytics default (TrackTrack in 8.4.143)."""
     import yaml

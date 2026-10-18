@@ -23,10 +23,11 @@ Mặc định: 5 fps, giữ frame cuối 4 s. Ngoặc vuông là khoảng tin c�
 | --- | --- | --- | --- | --- | --- | --- |
 | Baseline | 46.7% (14/30) [30–64%] | 3/40 | 44.9% (35/78) [34–56%] | 13/81 | — | — |
 | 1a: cố định ByteTrack, detection yếu giữ track | 76.7% (23/30) | 6/40 | 48.7% (38/78) | 11/81 | — | — |
-| 1 đầy đủ: + stitch theo cú ngã, + `recovered` phải giữ 0.6 s (**hiện tại**) | 76.7% (23/30) [59–88%] | 6/40 | 51.3% (40/78) [40–62%] | 11/81 | 46.0% (23/50) [33–60%] | 10/50 |
+| 1 đầy đủ: + stitch theo cú ngã, + `recovered` phải giữ 0.6 s | 76.7% (23/30) [59–88%] | 6/40 | 51.3% (40/78) [40–62%] | 11/81 | 46.0% (23/50) [33–60%] | 10/50 |
 | 2: chặn ngã có tốc độ rơi < 0.5 H/s (**tắt mặc định**) | 73.3% (22/30) | 2/40 | 42.3% (33/78) | 4/81 | 24.0% (12/50) [14–37%] | 5/50 |
+| 3: + tầng "nằm kéo dài", + giữ class người, + track đổi class bắt đầu lại (**hiện tại**) | 86.7% (26/30) [70–95%] | 9/40 | 79.5% (62/78) [69–87%] | 14/81 | 72.0% (36/50) [58–83%] | 14/50 |
 
-Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24,caucafall}-{baseline,step1a-tracker,step1,step2-descent}.md`.
+Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24,caucafall}-{baseline,step1a-tracker,step1,step2-descent,step3-static}.md`.
 
 ### Nguyên nhân bỏ sót ở baseline (UR Fall, 16/30)
 
@@ -57,6 +58,32 @@ phần lớn các clip đó. Nguyên nhân thật gần như đều là tracking
 - **CAUCAFall, báo nhầm 10/50**: 7 trong số đó là đi bộ hoặc nhảy, không phải nằm xuống.
 - **Báo nhầm tăng trên UR Fall (3 → 6)**: tracker giữ được người nằm thì cũng giữ được người chủ
   động nằm xuống (giường, sàn).
+
+### Bước 3 — tầng "nằm kéo dài" và lỗi class của tracker
+
+Tầng thứ hai của rule té ngã: người có box dáng nằm (rộng/cao ≥ 1.2) liên tục 3 s thì báo, kể cả
+khi không thấy chuyển từ đứng sang nằm — ngã từ tư thế ngồi, hoặc track chỉ xuất hiện khi người
+đã nằm. Không báo nếu ≥ 50% box người nằm trong box `bed`/`couch` (YOLO nhận các lớp này; nhớ vị
+trí 10 s vì detection chập chờn).
+
+Lần chạy đầu làm mất 8 ca trên GMDCSA24 và lộ ra một lỗi có sẵn: tracker ghép box không phân biệt
+class, mà YOLO hay gọi người nằm sàn là `bed` và đôi khi gọi giường là `person`. Track giữ nguyên
+ID qua lần đổi nhãn — người biến mất giữa cú ngã, hoặc trạng thái của giường đè lên trạng thái của
+người. Một số alert "đúng" trước đó chỉ là may. Sửa: track đã từng là người thì vẫn là người
+(detector), và track đổi class thì bắt đầu trạng thái mới để được stitch đúng (rule engine).
+
+Một người nằm sàn thường là nhiều track cùng lúc (box toàn thân, box một phần, box giường bị gọi
+là người), nên mỗi track tự báo: 17 clip có 2–3 alert cho cùng một cú ngã (0.4–7 s cách nhau),
+mỗi alert là một popup và một lần gọi VLM. Alert té ngã giờ được gộp theo sự cố: alert gần một
+alert té ngã khác trên cùng camera trong cửa sổ cooldown (30 s) bị bỏ; người ngã ở chỗ khác vẫn
+được báo. Các số `step3-static` trong bảng được chạy *trước* khi có phần gộp này; kiểm tra lại 12
+clip (10 có alert trùng, 2 không) cho thấy alert đầu tiên giữ nguyên thời điểm và alert trùng mất
+hết. Recall và số clip ADL bị báo không đổi; số lần báo nhầm trên GMDCSA24 dự kiến 16 → 14 (hai
+clip ADL từng bị đếm hai lần) — chưa chạy lại toàn bộ để xác nhận.
+
+Trên tập kiểm chứng CAUCAFall recall tăng 46% → 72%. Cái giá: báo nhầm tăng 3–4 clip mỗi bộ, chủ
+yếu là quỳ, ngồi xuống, nhặt đồ (CAUCAFall `kneel` ×2, `sit-down`, `pick-up-object`) — đúng rủi ro
+đã biết của một luật chỉ nhìn hình dạng box. Đây là việc của tầng pose phía sau.
 
 ### Bước 2 — tốc độ rơi: kết quả âm tính
 

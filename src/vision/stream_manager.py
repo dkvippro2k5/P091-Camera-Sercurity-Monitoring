@@ -266,6 +266,8 @@ class MultiStreamManager:
                     fall_recovery_ratio=engine.fall_recovery_ratio,
                     fall_min_indicators=engine.fall_min_indicators,
                     fall_min_descent_speed=engine.fall_min_descent_speed,
+                    fall_static_dwell_sec=engine.fall_static_dwell_sec,
+                    fall_furniture_overlap=engine.fall_furniture_overlap,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,

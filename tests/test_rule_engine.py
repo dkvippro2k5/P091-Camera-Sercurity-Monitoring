@@ -453,6 +453,28 @@ def test_id_change_at_impact_stitches_even_when_the_centre_drops_past_the_width_
     assert state.fall_phase != "upright"
 
 
+def test_a_track_that_changes_class_starts_a_new_state():
+    """The tracker is class-agnostic: a bed's track can pick up the person falling onto it
+    (GMDCSA24 s2-fall-04). The bed's state must not become the person's — they should get
+    a fresh state and stitch to their own falling track instead."""
+    engine = make_engine(fall_dwell_sec=3.0, track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    bed = make_det("bed", "track_2", cx=0.5, cy=0.8, bw=0.5, bh=0.2)
+    standing = make_det("person", "track_1", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    going_down = make_det("person", "track_1", cx=0.5, cy=0.65, bw=0.2, bh=0.2)
+    lying_on_bed_id = make_det("person", "track_2", cx=0.5, cy=0.8, bw=0.3, bh=0.09)
+
+    engine.evaluate([standing, bed], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([standing, bed], WIDTH, HEIGHT, 0.2, now, "cam_test")
+    engine.evaluate([going_down, bed], WIDTH, HEIGHT, 0.4, now, "cam_test")
+    engine.evaluate([lying_on_bed_id], WIDTH, HEIGHT, 0.6, now, "cam_test")
+
+    state = engine._tracks[("cam_test", "track_2")]
+    assert state.label == "person"
+    assert state.aliased_from == "track_1"
+    assert state.upright_baseline is not None
+
+
 def test_an_upright_track_keeps_the_narrow_stitch_radius():
     """The fall-aware radius must not let a walking person's state jump to someone else."""
     engine = make_engine(track_ttl_sec=0.3, track_stitch_window_sec=2.0)

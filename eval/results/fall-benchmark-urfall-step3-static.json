@@ -1,0 +1,1329 @@
+{
+  "label": "step3-static",
+  "run_at": "2026-10-18T15:10:52.451793+00:00",
+  "elapsed_sec": 558.8,
+  "config": {
+    "dataset": "UR Fall Detection Dataset, cam0 RGB half (320x240)",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "pad_sec": 4.0,
+    "fall_dwell_sec": 3.0,
+    "alert_cooldown_sec": 30.0,
+    "onset_tolerance_sec": 0.5
+  },
+  "scores": {
+    "fall_clips": 30,
+    "adl_clips": 40,
+    "true_positives": 26,
+    "missed_falls": 4,
+    "false_alarms": 9,
+    "duplicate_alerts": 3,
+    "recall": 0.8666666666666667,
+    "recall_ci95": [
+      0.7031831605558306,
+      0.9469043057578189
+    ],
+    "specificity": 0.775,
+    "specificity_ci95": [
+      0.6249660359590695,
+      0.8768404674532148
+    ],
+    "precision": 0.7428571428571429,
+    "precision_ci95": [
+      0.5793037572935127,
+      0.8583713127344985
+    ],
+    "f1": 0.8,
+    "hard_negative_adls": 16,
+    "hard_negative_false_alarm_clips": 8,
+    "negative_footage_min": 8.3,
+    "false_alarms_per_hour": 65.0909129871104,
+    "latency_from_lying_median_sec": 3.067,
+    "latency_from_lying_max_sec": 5.2,
+    "missed_clip_ids": [
+      "fall-21",
+      "fall-25",
+      "fall-27",
+      "fall-29"
+    ],
+    "false_alarm_clip_ids": [
+      "adl-01",
+      "adl-10",
+      "adl-11",
+      "adl-30",
+      "adl-31",
+      "adl-32",
+      "adl-33",
+      "adl-34",
+      "adl-35"
+    ],
+    "outcomes": [
+      {
+        "clip_id": "fall-01",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.667
+      },
+      {
+        "clip_id": "fall-02",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 2,
+        "latency_from_lying_sec": 3.1
+      },
+      {
+        "clip_id": "fall-03",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.9
+      },
+      {
+        "clip_id": "fall-04",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.567
+      },
+      {
+        "clip_id": "fall-05",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 5.2
+      },
+      {
+        "clip_id": "fall-06",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.067
+      },
+      {
+        "clip_id": "fall-07",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.6
+      },
+      {
+        "clip_id": "fall-08",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.033
+      },
+      {
+        "clip_id": "fall-09",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.8
+      },
+      {
+        "clip_id": "fall-10",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.7
+      },
+      {
+        "clip_id": "fall-11",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.8
+      },
+      {
+        "clip_id": "fall-12",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.2
+      },
+      {
+        "clip_id": "fall-13",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.967
+      },
+      {
+        "clip_id": "fall-14",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.9
+      },
+      {
+        "clip_id": "fall-15",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.1
+      },
+      {
+        "clip_id": "fall-16",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.067
+      },
+      {
+        "clip_id": "fall-17",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.067
+      },
+      {
+        "clip_id": "fall-18",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 1,
+        "latency_from_lying_sec": 3.3
+      },
+      {
+        "clip_id": "fall-19",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 4.0
+      },
+      {
+        "clip_id": "fall-20",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.233
+      },
+      {
+        "clip_id": "fall-21",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "fall-22",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.9
+      },
+      {
+        "clip_id": "fall-23",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.933
+      },
+      {
+        "clip_id": "fall-24",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.633
+      },
+      {
+        "clip_id": "fall-25",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "fall-26",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.2
+      },
+      {
+        "clip_id": "fall-27",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "fall-28",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.933
+      },
+      {
+        "clip_id": "fall-29",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "fall-30",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.2
+      },
+      {
+        "clip_id": "adl-01",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-02",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-03",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-04",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-05",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-06",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-07",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-08",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-09",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-10",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-11",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-12",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-13",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-14",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-15",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-16",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-17",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-18",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-19",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-20",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-21",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-22",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-23",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-24",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-25",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-26",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-27",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-28",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-29",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-30",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-31",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-32",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-33",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-34",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-35",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-36",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-37",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-38",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-39",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "adl-40",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "fall-01",
+      "kind": "fall",
+      "footage_sec": 5.333,
+      "analysed_sec": 9.333,
+      "sampled_frames": 47,
+      "person_frame_fraction": 0.926,
+      "alert_times": [
+        7.4
+      ]
+    },
+    {
+      "clip_id": "fall-02",
+      "kind": "fall",
+      "footage_sec": 3.667,
+      "analysed_sec": 7.667,
+      "sampled_frames": 39,
+      "person_frame_fraction": 0.947,
+      "alert_times": [
+        5.4,
+        6.4,
+        6.8
+      ]
+    },
+    {
+      "clip_id": "fall-03",
+      "kind": "fall",
+      "footage_sec": 7.167,
+      "analysed_sec": 11.167,
+      "sampled_frames": 56,
+      "person_frame_fraction": 0.972,
+      "alert_times": [
+        8.8
+      ]
+    },
+    {
+      "clip_id": "fall-04",
+      "kind": "fall",
+      "footage_sec": 3.2,
+      "analysed_sec": 7.2,
+      "sampled_frames": 36,
+      "person_frame_fraction": 0.938,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "fall-05",
+      "kind": "fall",
+      "footage_sec": 5.033,
+      "analysed_sec": 9.033,
+      "sampled_frames": 46,
+      "person_frame_fraction": 0.846,
+      "alert_times": [
+        8.8
+      ]
+    },
+    {
+      "clip_id": "fall-06",
+      "kind": "fall",
+      "footage_sec": 3.333,
+      "analysed_sec": 7.333,
+      "sampled_frames": 37,
+      "person_frame_fraction": 0.941,
+      "alert_times": [
+        4.4
+      ]
+    },
+    {
+      "clip_id": "fall-07",
+      "kind": "fall",
+      "footage_sec": 5.2,
+      "analysed_sec": 9.2,
+      "sampled_frames": 46,
+      "person_frame_fraction": 0.923,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "fall-08",
+      "kind": "fall",
+      "footage_sec": 3.033,
+      "analysed_sec": 7.033,
+      "sampled_frames": 36,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "fall-09",
+      "kind": "fall",
+      "footage_sec": 6.167,
+      "analysed_sec": 10.167,
+      "sampled_frames": 51,
+      "person_frame_fraction": 0.871,
+      "alert_times": [
+        8.8
+      ]
+    },
+    {
+      "clip_id": "fall-10",
+      "kind": "fall",
+      "footage_sec": 4.333,
+      "analysed_sec": 8.333,
+      "sampled_frames": 42,
+      "person_frame_fraction": 0.955,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "fall-11",
+      "kind": "fall",
+      "footage_sec": 4.333,
+      "analysed_sec": 8.333,
+      "sampled_frames": 42,
+      "person_frame_fraction": 0.955,
+      "alert_times": [
+        5.4
+      ]
+    },
+    {
+      "clip_id": "fall-12",
+      "kind": "fall",
+      "footage_sec": 3.667,
+      "analysed_sec": 7.667,
+      "sampled_frames": 39,
+      "person_frame_fraction": 0.947,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "fall-13",
+      "kind": "fall",
+      "footage_sec": 2.833,
+      "analysed_sec": 6.833,
+      "sampled_frames": 35,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.4
+      ]
+    },
+    {
+      "clip_id": "fall-14",
+      "kind": "fall",
+      "footage_sec": 2.033,
+      "analysed_sec": 6.033,
+      "sampled_frames": 31,
+      "person_frame_fraction": 0.909,
+      "alert_times": [
+        4.4
+      ]
+    },
+    {
+      "clip_id": "fall-15",
+      "kind": "fall",
+      "footage_sec": 2.367,
+      "analysed_sec": 6.367,
+      "sampled_frames": 32,
+      "person_frame_fraction": 0.917,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "fall-16",
+      "kind": "fall",
+      "footage_sec": 1.833,
+      "analysed_sec": 5.833,
+      "sampled_frames": 30,
+      "person_frame_fraction": 0.9,
+      "alert_times": [
+        4.6
+      ]
+    },
+    {
+      "clip_id": "fall-17",
+      "kind": "fall",
+      "footage_sec": 3.167,
+      "analysed_sec": 7.167,
+      "sampled_frames": 36,
+      "person_frame_fraction": 0.875,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "fall-18",
+      "kind": "fall",
+      "footage_sec": 2.167,
+      "analysed_sec": 6.167,
+      "sampled_frames": 31,
+      "person_frame_fraction": 0.818,
+      "alert_times": [
+        4.8,
+        5.4
+      ]
+    },
+    {
+      "clip_id": "fall-19",
+      "kind": "fall",
+      "footage_sec": 3.333,
+      "analysed_sec": 7.333,
+      "sampled_frames": 37,
+      "person_frame_fraction": 0.706,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "fall-20",
+      "kind": "fall",
+      "footage_sec": 3.667,
+      "analysed_sec": 7.667,
+      "sampled_frames": 39,
+      "person_frame_fraction": 0.947,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "fall-21",
+      "kind": "fall",
+      "footage_sec": 1.833,
+      "analysed_sec": 5.833,
+      "sampled_frames": 30,
+      "person_frame_fraction": 0.9,
+      "alert_times": []
+    },
+    {
+      "clip_id": "fall-22",
+      "kind": "fall",
+      "footage_sec": 1.867,
+      "analysed_sec": 5.867,
+      "sampled_frames": 30,
+      "person_frame_fraction": 0.9,
+      "alert_times": [
+        4.0
+      ]
+    },
+    {
+      "clip_id": "fall-23",
+      "kind": "fall",
+      "footage_sec": 2.5,
+      "analysed_sec": 6.5,
+      "sampled_frames": 33,
+      "person_frame_fraction": 0.846,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "fall-24",
+      "kind": "fall",
+      "footage_sec": 2.0,
+      "analysed_sec": 6.0,
+      "sampled_frames": 30,
+      "person_frame_fraction": 0.9,
+      "alert_times": [
+        4.0
+      ]
+    },
+    {
+      "clip_id": "fall-25",
+      "kind": "fall",
+      "footage_sec": 2.833,
+      "analysed_sec": 6.833,
+      "sampled_frames": 35,
+      "person_frame_fraction": 0.733,
+      "alert_times": []
+    },
+    {
+      "clip_id": "fall-26",
+      "kind": "fall",
+      "footage_sec": 2.033,
+      "analysed_sec": 6.033,
+      "sampled_frames": 31,
+      "person_frame_fraction": 0.909,
+      "alert_times": [
+        4.6
+      ]
+    },
+    {
+      "clip_id": "fall-27",
+      "kind": "fall",
+      "footage_sec": 3.067,
+      "analysed_sec": 7.067,
+      "sampled_frames": 36,
+      "person_frame_fraction": 0.75,
+      "alert_times": []
+    },
+    {
+      "clip_id": "fall-28",
+      "kind": "fall",
+      "footage_sec": 2.2,
+      "analysed_sec": 6.2,
+      "sampled_frames": 31,
+      "person_frame_fraction": 0.909,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "fall-29",
+      "kind": "fall",
+      "footage_sec": 3.3,
+      "analysed_sec": 7.3,
+      "sampled_frames": 37,
+      "person_frame_fraction": 0.706,
+      "alert_times": []
+    },
+    {
+      "clip_id": "fall-30",
+      "kind": "fall",
+      "footage_sec": 2.333,
+      "analysed_sec": 6.333,
+      "sampled_frames": 32,
+      "person_frame_fraction": 0.917,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "adl-01",
+      "kind": "adl",
+      "footage_sec": 5.0,
+      "analysed_sec": 9.0,
+      "sampled_frames": 45,
+      "person_frame_fraction": 0.92,
+      "alert_times": [
+        7.4
+      ]
+    },
+    {
+      "clip_id": "adl-02",
+      "kind": "adl",
+      "footage_sec": 6.0,
+      "analysed_sec": 10.0,
+      "sampled_frames": 51,
+      "person_frame_fraction": 0.767,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-03",
+      "kind": "adl",
+      "footage_sec": 6.0,
+      "analysed_sec": 10.0,
+      "sampled_frames": 51,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-04",
+      "kind": "adl",
+      "footage_sec": 5.0,
+      "analysed_sec": 9.0,
+      "sampled_frames": 45,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-05",
+      "kind": "adl",
+      "footage_sec": 6.0,
+      "analysed_sec": 10.0,
+      "sampled_frames": 51,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-06",
+      "kind": "adl",
+      "footage_sec": 7.667,
+      "analysed_sec": 11.667,
+      "sampled_frames": 59,
+      "person_frame_fraction": 0.923,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-07",
+      "kind": "adl",
+      "footage_sec": 6.0,
+      "analysed_sec": 10.0,
+      "sampled_frames": 51,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-08",
+      "kind": "adl",
+      "footage_sec": 6.0,
+      "analysed_sec": 10.0,
+      "sampled_frames": 51,
+      "person_frame_fraction": 0.9,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-09",
+      "kind": "adl",
+      "footage_sec": 5.0,
+      "analysed_sec": 9.0,
+      "sampled_frames": 45,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-10",
+      "kind": "adl",
+      "footage_sec": 10.0,
+      "analysed_sec": 14.0,
+      "sampled_frames": 71,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        10.8
+      ]
+    },
+    {
+      "clip_id": "adl-11",
+      "kind": "adl",
+      "footage_sec": 10.0,
+      "analysed_sec": 14.0,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.94,
+      "alert_times": [
+        13.0
+      ]
+    },
+    {
+      "clip_id": "adl-12",
+      "kind": "adl",
+      "footage_sec": 8.333,
+      "analysed_sec": 12.333,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.786,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-13",
+      "kind": "adl",
+      "footage_sec": 8.833,
+      "analysed_sec": 12.833,
+      "sampled_frames": 65,
+      "person_frame_fraction": 0.733,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-14",
+      "kind": "adl",
+      "footage_sec": 7.833,
+      "analysed_sec": 11.833,
+      "sampled_frames": 60,
+      "person_frame_fraction": 0.725,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-15",
+      "kind": "adl",
+      "footage_sec": 9.167,
+      "analysed_sec": 13.167,
+      "sampled_frames": 66,
+      "person_frame_fraction": 0.739,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-16",
+      "kind": "adl",
+      "footage_sec": 8.0,
+      "analysed_sec": 12.0,
+      "sampled_frames": 61,
+      "person_frame_fraction": 0.35,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-17",
+      "kind": "adl",
+      "footage_sec": 7.667,
+      "analysed_sec": 11.667,
+      "sampled_frames": 59,
+      "person_frame_fraction": 0.692,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-18",
+      "kind": "adl",
+      "footage_sec": 8.833,
+      "analysed_sec": 12.833,
+      "sampled_frames": 65,
+      "person_frame_fraction": 0.578,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-19",
+      "kind": "adl",
+      "footage_sec": 8.333,
+      "analysed_sec": 12.333,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.452,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-20",
+      "kind": "adl",
+      "footage_sec": 9.0,
+      "analysed_sec": 13.0,
+      "sampled_frames": 66,
+      "person_frame_fraction": 0.622,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-21",
+      "kind": "adl",
+      "footage_sec": 9.333,
+      "analysed_sec": 13.333,
+      "sampled_frames": 67,
+      "person_frame_fraction": 0.34,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-22",
+      "kind": "adl",
+      "footage_sec": 8.0,
+      "analysed_sec": 12.0,
+      "sampled_frames": 61,
+      "person_frame_fraction": 0.4,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-23",
+      "kind": "adl",
+      "footage_sec": 7.333,
+      "analysed_sec": 11.333,
+      "sampled_frames": 57,
+      "person_frame_fraction": 0.378,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-24",
+      "kind": "adl",
+      "footage_sec": 2.333,
+      "analysed_sec": 6.333,
+      "sampled_frames": 32,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-25",
+      "kind": "adl",
+      "footage_sec": 3.667,
+      "analysed_sec": 7.667,
+      "sampled_frames": 39,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-26",
+      "kind": "adl",
+      "footage_sec": 3.167,
+      "analysed_sec": 7.167,
+      "sampled_frames": 36,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-27",
+      "kind": "adl",
+      "footage_sec": 3.333,
+      "analysed_sec": 7.333,
+      "sampled_frames": 37,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-28",
+      "kind": "adl",
+      "footage_sec": 2.833,
+      "analysed_sec": 6.833,
+      "sampled_frames": 35,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-29",
+      "kind": "adl",
+      "footage_sec": 4.167,
+      "analysed_sec": 8.167,
+      "sampled_frames": 41,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-30",
+      "kind": "adl",
+      "footage_sec": 13.333,
+      "analysed_sec": 17.333,
+      "sampled_frames": 87,
+      "person_frame_fraction": 0.866,
+      "alert_times": [
+        11.4
+      ]
+    },
+    {
+      "clip_id": "adl-31",
+      "kind": "adl",
+      "footage_sec": 8.333,
+      "analysed_sec": 12.333,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.976,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "adl-32",
+      "kind": "adl",
+      "footage_sec": 6.667,
+      "analysed_sec": 10.667,
+      "sampled_frames": 54,
+      "person_frame_fraction": 0.853,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "adl-33",
+      "kind": "adl",
+      "footage_sec": 6.667,
+      "analysed_sec": 10.667,
+      "sampled_frames": 54,
+      "person_frame_fraction": 0.853,
+      "alert_times": [
+        8.4
+      ]
+    },
+    {
+      "clip_id": "adl-34",
+      "kind": "adl",
+      "footage_sec": 6.367,
+      "analysed_sec": 10.367,
+      "sampled_frames": 52,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "adl-35",
+      "kind": "adl",
+      "footage_sec": 9.333,
+      "analysed_sec": 13.333,
+      "sampled_frames": 67,
+      "person_frame_fraction": 0.979,
+      "alert_times": [
+        4.4
+      ]
+    },
+    {
+      "clip_id": "adl-36",
+      "kind": "adl",
+      "footage_sec": 11.333,
+      "analysed_sec": 15.333,
+      "sampled_frames": 77,
+      "person_frame_fraction": 0.86,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-37",
+      "kind": "adl",
+      "footage_sec": 11.667,
+      "analysed_sec": 15.667,
+      "sampled_frames": 79,
+      "person_frame_fraction": 0.678,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-38",
+      "kind": "adl",
+      "footage_sec": 11.5,
+      "analysed_sec": 15.5,
+      "sampled_frames": 78,
+      "person_frame_fraction": 0.603,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-39",
+      "kind": "adl",
+      "footage_sec": 9.0,
+      "analysed_sec": 13.0,
+      "sampled_frames": 66,
+      "person_frame_fraction": 0.667,
+      "alert_times": []
+    },
+    {
+      "clip_id": "adl-40",
+      "kind": "adl",
+      "footage_sec": 11.0,
+      "analysed_sec": 15.0,
+      "sampled_frames": 76,
+      "person_frame_fraction": 0.727,
+      "alert_times": []
+    }
+  ]
+}

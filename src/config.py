@@ -99,7 +99,9 @@ class Settings(BaseSettings):
     # at ~3x the speed). A GPU deployment should still override to yolo26l.pt via
     # MODEL_WEIGHTS_PATH, as .env.example documents.
     model_weights_path: str = "src/vision/weights/yolo26s.pt"
-    detector_target_labels: str = "person,backpack,handbag,suitcase"
+    # bed/couch are context only: the fall rule's static-lying layer does not report someone
+    # lying on one. Dropping them from the list turns that check off, not the layer.
+    detector_target_labels: str = "person,backpack,handbag,suitcase,bed,couch"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
     # 15 -> 164 ms, 16 -> 333 ms. 14 sits in the 80-150 ms band — real cost to an attacker,
