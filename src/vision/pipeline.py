@@ -9,6 +9,7 @@ import numpy as np
 
 from src.vision.detector import IncidentDetector
 from src.vision.fall_motion import SparseFallMotionAnalyzer
+from src.vision.fall_pose import FallPoseEstimator
 from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.rule_engine import RuleEngine
@@ -45,6 +46,7 @@ class VisionPipeline:
         inference_size: tuple[int, int] | None = None,
         motion_gate: MotionGate | None = None,
         fall_motion_analyzer: SparseFallMotionAnalyzer | None = None,
+        fall_pose_estimator: FallPoseEstimator | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -55,6 +57,8 @@ class VisionPipeline:
         # Stateful — it holds the previous frame — so it must not be shared between streams.
         self.motion_gate = motion_gate or MotionGate(enabled=False)
         self.fall_motion_analyzer = fall_motion_analyzer or SparseFallMotionAnalyzer()
+        # Optional: None (the default) leaves the rule engine's pose gate inactive.
+        self.fall_pose_estimator = fall_pose_estimator
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
@@ -141,6 +145,13 @@ class VisionPipeline:
             stream_time,
         )
 
+        # 3b. Pose, only for tracks whose fall alert is being timed, so it can be held back
+        # when the torso stays upright (kneeling, sitting down, picking something up).
+        fall_pose_evidence = {}
+        if self.fall_pose_estimator is not None and self.fall_pose_estimator.enabled:
+            pose_candidates = self.rule_engine.pose_candidates(persons, camera_id)
+            fall_pose_evidence = self.fall_pose_estimator.measure(frame, persons, pose_candidates)
+
         # 4. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
@@ -150,6 +161,7 @@ class VisionPipeline:
             now=wall_time,
             camera_id=camera_id,
             fall_motion_evidence=fall_motion_evidence,
+            fall_pose_evidence=fall_pose_evidence,
         )
 
         # 5. Annotate zones and incidents for the operator view

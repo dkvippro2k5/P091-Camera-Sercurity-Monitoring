@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # bed/couch are context only: the fall rule's static-lying layer does not report someone
     # lying on one. Dropping them from the list turns that check off, not the layer.
     detector_target_labels: str = "person,backpack,handbag,suitcase,bed,couch"
+    # COCO-keypoint pose model for the fall rule's pose gate, which holds back a fall alert
+    # while the torso stays upright (kneeling, sitting down, picking something up). Not
+    # shipped in the repo; a missing file only logs a warning and leaves the gate off.
+    # Empty turns it off explicitly.
+    fall_pose_weights_path: str = "src/vision/weights/yolo26s-pose.pt"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
     # 15 -> 164 ms, 16 -> 333 ms. 14 sits in the 80-150 ms band — real cost to an attacker,

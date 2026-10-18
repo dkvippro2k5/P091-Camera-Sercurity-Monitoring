@@ -125,6 +125,7 @@ keep `data/vision/test/fall.mp4` and `normal1.mp4` available for the bundled cas
 | `MODEL_WEIGHTS_PATH` | Detector checkpoint visible to the backend | `src/vision/weights/yolo26l.pt` |
 | `MODEL_WEIGHTS_HOST_PATH` | Host checkpoint mounted by Docker Compose | `./src/vision/weights/yolo26l.pt` |
 | `DETECTOR_TARGET_LABELS` | YOLO classes retained by the pipeline (`bed`, `couch` are context for the fall rule) | `person,backpack,handbag,suitcase,bed,couch` |
+| `FALL_POSE_WEIGHTS_PATH` | Pose model that holds back fall alerts while the torso stays upright; missing file or empty turns it off | `src/vision/weights/yolo26s-pose.pt` |
 | `DETECTOR_CONFIDENCE` | Main YOLO acceptance threshold | `0.40` |
 | `CAMERA_TARGET_FPS` | Default analysis rate for new cameras | `5` |
 | `CAMERA_MAX_CONCURRENT_INFERENCES` | Simultaneous camera inference limit; `0` selects a host-aware default | `0` |

@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from src.vision.detector import IncidentDetector
+from src.vision.fall_pose import FallPoseEstimator
 from src.vision.motion import MotionGate
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import RuleEngine
@@ -236,6 +237,7 @@ class MultiStreamManager:
         detector = template.detector
         engine = template.rule_engine
         gate = template.motion_gate
+        pose = template.fall_pose_estimator
 
         def factory() -> VisionPipeline:
             return VisionPipeline(
@@ -268,6 +270,9 @@ class MultiStreamManager:
                     fall_min_descent_speed=engine.fall_min_descent_speed,
                     fall_static_dwell_sec=engine.fall_static_dwell_sec,
                     fall_furniture_overlap=engine.fall_furniture_overlap,
+                    fall_pose_upright_deg=engine.fall_pose_upright_deg,
+                    fall_pose_upright_fraction=engine.fall_pose_upright_fraction,
+                    fall_pose_min_coverage=engine.fall_pose_min_coverage,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,
@@ -287,6 +292,12 @@ class MultiStreamManager:
                     min_changed_fraction=gate.min_changed_fraction,
                     heartbeat_sec=gate.heartbeat_sec,
                     diff_size=gate.diff_size,
+                ),
+                # One model per worker: ultralytics predictors are not safe to share across threads.
+                fall_pose_estimator=(
+                    FallPoseEstimator(pose.model_path, pose.keypoint_conf, pose.min_match_iou)
+                    if pose is not None and pose.enabled
+                    else None
                 ),
             )
 

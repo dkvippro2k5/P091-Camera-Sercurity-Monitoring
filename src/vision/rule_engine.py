@@ -14,6 +14,7 @@ from statistics import median
 from typing import Literal
 
 from src.vision.fall_motion import FallMotionEvidence
+from src.vision.fall_pose import PoseObservation
 from src.vision.schemas import BoundingBox, IncidentDetection, Zone
 from src.vision.zone_config import ZoneManager
 
@@ -141,6 +142,10 @@ class TrackState:
     static_lying_since: float | None = None
     static_break_since: float | None = None
     static_fired: bool = False
+    # Pose gate: (timestamp, torso angle from vertical, whole body visible) while a fall is
+    # being timed, and whether the pending alert is currently held back as upright.
+    pose_samples: list[tuple[float, float | None, bool]] = field(default_factory=list)
+    fall_suppressed_pose: bool = False
     upright_samples: list[tuple[float, float, float, float, float, float]] = field(default_factory=list)
     upright_baseline: UprightBaseline | None = None
     # Abandoned: when the object was last near a person, and where it settled.
@@ -185,6 +190,8 @@ class RuleEngine:
             peak drop speed of the box top, from 0.6 s before arming to 1 s after, stayed
             under this many standing heights per second. 0 (the default) disables the gate;
             the peak is measured and reported in the alert reason either way.
+        fall_pose_upright_deg, fall_pose_upright_fraction, fall_pose_min_coverage: The pose
+            gate; see the comment in __init__. Inactive unless `evaluate` gets pose evidence.
         abandon_sec: Seconds an object must sit unattended before it is abandoned.
         owner_radius_ratio: Owner search radius as a fraction of frame width (PRD's radius R).
         stationary_tolerance_ratio: Movement below this fraction of frame width counts as still.
@@ -247,6 +254,18 @@ class RuleEngine:
         # Fraction of the person's box that must lie inside a bed/couch box for the static
         # layer to treat it as lying there on purpose.
         fall_furniture_overlap: float = 0.5,
+        # Pose gate, applied to both fall layers when pose evidence is supplied: a fall due to
+        # fire is held back while, over the dwell, at least `fall_pose_upright_fraction` of the
+        # frames that show the whole body have the torso within `fall_pose_upright_deg` of
+        # vertical — kneeling, sitting down, picking something up. Frames without the whole
+        # body do not count, and with fewer than `fall_pose_min_coverage` of the sampled frames
+        # usable it never holds an alert back. Benchmark 2026-10-19 (UR Fall / GMDCSA24 /
+        # CAUCAFall): ADL clips alarmed 9->7, 14->11, 14->4 for falls caught 26->26, 62->61,
+        # 36->35. 45 deg / 60% are round figures, not tuned, but chosen after looking at pose
+        # on all three sets, so CAUCAFall is no longer held out for this gate.
+        fall_pose_upright_deg: float = 45.0,
+        fall_pose_upright_fraction: float = 0.6,
+        fall_pose_min_coverage: float = 0.5,
         abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
@@ -277,6 +296,9 @@ class RuleEngine:
         self.fall_min_descent_speed = fall_min_descent_speed
         self.fall_static_dwell_sec = fall_static_dwell_sec
         self.fall_furniture_overlap = fall_furniture_overlap
+        self.fall_pose_upright_deg = fall_pose_upright_deg
+        self.fall_pose_upright_fraction = fall_pose_upright_fraction
+        self.fall_pose_min_coverage = fall_pose_min_coverage
         self.abandon_sec = abandon_sec
         self.owner_radius_ratio = owner_radius_ratio
         self.stationary_tolerance_ratio = stationary_tolerance_ratio
@@ -393,6 +415,31 @@ class RuleEngine:
                 candidates.add(person.track_id)
         return candidates
 
+    def pose_candidates(
+        self,
+        persons: list[IncidentDetection],
+        camera_id: str | None = None,
+    ) -> set[str]:
+        """Tracks whose fall alert is being timed, the only ones the pose gate needs."""
+        candidates: set[str] = set()
+        for person in persons:
+            if not person.track_id:
+                continue
+            state = self._tracks.get(self._track_key(camera_id, person.track_id))
+            if state is None:
+                continue
+            if state.fall_phase in ("descending", "prone", "persistent"):
+                if not state.fall_fired:
+                    candidates.add(person.track_id)
+                continue
+            width = max(1.0, float(person.bbox.xmax - person.bbox.xmin))
+            height = max(1.0, float(person.bbox.ymax - person.bbox.ymin))
+            if not state.static_fired and (
+                state.static_lying_since is not None or width / height >= self.fall_aspect_ratio
+            ):
+                candidates.add(person.track_id)
+        return candidates
+
     @staticmethod
     def _track_key(camera_id: str | None, track_id: str) -> tuple[str | None, str]:
         """Composite key so identical track_ids from different cameras stay separate."""
@@ -407,6 +454,7 @@ class RuleEngine:
         now: datetime,
         camera_id: str | None = None,
         fall_motion_evidence: dict[str, FallMotionEvidence] | None = None,
+        fall_pose_evidence: dict[str, PoseObservation] | None = None,
     ) -> list[IncidentDetection]:
         """Evaluate raw tracked detections and return incident events for this frame.
 
@@ -417,6 +465,8 @@ class RuleEngine:
             timestamp: Monotonic seconds for this frame; drives all dwell timers.
             now: Wall-clock time, used only for zone active-hour checks.
             camera_id: Source camera, stamped onto emitted events.
+            fall_motion_evidence: Optical flow per track, for the fall indicators.
+            fall_pose_evidence: Pose per track in `pose_candidates`, for the pose gate.
 
         Returns:
             Incident events triggered on this frame. Empty when nothing fires.
@@ -438,6 +488,7 @@ class RuleEngine:
                 timestamp,
                 camera_id,
                 fall_motion_evidence or {},
+                fall_pose_evidence or {},
             )
         )
         events.extend(self._check_abandoned(objects, persons, frame_width, timestamp, camera_id))
@@ -1013,6 +1064,7 @@ class RuleEngine:
         state.recovery_candidate_since = None
         state.descent_peak_speed = 0.0
         state.fall_suppressed_slow = False
+        state.fall_suppressed_pose = False
         state.fallen_since = None
         state.fall_fired = False
         state.fall_latched = False
@@ -1243,6 +1295,10 @@ class RuleEngine:
         elapsed = timestamp - state.static_lying_since
         if elapsed < self.fall_static_dwell_sec or state.static_fired:
             return None
+        upright, pose_note = self._pose_upright(state, timestamp)
+        if upright:
+            self._note_pose_suppressed(person, state, pose_note)
+            return None
 
         state.static_fired = True
         return IncidentDetection(
@@ -1254,9 +1310,32 @@ class RuleEngine:
             bbox=person.bbox,
             reason=(
                 f"{person.track_id} lying-shaped (AR {aspect_ratio:.2f}) for {elapsed:.1f}s, off any "
-                f"bed or couch, with no upright->prone transition observed (static layer)"
+                f"bed or couch, with no upright->prone transition observed (static layer){pose_note}"
             ),
         )
+
+    def _pose_upright(self, state: TrackState, timestamp: float) -> tuple[bool, str]:
+        """Whether pose says the person stayed upright over the dwell, plus a note for the reason.
+
+        Fails open: no pose evidence, or too few frames showing the whole body, never holds
+        an alert back.
+        """
+        state.pose_samples = [s for s in state.pose_samples if timestamp - s[0] <= self.fall_dwell_sec + 1e-6]
+        if not state.pose_samples:
+            return False, ""
+        usable = [deg for _, deg, full_body in state.pose_samples if full_body and deg is not None]
+        if not usable or len(usable) < self.fall_pose_min_coverage * len(state.pose_samples):
+            return False, f"; pose: whole body seen in {len(usable)}/{len(state.pose_samples)} frames"
+        upright = sum(1 for deg in usable if deg < self.fall_pose_upright_deg)
+        note = f"; pose: torso median {median(usable):.0f} deg, upright in {upright}/{len(usable)} frames"
+        return upright >= self.fall_pose_upright_fraction * len(usable), note
+
+    @staticmethod
+    def _note_pose_suppressed(person: IncidentDetection, state: TrackState, pose_note: str) -> None:
+        # Re-checked every frame, so someone who kneels and then goes down is still reported.
+        if not state.fall_suppressed_pose:
+            state.fall_suppressed_pose = True
+            logger.debug(f"{person.track_id}: fall held back, torso upright{pose_note}")
 
     def _check_falls(
         self,
@@ -1264,6 +1343,7 @@ class RuleEngine:
         timestamp: float,
         camera_id: str | None,
         motion_evidence: dict[str, FallMotionEvidence],
+        pose_evidence: dict[str, PoseObservation],
     ) -> list[IncidentDetection]:
         """Fire when a suspected fall persists past the dwell threshold.
 
@@ -1277,6 +1357,9 @@ class RuleEngine:
             state = self._tracks.get(self._track_key(camera_id, person.track_id))
             if state is None:
                 continue
+            observation = pose_evidence.get(person.track_id)
+            if observation is not None:
+                state.pose_samples.append((timestamp, observation.torso_deg, observation.full_body))
 
             if not self._evaluate_fall_indicators(
                 person,
@@ -1306,6 +1389,10 @@ class RuleEngine:
                             f"{state.descent_peak_speed:.2f} H/s < {self.fall_min_descent_speed}; not reported"
                         )
                     continue
+                upright, pose_note = self._pose_upright(state, timestamp)
+                if upright:
+                    self._note_pose_suppressed(person, state, pose_note)
+                    continue
                 state.fall_fired = True
                 state.fall_phase = "persistent"
                 events.append(
@@ -1319,7 +1406,7 @@ class RuleEngine:
                         reason=(
                             f"{person.track_id} transitioned upright->prone and stayed down {elapsed:.1f}s "
                             f"(threshold {self.fall_dwell_sec}s), peak descent "
-                            f"{state.descent_peak_speed:.2f} H/s — {state.fall_reason}"
+                            f"{state.descent_peak_speed:.2f} H/s — {state.fall_reason}{pose_note}"
                         ),
                     )
                 )

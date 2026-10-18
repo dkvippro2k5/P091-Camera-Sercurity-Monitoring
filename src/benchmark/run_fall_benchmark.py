@@ -460,6 +460,7 @@ def _build_pipeline():
     from src.config import get_settings
     from src.services.monitoring import _detector_labels
     from src.vision.detector import IncidentDetector
+    from src.vision.fall_pose import FallPoseEstimator
     from src.vision.pipeline import VisionPipeline
     from src.vision.rule_engine import RuleEngine
     from src.vision.zone_config import ZoneManager
@@ -480,6 +481,9 @@ def _build_pipeline():
         ),
         zones_path=None,
         draw_overlays=False,
+        fall_pose_estimator=(
+            FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
+        ),
     )
 
 

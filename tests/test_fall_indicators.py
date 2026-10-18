@@ -14,6 +14,7 @@ from datetime import datetime
 import pytest
 
 from src.vision.fall_motion import FallMotionEvidence
+from src.vision.fall_pose import PoseObservation
 from src.vision.rule_engine import LABEL_FALL, RuleEngine
 from src.vision.schemas import BoundingBox, IncidentDetection
 
@@ -513,7 +514,8 @@ def test_a_bed_seen_once_still_counts_while_its_detection_flickers():
 
 def test_a_crouch_held_past_the_dwell_fires_on_the_static_layer():
     """The known cost of this layer, pinned: a box shape cannot tell a crouch or someone
-    sitting on the floor from a person lying there. Measured on the benchmarks."""
+    sitting on the floor from a person lying there. Measured on the benchmarks. Without pose
+    evidence nothing holds it back; with it, see test_a_crouch_with_an_upright_torso_is_held_back."""
     crouched = box(200, 150, 200)
     assert len(run(RuleEngine(), [(0.0, crouched)] + hold(crouched, 0.0, 3.4))) == 1
 
@@ -566,3 +568,78 @@ def test_a_merged_track_does_not_report_once_the_window_lapses():
     engine = RuleEngine(alert_cooldown_sec=5.0)
     events = _run_tracks(engine, [_lying_at(200, "person_1"), _lying_at(230, "person_2")], 12.0)
     assert len(events) == 1
+
+
+# ---------------------------------------------------------------------------
+# Pose gate: a fall due to fire is held back while the torso stays upright
+# ---------------------------------------------------------------------------
+
+UPRIGHT = PoseObservation(torso_deg=15.0, full_body=True)
+LYING = PoseObservation(torso_deg=85.0, full_body=True)
+
+
+def run_with_pose(
+    engine: RuleEngine,
+    frames: list[tuple[float, IncidentDetection]],
+    pose_at,
+) -> list[IncidentDetection]:
+    """Like run(), but hands the engine `pose_at(timestamp)` for whichever tracks it asks about,
+    the way VisionPipeline only runs pose for `pose_candidates`."""
+    now = datetime.now()
+    events: list[IncidentDetection] = []
+    for timestamp, det in frames:
+        evidence = {track_id: pose_at(timestamp) for track_id in engine.pose_candidates([det])}
+        events.extend(engine.evaluate([det], WIDTH, HEIGHT, timestamp, now, fall_pose_evidence=evidence))
+    return events
+
+
+def _crouch(seconds: float = 3.4) -> list[tuple[float, IncidentDetection]]:
+    crouched = box(200, 150, 200)
+    return [(0.0, crouched)] + hold(crouched, 0.0, seconds)
+
+
+def test_a_crouch_with_an_upright_torso_is_held_back():
+    """The static layer's known cost (see test_a_crouch_held_past_the_dwell_fires_on_the_static_layer),
+    which the pose gate exists for: CAUCAFall kneel, sit-down, pick-up-object."""
+    engine = RuleEngine()
+    assert run_with_pose(engine, _crouch(), lambda _: UPRIGHT) == []
+    assert engine._tracks[(None, "person_1")].fall_suppressed_pose
+
+
+def test_lying_flat_by_pose_still_fires_and_reports_the_torso_angle():
+    events = run_with_pose(RuleEngine(), _crouch(), lambda _: LYING)
+    assert len(events) == 1
+    assert "torso median 85 deg" in events[0].reason
+
+
+def test_the_gate_fails_open_when_the_whole_body_is_not_visible():
+    """GMDCSA24 s1-fall-14 (ankles out of frame) read upright from the torso alone."""
+    cut_off = PoseObservation(torso_deg=10.0, full_body=False)
+    events = run_with_pose(RuleEngine(), _crouch(), lambda _: cut_off)
+    assert len(events) == 1
+    assert "whole body seen in 0/" in events[0].reason
+
+
+def test_the_gate_fails_open_when_pose_finds_nobody():
+    assert len(run_with_pose(RuleEngine(), _crouch(), lambda _: PoseObservation())) == 1
+
+
+def test_a_held_back_transition_fall_fires_once_the_torso_goes_down():
+    """Re-checked every frame: kneeling first and collapsing after is still a fall."""
+    frames = collapse() + hold(flat(), 2 * FRAME_DT, 7.0)
+    events = run_with_pose(RuleEngine(), frames, lambda t: UPRIGHT if t < 3.0 else LYING)
+    assert len(events) == 1
+    # Held back at the dwell (~3.4 s); fires once most of the last 3 s reads lying.
+    assert events[0].timestamp > 4.0
+    assert "upright->prone" in events[0].reason
+
+
+def test_pose_is_only_asked_for_while_a_fall_is_being_timed():
+    engine = RuleEngine()
+    now = datetime.now()
+    engine.evaluate([standing()], WIDTH, HEIGHT, 0.0, now)
+    assert engine.pose_candidates([standing()]) == set()
+    assert engine.pose_candidates([flat()]) == {"person_1"}
+
+    run(engine, hold(flat(), 0.0, 3.4))
+    assert engine.pose_candidates([flat()]) == set()  # fired: nothing left to decide

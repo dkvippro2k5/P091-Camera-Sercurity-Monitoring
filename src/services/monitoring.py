@@ -59,6 +59,7 @@ from src.services.incident_log import IncidentLog
 from src.services.notifications import NotificationWorker, TelegramNotifier, should_notify
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
 from src.vision.detector import IncidentDetector
+from src.vision.fall_pose import FallPoseEstimator
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import FallPerspectiveProfile, RuleEngine
 from src.vision.schemas import FrameAnalysisResult, Zone
@@ -315,6 +316,9 @@ class MonitoringService:
                 stationary_tolerance_ratio=settings.stationary_tolerance_ratio,
             ),
             draw_overlays=True,
+            fall_pose_estimator=(
+                FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
+            ),
         )
         self.manager = MultiStreamManager(
             shared_pipeline=self._pipeline_template,

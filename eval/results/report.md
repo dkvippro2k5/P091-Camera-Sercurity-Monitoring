@@ -25,9 +25,10 @@ Mặc định: 5 fps, giữ frame cuối 4 s. Ngoặc vuông là khoảng tin c�
 | 1a: cố định ByteTrack, detection yếu giữ track | 76.7% (23/30) | 6/40 | 48.7% (38/78) | 11/81 | — | — |
 | 1 đầy đủ: + stitch theo cú ngã, + `recovered` phải giữ 0.6 s | 76.7% (23/30) [59–88%] | 6/40 | 51.3% (40/78) [40–62%] | 11/81 | 46.0% (23/50) [33–60%] | 10/50 |
 | 2: chặn ngã có tốc độ rơi < 0.5 H/s (**tắt mặc định**) | 73.3% (22/30) | 2/40 | 42.3% (33/78) | 4/81 | 24.0% (12/50) [14–37%] | 5/50 |
-| 3: + tầng "nằm kéo dài", + giữ class người, + track đổi class bắt đầu lại (**hiện tại**) | 86.7% (26/30) [70–95%] | 9/40 | 79.5% (62/78) [69–87%] | 14/81 | 72.0% (36/50) [58–83%] | 14/50 |
+| 3: + tầng "nằm kéo dài", + giữ class người, + track đổi class bắt đầu lại | 86.7% (26/30) [70–95%] | 9/40 | 79.5% (62/78) [69–87%] | 14/81 | 72.0% (36/50) [58–83%] | 14/50 |
+| 4: + gộp alert theo sự cố, + tầng pose chặn khi thân thẳng (**hiện tại**) | 86.7% (26/30) [70–95%] | 7/40 | 78.2% (61/78) [68–86%] | 11/81 | 70.0% (35/50) [56–81%] | 4/50 |
 
-Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24,caucafall}-{baseline,step1a-tracker,step1,step2-descent,step3-static}.md`.
+Chi tiết từng clip: `fall-benchmark-{urfall,gmdcsa24,caucafall}-{baseline,step1a-tracker,step1,step2-descent,step3-static,step4-pose}.md`.
 
 ### Nguyên nhân bỏ sót ở baseline (UR Fall, 16/30)
 
@@ -76,14 +77,43 @@ Một người nằm sàn thường là nhiều track cùng lúc (box toàn thâ
 là người), nên mỗi track tự báo: 17 clip có 2–3 alert cho cùng một cú ngã (0.4–7 s cách nhau),
 mỗi alert là một popup và một lần gọi VLM. Alert té ngã giờ được gộp theo sự cố: alert gần một
 alert té ngã khác trên cùng camera trong cửa sổ cooldown (30 s) bị bỏ; người ngã ở chỗ khác vẫn
-được báo. Các số `step3-static` trong bảng được chạy *trước* khi có phần gộp này; kiểm tra lại 12
-clip (10 có alert trùng, 2 không) cho thấy alert đầu tiên giữ nguyên thời điểm và alert trùng mất
-hết. Recall và số clip ADL bị báo không đổi; số lần báo nhầm trên GMDCSA24 dự kiến 16 → 14 (hai
-clip ADL từng bị đếm hai lần) — chưa chạy lại toàn bộ để xác nhận.
+được báo. Các số `step3-static` trong bảng được chạy *trước* khi có phần gộp này; lần chạy đầy đủ
+ở bước 4 có 0 alert trùng trên cả ba bộ (trước đó 3 / 12 / 2).
 
 Trên tập kiểm chứng CAUCAFall recall tăng 46% → 72%. Cái giá: báo nhầm tăng 3–4 clip mỗi bộ, chủ
 yếu là quỳ, ngồi xuống, nhặt đồ (CAUCAFall `kneel` ×2, `sit-down`, `pick-up-object`) — đúng rủi ro
 đã biết của một luật chỉ nhìn hình dạng box. Đây là việc của tầng pose phía sau.
+
+### Bước 4 — tầng pose: chặn alert khi thân người vẫn thẳng
+
+Box chỉ cho biết người "rộng hơn cao"; quỳ, ngồi xuống, nhặt đồ cũng vậy. Thân người thì phân biệt
+được: vai nằm trên hông là đang thẳng. Khi một track đang được đếm giờ chờ báo ngã (cả hai tầng),
+pipeline chạy `yolo26s-pose` trên frame và đo góc đoạn vai–hông so với phương thẳng đứng. Đến lúc
+báo, nếu ≥ 60% số frame trong 3 s trước đó *thấy được cả đầu lẫn mắt cá* có thân nghiêng < 45° thì
+alert bị giữ lại, và được xét lại mỗi frame (quỳ rồi mới gục xuống vẫn được báo). Frame bị khuất
+một phần không được tính; dưới 50% frame dùng được thì không chặn. Tầng này không bao giờ chặn tư
+thế nằm, nên không thay đổi các ca giường. Góc thân đo được ghi vào `reason` của alert.
+
+Ngưỡng 45° / 60% là số tròn, không tối ưu, nhưng được chọn sau khi đã xem số liệu pose của cả ba
+bộ, kể cả CAUCAFall — nên với tầng này CAUCAFall *không còn là tập kiểm chứng độc lập*.
+
+| | UR Fall | GMDCSA24 | CAUCAFall |
+| --- | --- | --- | --- |
+| Clip ADL bị báo | 9 → 7 | 14 → 11 | 14 → 4 |
+| Ngã bắt được | 26 → 26 | 62 → 61 | 36 → 35 |
+| Precision | 74.3% → 78.8% | 79.5% → 84.7% | 72.0% → 89.7% |
+| F1 | 0.80 → 0.82 | 0.80 → 0.81 | 0.72 → 0.79 |
+
+- Bị chặn đúng: ngồi xuống / ngồi dưới sàn (UR Fall `adl-01`, `adl-33`; GMDCSA24 `s2-adl-09/13/19`;
+  CAUCAFall `sit-down` ×2), CAUCAFall `s08-kneel`, cùng 7 ca đi bộ/nhảy ở CAUCAFall mà tầng chuyển trạng thái báo khi box
+  vẫn đứng (rộng/cao ~0.4) — lỗi đó của máy trạng thái vẫn còn, pose chỉ che nó.
+- Mất 2 cú ngã: GMDCSA24 `s1-fall-13` (đầu ngoài khung) và CAUCAFall `s02-fall-sitting` (ngã ngồi
+  bệt, kết thúc ở tư thế ngồi — bị chặn đúng theo thiết kế).
+- Còn lại: CAUCAFall `kneel` ×2, `pick-up-object` ×2 (không đủ frame thấy toàn thân, hoặc thân cúi
+  > 45°). 18 clip báo nhầm còn lại ở UR Fall và GMDCSA24 phần lớn là người nằm thật: ngủ trên giường
+  (tầng chuyển trạng thái chưa kiểm tra giường), hít đất, nằm sàn. Pose không tách được các ca này.
+- Chi phí: một lần pose ~89 ms trên CPU ở 720×480 (detector ~81 ms), chỉ chạy trên frame có track
+  đang chờ báo ngã; thời gian chạy benchmark tăng ~10% trên hai bộ toàn cảnh có ngã.
 
 ### Bước 2 — tốc độ rơi: kết quả âm tính
 
