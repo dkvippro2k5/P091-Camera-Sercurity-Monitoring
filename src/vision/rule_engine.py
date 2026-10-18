@@ -103,6 +103,9 @@ class TrackState:
     fall_transition_since: float | None = None
     prone_candidate_since: float | None = None
     nonprone_since: float | None = None
+    # First frame of an unbroken run that looks like standing back up; see
+    # _evaluate_fall_indicators for why one such frame is not enough.
+    recovery_candidate_since: float | None = None
     upright_samples: list[tuple[float, float, float, float, float, float]] = field(default_factory=list)
     upright_baseline: UprightBaseline | None = None
     # Abandoned: when the object was last near a person, and where it settled.
@@ -528,7 +531,7 @@ class RuleEngine:
 
         best_key: tuple[str | None, str] | None = None
         best_source: Literal["active", "expired"] | None = None
-        best_dist = radius
+        best_dist = math.inf
         sources = (("active", self._tracks), ("expired", self._expired_tracks))
         new_area = max(1, det.bbox.xmax - det.bbox.xmin) * max(1, det.bbox.ymax - det.bbox.ymin)
         for source_name, source in sources:
@@ -549,7 +552,15 @@ class RuleEngine:
                 old_cx = (candidate_state.last_bbox.xmin + candidate_state.last_bbox.xmax) / 2.0
                 old_cy = (candidate_state.last_bbox.ymin + candidate_state.last_bbox.ymax) / 2.0
                 dist = math.hypot(cx - old_cx, cy - old_cy)
-                if dist < best_dist:
+                limit = radius
+                if candidate_state.fall_phase in ("descending", "prone", "persistent"):
+                    # A body going down moves its box centre by up to its own height — a
+                    # standing person's centre is half a body above the floor, a lying
+                    # person's is on it. The width-based radius (~38 px at 320 wide) is far
+                    # smaller than that, so a tracker ID change at impact used to start a
+                    # fresh "upright" track that could never arm, losing the fall entirely.
+                    limit = max(radius, float(candidate_state.last_bbox.ymax - candidate_state.last_bbox.ymin))
+                if dist < limit and dist < best_dist:
                     best_key, best_dist = candidate_key, dist
                     best_source = source_name
 
@@ -875,6 +886,7 @@ class RuleEngine:
         state.fall_transition_since = None
         state.prone_candidate_since = None
         state.nonprone_since = None
+        state.recovery_candidate_since = None
         state.fallen_since = None
         state.fall_fired = False
         state.fall_latched = False
@@ -941,9 +953,22 @@ class RuleEngine:
                 self._record_upright_baseline(person, state, timestamp)
             return False
 
-        if state.fall_phase != "upright" and self._is_recovery_transition(person, state):
-            self._clear_fall_transition(state, phase="recovered")
-            return False
+        if state.fall_phase != "upright":
+            # Recovery must hold, not just appear. The indicators arm on the first frame of a
+            # descent, while the box is still tall and narrow — so the very next frame used to
+            # pass this check and latch "recovered" mid-fall. "Recovered" only clears on a calm
+            # upright frame, which a fall in progress never produces, so the real landing a
+            # moment later could not re-arm (UR Fall fall-01).
+            if self._is_recovery_transition(person, state):
+                if state.recovery_candidate_since is None:
+                    state.recovery_candidate_since = timestamp
+                # Epsilon: frame timestamps are float multiples of 1/fps, so three 0.2 s steps
+                # come to 0.5999... and would otherwise need a fourth frame.
+                if timestamp - state.recovery_candidate_since >= profile.persistence_grace_sec - 1e-6:
+                    self._clear_fall_transition(state, phase="recovered")
+                    return False
+            else:
+                state.recovery_candidate_since = None
 
         if state.fall_phase == "upright":
             if upright:

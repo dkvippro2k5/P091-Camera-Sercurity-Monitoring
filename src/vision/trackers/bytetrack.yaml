@@ -1,0 +1,20 @@
+# ByteTrack config for IncidentDetector, pinned in the repo on purpose.
+#
+# Calling `model.track()` without `tracker=` uses whatever ultralytics ships as its default,
+# and that changed underneath us: 8.4.143 defaults to TrackTrack (new_track_thresh 0.7,
+# track_high_thresh 0.6). A person lying on the floor scores ~0.3-0.6, so under those
+# thresholds they could neither start a new track nor re-attach to the lost one, and the fall
+# rule never saw them land (UR Fall benchmark, 2026-10-18). Pinning the file makes tracking
+# behaviour part of this repo rather than of the installed library version.
+#
+# Values are ByteTrack's published defaults (ultralytics cfg/trackers/bytetrack.yaml), not
+# tuned against any benchmark. IncidentDetector feeds detections down to track_low_thresh
+# into the tracker and applies DETECTOR_CONFIDENCE itself, to new tracks only.
+
+tracker_type: bytetrack
+track_high_thresh: 0.25 # first-stage association
+track_low_thresh: 0.1 # second-stage association: keeps a track alive through weak detections
+new_track_thresh: 0.25 # IncidentDetector still requires DETECTOR_CONFIDENCE before reporting one
+track_buffer: 30 # frames a lost track is kept for re-association
+match_thresh: 0.8
+fuse_score: True

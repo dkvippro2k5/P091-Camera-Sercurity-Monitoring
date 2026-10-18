@@ -28,6 +28,14 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Settings is bypassed entirely, which is exactly what construction-only tests do.
 DEFAULT_WEIGHTS_PATH = os.path.join("src", "vision", "weights", "yolo26s.pt")
 
+# Pinned tracker config; see the file's header for why the library default is not used.
+DEFAULT_TRACKER_CONFIG = os.path.join("src", "vision", "trackers", "bytetrack.yaml")
+
+# A track not seen for this many calls is forgotten by the established-track filter. Well
+# past the tracker's own track_buffer, so a track the tracker can still revive is never
+# forgotten here first.
+_ESTABLISHED_TRACK_TTL_CALLS = 300
+
 
 class IncidentDetector:
     """Object detector feeding the rule engine.
@@ -39,6 +47,13 @@ class IncidentDetector:
 
     A model_path of None means no model is loaded and detect() always returns [] —
     useful for tests that only exercise the rule layer.
+
+    With tracking on, `conf_threshold` gates *new* objects only. Detections down to the
+    tracker's `track_low_thresh` are fed to the tracker, and a track that has once scored at
+    or above `conf_threshold` keeps being reported while weaker detections sustain it. That is
+    ByteTrack's whole design, and it matters most at the moment this system cares about: a
+    person lying on the floor often scores 0.3-0.6, and filtering them out before tracking
+    broke the track at impact, so the fall rule never saw anyone land.
     """
 
     def __init__(
@@ -47,13 +62,22 @@ class IncidentDetector:
         conf_threshold: float = 0.5,
         target_labels: list[str] | None = None,
         use_tracking: bool = True,
+        tracker_config: str = DEFAULT_TRACKER_CONFIG,
     ):
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         # None keeps every class the model emits; a list filters to those classes.
         self.target_labels = target_labels
         self.use_tracking = use_tracking
+        self.tracker_config = tracker_config
         self.model = None
+        # Confidence passed to model.track(): the tracker's low threshold, so its second
+        # association stage actually receives the weak detections it exists to use.
+        self._track_feed_conf = conf_threshold
+        # track_id -> call index it was last reported at, for tracks that have cleared
+        # conf_threshold at least once.
+        self._established: dict[str, int] = {}
+        self._calls = 0
 
         self._initialize_model()
 
@@ -73,9 +97,20 @@ class IncidentDetector:
         self.model = YOLO(resolved)
         logger.info(f"Successfully loaded YOLO model from {resolved}")
 
+        if self.use_tracking:
+            tracker_path = self._resolve_weights(self.tracker_config)
+            if tracker_path is None:
+                raise FileNotFoundError(f"Tracker config not found at '{self.tracker_config}'.")
+            self.tracker_config = tracker_path
+            import yaml  # type: ignore  # ultralytics dependency
+
+            with open(tracker_path, encoding="utf-8") as handle:
+                low = float(yaml.safe_load(handle).get("track_low_thresh", self.conf_threshold))
+            self._track_feed_conf = min(low, self.conf_threshold)
+
     @staticmethod
     def _resolve_weights(model_path: str | None) -> str | None:
-        """Find the weights file, tolerating a CWD that is not the project root."""
+        """Find a repo-relative file (weights, tracker config), tolerating any CWD."""
         if not model_path:
             return None
         if os.path.isabs(model_path):
@@ -116,10 +151,17 @@ class IncidentDetector:
             # persist=True carries the tracker's state between calls, which is what makes
             # box.id stable. Without it every frame restarts numbering and the temporal
             # rules can never accumulate history.
-            results = self.model.track(frame, conf=self.conf_threshold, persist=True, verbose=False)
+            results = self.model.track(
+                frame,
+                conf=self._track_feed_conf,
+                persist=True,
+                tracker=self.tracker_config,
+                verbose=False,
+            )
         else:
             results = self.model(frame, conf=self.conf_threshold, verbose=False)
 
+        self._calls += 1
         detections: list[IncidentDetection] = []
         current_time = round(time.time(), 2)
 
@@ -140,6 +182,9 @@ class IncidentDetector:
                 if getattr(box, "id", None) is not None:
                     track_id = f"track_{int(box.id[0].cpu().numpy())}"
 
+                if not self._passes_confidence(track_id, conf):
+                    continue
+
                 detections.append(
                     IncidentDetection(
                         label=label_name,
@@ -156,4 +201,21 @@ class IncidentDetector:
                     )
                 )
 
+        self._forget_stale_tracks()
         return detections
+
+    def _passes_confidence(self, track_id: str | None, conf: float) -> bool:
+        """New objects need conf_threshold; an established track may continue below it."""
+        if conf >= self.conf_threshold:
+            if track_id is not None:
+                self._established[track_id] = self._calls
+            return True
+        if track_id is not None and track_id in self._established:
+            self._established[track_id] = self._calls
+            return True
+        return False
+
+    def _forget_stale_tracks(self) -> None:
+        stale = [tid for tid, seen in self._established.items() if self._calls - seen > _ESTABLISHED_TRACK_TTL_CALLS]
+        for tid in stale:
+            del self._established[tid]

@@ -167,14 +167,15 @@ def test_fall_fires_after_dwell_and_resets_when_upright():
     assert events[0].label == "fall_detection"
     assert events[0].track_id == "person_2"
 
-    # Stands back up -> suspicion cleared; a later collapse arms and fires on its own.
-    assert step(5.0, standing) == []
-    assert step(5.2, standing) == []
-    assert step(5.4, collapsed) == []
+    # Stands back up and stays up (recovery must hold 0.6s) -> suspicion cleared; a later
+    # collapse arms and fires on its own.
+    for t in (5.0, 5.2, 5.4, 5.6, 5.8):
+        assert step(t, standing) == []
+    assert step(6.0, collapsed) == []
 
     events = []
-    for i in range(1, 17):  # t = 5.6 .. 8.6
-        events.extend(step(5.4 + i * 0.2, collapsed))
+    for i in range(1, 17):  # t = 6.2 .. 9.2
+        events.extend(step(6.0 + i * 0.2, collapsed))
     assert len(events) == 1
 
 
@@ -425,6 +426,44 @@ def test_fall_dwell_survives_track_id_change():
     state = engine._tracks[("cam_test", "person_20")]
     assert state.aliased_from == "person_10"
     assert state.fallen_since == pytest.approx(0.4)
+
+
+def test_id_change_at_impact_stitches_even_when_the_centre_drops_past_the_width_radius():
+    """The tracker often issues a new ID as the person lands; the box centre drops ~half a body.
+
+    The width-based radius is 0.12 * 640 = 77 px. Here the centre moves 91 px between the
+    last mid-fall box and the first lying box, so without the fall-aware radius the lying
+    person started a fresh "upright" track that could never arm (UR Fall benchmark).
+    """
+    engine = make_engine(fall_dwell_sec=3.0, track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    standing = make_det("person", "person_10", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    going_down = make_det("person", "person_10", cx=0.5, cy=0.65, bw=0.2, bh=0.2)
+    lying_new_id = make_det("person", "person_20", cx=0.5, cy=0.84, bw=0.3, bh=0.09)
+
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.2, now, "cam_test")
+    engine.evaluate([going_down], WIDTH, HEIGHT, 0.4, now, "cam_test")
+    assert engine._tracks[("cam_test", "person_10")].fall_phase in ("descending", "prone")
+
+    engine.evaluate([lying_new_id], WIDTH, HEIGHT, 0.6, now, "cam_test")
+
+    state = engine._tracks[("cam_test", "person_20")]
+    assert state.aliased_from == "person_10"
+    assert state.fall_phase != "upright"
+
+
+def test_an_upright_track_keeps_the_narrow_stitch_radius():
+    """The fall-aware radius must not let a walking person's state jump to someone else."""
+    engine = make_engine(track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    standing = make_det("person", "person_10", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    elsewhere = make_det("person", "person_20", cx=0.5, cy=0.69, bw=0.08, bh=0.35)  # 91 px away
+
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([elsewhere], WIDTH, HEIGHT, 0.2, now, "cam_test")
+
+    assert engine._tracks[("cam_test", "person_20")].aliased_from is None
 
 
 def test_persistent_fall_does_not_refire_after_track_id_change():

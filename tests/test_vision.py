@@ -58,6 +58,35 @@ def test_detector_with_no_model_returns_nothing():
     assert detector.detect(dummy_frame) == []
 
 
+def test_confidence_gates_new_tracks_but_lets_an_established_track_continue():
+    """A person lying on the floor scores below DETECTOR_CONFIDENCE; their track must survive.
+
+    Before this, detections below the threshold were dropped before tracking, so the track
+    broke at the moment of impact and the fall rule never saw the person land.
+    """
+    detector = IncidentDetector(model_path=None, conf_threshold=0.4)
+
+    assert not detector._passes_confidence("track_7", 0.3)  # weak and never established
+    assert not detector._passes_confidence(None, 0.3)  # weak and untracked
+    assert detector._passes_confidence("track_7", 0.8)  # clears the gate -> established
+    assert detector._passes_confidence("track_7", 0.3)  # same track, now lying, still reported
+    assert not detector._passes_confidence("track_8", 0.3)
+
+
+def test_the_pinned_tracker_config_ships_with_the_repo():
+    """Unpinned, model.track() follows the installed ultralytics default (TrackTrack in 8.4.143)."""
+    import yaml
+
+    from src.vision.detector import DEFAULT_TRACKER_CONFIG
+
+    path = IncidentDetector._resolve_weights(DEFAULT_TRACKER_CONFIG)
+    assert path is not None
+    with open(path, encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    assert config["tracker_type"] == "bytetrack"
+    assert config["track_low_thresh"] < 0.4
+
+
 def test_vision_pipeline_frame_process():
     pipeline = VisionPipeline()
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)

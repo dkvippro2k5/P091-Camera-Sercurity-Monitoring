@@ -281,10 +281,36 @@ def test_fall_state_progresses_and_rearms_only_after_recovery():
     engine.evaluate([flat()], WIDTH, HEIGHT, 6 * FRAME_DT, now)
     assert state.fall_phase == "persistent"
 
-    engine.evaluate([standing()], WIDTH, HEIGHT, 5 * FRAME_DT, now)
+    # One upright-looking frame is not a recovery: it must hold for persistence_grace_sec.
+    engine.evaluate([standing()], WIDTH, HEIGHT, 7 * FRAME_DT, now)
+    assert state.fall_phase == "persistent"
+    for step in (8, 9, 10):
+        engine.evaluate([standing()], WIDTH, HEIGHT, step * FRAME_DT, now)
     assert state.fall_phase == "recovered"
-    engine.evaluate([standing()], WIDTH, HEIGHT, 6 * FRAME_DT, now)
+    engine.evaluate([standing()], WIDTH, HEIGHT, 11 * FRAME_DT, now)
     assert state.fall_phase == "upright"
+
+
+def test_one_upright_looking_frame_mid_descent_does_not_latch_recovered():
+    """UR Fall fall-01: the indicators arm as the person starts to pitch forward, while the
+    box is still tall and narrow. That next frame used to read as "stood back up", latching
+    "recovered", and the real landing a moment later could never re-arm."""
+    engine = RuleEngine(fall_dwell_sec=0.4)
+    now = datetime.now()
+
+    engine.evaluate([standing()], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([standing()], WIDTH, HEIGHT, FRAME_DT, now)
+    engine.evaluate([flat()], WIDTH, HEIGHT, 2 * FRAME_DT, now)
+    state = engine._tracks[(None, "person_1")]
+    assert state.fall_phase != "upright"
+
+    engine.evaluate([standing()], WIDTH, HEIGHT, 3 * FRAME_DT, now)  # one tall frame mid-fall
+    assert state.fall_phase != "recovered"
+
+    events = []
+    for step in range(4, 12):
+        events += engine.evaluate([flat()], WIDTH, HEIGHT, step * FRAME_DT, now)
+    assert len(events) == 1
 
 
 def test_the_ambiguous_aspect_band_holds_the_timer_instead_of_flapping():
