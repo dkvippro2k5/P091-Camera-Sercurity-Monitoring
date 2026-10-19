@@ -1,0 +1,313 @@
+{
+  "label": "baseline",
+  "run_at": "2026-10-19T05:53:13.302311+00:00",
+  "elapsed_sec": 748.7,
+  "config": {
+    "dataset": "ABODA, 11 clips, own labels",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "scores": {
+    "clips": 11,
+    "footage_min": 20.94,
+    "abandonments": 11,
+    "detected": 4,
+    "false_alarms": 6,
+    "duplicate_alerts": 0,
+    "recall": 0.36363636363636365,
+    "recall_ci95": [
+      0.15166223614131383,
+      0.6462032231083628
+    ],
+    "precision": 0.4,
+    "precision_ci95": [
+      0.16817758120350967,
+      0.6873304525498135
+    ],
+    "f1": 0.380952380952381,
+    "false_alarms_per_hour": 17.19463209059661,
+    "latency_median_sec": 3.52,
+    "latency_max_sec": 7.72,
+    "outcomes": [
+      {
+        "clip_id": "video1",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          7.72
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video2",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video3",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video4",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video5",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video6",
+        "abandonments": 2,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video7",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [
+          2.73
+        ],
+        "false_alarm_details": [
+          "128.6s unlabelled (backpack)"
+        ]
+      },
+      {
+        "clip_id": "video8",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [
+          -0.48
+        ],
+        "false_alarm_details": [
+          "10.8s unlabelled (backpack)"
+        ]
+      },
+      {
+        "clip_id": "video9",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 2,
+        "latencies_sec": [],
+        "false_alarm_details": [
+          "18.0s unlabelled (backpack)",
+          "45.8s unlabelled (backpack)"
+        ]
+      },
+      {
+        "clip_id": "video10",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [
+          3.52
+        ],
+        "false_alarm_details": [
+          "46.4s unlabelled (backpack)"
+        ]
+      },
+      {
+        "clip_id": "video11",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [],
+        "false_alarm_details": [
+          "62.2s unlabelled (handbag)"
+        ]
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "video1",
+      "footage_sec": 73.04,
+      "sampled_frames": 366,
+      "alerts": [
+        {
+          "time_sec": 56.223,
+          "center": [
+            159.0,
+            350.5
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "video2",
+      "footage_sec": 94.027,
+      "sampled_frames": 470,
+      "alerts": []
+    },
+    {
+      "clip_id": "video3",
+      "footage_sec": 87.02,
+      "sampled_frames": 435,
+      "alerts": []
+    },
+    {
+      "clip_id": "video4",
+      "footage_sec": 39.006,
+      "sampled_frames": 195,
+      "alerts": []
+    },
+    {
+      "clip_id": "video5",
+      "footage_sec": 110.01,
+      "sampled_frames": 550,
+      "alerts": []
+    },
+    {
+      "clip_id": "video6",
+      "footage_sec": 225.025,
+      "sampled_frames": 1125,
+      "alerts": []
+    },
+    {
+      "clip_id": "video7",
+      "footage_sec": 160.194,
+      "sampled_frames": 801,
+      "alerts": [
+        {
+          "time_sec": 128.629,
+          "center": [
+            354.0,
+            55.0
+          ],
+          "label": "backpack"
+        },
+        {
+          "time_sec": 131.231,
+          "center": [
+            159.0,
+            112.0
+          ],
+          "label": "backpack"
+        }
+      ]
+    },
+    {
+      "clip_id": "video8",
+      "footage_sec": 159.526,
+      "sampled_frames": 798,
+      "alerts": [
+        {
+          "time_sec": 10.811,
+          "center": [
+            354.0,
+            54.5
+          ],
+          "label": "backpack"
+        },
+        {
+          "time_sec": 123.023,
+          "center": [
+            195.5,
+            226.0
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "video9",
+      "footage_sec": 82.916,
+      "sampled_frames": 415,
+      "alerts": [
+        {
+          "time_sec": 18.018,
+          "center": [
+            354.0,
+            55.0
+          ],
+          "label": "backpack"
+        },
+        {
+          "time_sec": 45.812,
+          "center": [
+            354.0,
+            55.0
+          ],
+          "label": "backpack"
+        }
+      ]
+    },
+    {
+      "clip_id": "video10",
+      "footage_sec": 75.409,
+      "sampled_frames": 377,
+      "alerts": [
+        {
+          "time_sec": 46.413,
+          "center": [
+            354.0,
+            54.5
+          ],
+          "label": "backpack"
+        },
+        {
+          "time_sec": 50.017,
+          "center": [
+            208.0,
+            215.5
+          ],
+          "label": "handbag"
+        }
+      ]
+    },
+    {
+      "clip_id": "video11",
+      "footage_sec": 150.033,
+      "sampled_frames": 751,
+      "alerts": [
+        {
+          "time_sec": 62.2,
+          "center": [
+            179.5,
+            289.0
+          ],
+          "label": "handbag"
+        }
+      ]
+    }
+  ]
+}
