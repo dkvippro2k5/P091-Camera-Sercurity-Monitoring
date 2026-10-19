@@ -106,6 +106,182 @@ def test_source_resolution_rejects_path_traversal():
     assert MonitoringService.resolve_source("rtsp", "rtsp://cam/1") == "rtsp://cam/1"
 
 
+def test_file_sources_do_not_loop_by_default():
+    payload = CameraCreate(name="Clip", source_type="upload", source="clip.mp4")
+    assert payload.loop_source is False
+
+
+def test_replay_replaces_an_ended_worker_without_removing_the_camera(service, monkeypatch):
+    """Replay keeps the configured tile/id and starts a fresh finite-source worker."""
+    camera = monitoring_module.CameraInfo(
+        id="cam_clip",
+        name="Clip",
+        source_type="upload",
+        source="clip.mp4",
+        resolved_source="data/uploads/clip.mp4",
+        intrusion_enabled=False,
+        active_labels=["fall_detection", "abandoned_object"],
+        target_fps=12.0,
+    )
+    service._cameras[camera.id] = camera
+    monkeypatch.setattr(
+        service.manager,
+        "get_status",
+        lambda: {"cameras": [{"camera_id": camera.id, "running": False, "stopped_reason": "end_of_source"}]},
+    )
+
+    class Worker:
+        def __init__(self):
+            self.started = False
+            self.pipeline = type("Pipeline", (), {})()
+
+        def start(self):
+            self.started = True
+
+    worker = Worker()
+    calls = []
+
+    def add_camera(**kwargs):
+        calls.append(kwargs)
+        return worker
+
+    monkeypatch.setattr(service.manager, "add_camera", add_camera)
+    replayed = service.replay_camera(camera.id)
+
+    assert replayed is camera
+    assert service.get_camera(camera.id) is camera
+    assert worker.started is True
+    assert calls == [{
+        "camera_id": camera.id,
+        "rtsp_url": camera.resolved_source,
+        "target_fps": 12.0,
+        "autostart": False,
+        "loop_finite_sources": False,
+    }]
+    assert camera.running is True
+    assert camera.stopped_reason is None
+
+
+# ------------------------------------------------------------------ deferred start
+class _FakeWorker:
+    def __init__(self):
+        self.started = False
+        self.pipeline = type("Pipeline", (), {})()
+
+    def start(self):
+        self.started = True
+
+
+def _stub_worker(service, monkeypatch) -> _FakeWorker:
+    """Replace the real worker factory, so nothing opens a video or a socket."""
+    worker = _FakeWorker()
+    monkeypatch.setattr(service.manager, "add_camera", lambda **_: worker)
+    monkeypatch.setattr(
+        service.manager,
+        "start_camera",
+        lambda camera_id: (worker.start(), True)[1],
+    )
+    return worker
+
+
+def test_a_file_source_waits_for_its_first_viewer(service, monkeypatch, tmp_path):
+    """The uploaded clip must not play to an empty room.
+
+    `add_camera` returns in ~15ms while the worker decodes at the file's own frame rate, so
+    anything started here is already seconds in by the time the browser has re-rendered onto
+    the grid and finished the video socket's handshake. Those seconds are not buffered — the
+    operator who just uploaded a clip would watch it from the middle.
+    """
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"not really a video, never opened")
+    monkeypatch.setattr(service, "resolve_source", lambda source_type, source: str(clip))
+    worker = _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(CameraCreate(name="Clip", source_type="upload", source=str(clip)))
+
+    assert worker.started is False, "the file began decoding before anyone could watch it"
+    assert info.id in service._awaiting_viewer
+
+    # The first viewer attaching is what starts it.
+    assert service.start_if_awaiting_viewer(info.id) is True
+    assert worker.started is True
+    # And a second viewer must not restart it, nor claim to have started anything.
+    assert service.start_if_awaiting_viewer(info.id) is False
+
+
+def test_an_rtsp_camera_starts_immediately(service, monkeypatch):
+    """A live camera exists to be monitored whether or not anyone has the grid open.
+
+    Deferring RTSP would mean no alerts fire on an unattended wall display, which inverts
+    what the product is for. Only a finite file — whose beginning is reproducible and whose
+    purpose here is to be watched — waits.
+    """
+    worker = _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(
+        CameraCreate(name="Live", source_type="rtsp", source="rtsp://example/stream")
+    )
+
+    assert worker.started is True
+    assert info.id not in service._awaiting_viewer
+    # Nothing to start later, so the viewer hook is a no-op.
+    assert service.start_if_awaiting_viewer(info.id) is False
+
+
+def test_removing_a_never_watched_camera_clears_the_pending_flag(service, monkeypatch, tmp_path):
+    """Otherwise a later camera reusing that id would refuse to start on its first viewer."""
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    monkeypatch.setattr(service, "resolve_source", lambda source_type, source: str(clip))
+    _stub_worker(service, monkeypatch)
+
+    info = service.add_camera(CameraCreate(name="Clip", source_type="upload", source=str(clip)))
+    assert info.id in service._awaiting_viewer
+
+    service.remove_camera(info.id)
+    assert info.id not in service._awaiting_viewer
+
+
+# ------------------------------------------------------------------ config wiring
+def test_abandon_sec_setting_reaches_the_rule_engine(monkeypatch, isolated_data):
+    """`abandon_sec` is deliberately not a RuleEngine default (that module is test-pinned).
+    It travels config -> template engine, and stream_manager copies it to each worker."""
+    from src.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "src.services.monitoring.get_settings",
+        lambda: Settings(abandon_sec=45.0, owner_radius_ratio=0.3),
+    )
+
+    instance = MonitoringService()
+    try:
+        engine = instance._pipeline_template.rule_engine
+        assert engine.abandon_sec == 45.0
+        assert engine.owner_radius_ratio == 0.3
+    finally:
+        instance.shutdown()
+        get_settings.cache_clear()
+
+
+def test_auto_suppress_confidence_is_served_in_status(monkeypatch, isolated_data):
+    """The frontend reads this from monitoring/status instead of hardcoding the threshold."""
+    from src.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "src.services.monitoring.get_settings",
+        lambda: Settings(vlm_auto_suppress_confidence=0.97),
+    )
+
+    instance = MonitoringService()
+    try:
+        assert instance.status().auto_suppress_confidence == 0.97
+    finally:
+        instance.shutdown()
+        get_settings.cache_clear()
+
+
 # ------------------------------------------------------------------ alerts
 def test_alert_carries_the_frame_and_the_rule_reason(service):
     """An event must publish immediately, carrying its own evidence.
@@ -124,7 +300,9 @@ def test_alert_carries_the_frame_and_the_rule_reason(service):
     alerts = service.list_alerts()
     assert len(alerts) == 1
     assert alerts[0].label == "fall_detection"
-    assert alerts[0].image_data_url.startswith("data:image/jpeg;base64,")
+    # A URL, not the image: the frame is stored and referenced so it never rides along in the
+    # SSE payload. Present on the very first alert because `_emit_alert` stores it inline.
+    assert alerts[0].evidence_url == f"/api/v1/evidence/{alerts[0].id}"
     assert alerts[0].reason == "person_3 collapsed for 3.1s"
 
 
@@ -145,6 +323,80 @@ def test_alert_ring_buffer_is_bounded(service):
     assert len(service.list_alerts()) == monitoring_module._MAX_ALERTS
 
 
+# ------------------------------------------------------------------ incident history
+def _judge(service, alert_id: str, verdict: str, judged_by: str = "gwen") -> None:
+    service.record_operator_verdict(alert_id, verdict, judged_by=judged_by)
+
+
+def test_history_reads_the_durable_log_not_the_ring_buffer(service):
+    """The property the whole endpoint exists for.
+
+    `list_alerts` is a capped in-memory buffer; the history screen must not be built on it or
+    it would show only this process's tail and call it history. Firing past the cap and then
+    asserting the history is *larger* than the buffer is what tells the two apart — if this
+    ever starts matching `_MAX_ALERTS`, the source has silently reverted.
+    """
+    for _ in range(monitoring_module._MAX_ALERTS + 10):
+        service._emit_alert(camera_id="cam_1", label="intrusion", confidence=0.5, frame=_frame())
+
+    assert len(service.list_alerts()) == monitoring_module._MAX_ALERTS
+    assert service.incident_history(limit=1)["total"] == monitoring_module._MAX_ALERTS + 10
+
+
+def test_history_is_newest_first_and_paginates(service):
+    """Read from the top, and bounded — this list grows without limit on a 24/7 system."""
+    for index in range(5):
+        service._emit_alert(camera_id=f"cam_{index}", label="intrusion", confidence=0.5, frame=_frame())
+
+    page = service.incident_history(limit=2)
+    assert page["total"] == 5
+    assert len(page["items"]) == 2
+    # The log stores oldest-first; the screen reads newest-first.
+    assert page["items"][0]["camera_id"] == "cam_4"
+
+    second = service.incident_history(limit=2, offset=2)
+    assert [row["camera_id"] for row in second["items"]] == ["cam_2", "cam_1"]
+    # Pages do not overlap, which an off-by-one in the slice would break silently.
+    assert {row["alert_id"] for row in page["items"]}.isdisjoint({row["alert_id"] for row in second["items"]})
+
+
+def test_history_filters_including_the_absence_of_a_verdict(service):
+    """`unreviewed` is the question a manager actually opens this screen to ask.
+
+    It cannot be expressed by filtering on a stored value, because "nobody has looked at
+    this" is the *absence* of one — so it gets its own branch, and this is what pins it.
+    """
+    service._emit_alert(camera_id="cam_a", label="fall_detection", confidence=0.9, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+    judged = service.list_alerts()[0]
+    _judge(service, judged.id, "real")
+
+    assert service.incident_history(camera_id="cam_b")["total"] == 2
+    assert service.incident_history(label="fall_detection")["total"] == 1
+    assert service.incident_history(verdict="real")["total"] == 1
+    assert service.incident_history(verdict="unreviewed")["total"] == 2
+    # The judged row carries its attribution through the fold, which is what makes the
+    # history auditable rather than just a list of things that happened.
+    reviewed = service.incident_history(verdict="real")["items"][0]
+    assert reviewed["judged_by"] == "gwen"
+
+
+def test_history_filter_options_survive_being_filtered(service):
+    """The dropdowns are built from the whole log, not the filtered page.
+
+    Derived from the filtered rows instead, every option would vanish the moment it was
+    chosen and the operator could never widen the filter again without reloading.
+    """
+    service._emit_alert(camera_id="cam_a", label="fall_detection", confidence=0.9, frame=_frame())
+    service._emit_alert(camera_id="cam_b", label="intrusion", confidence=0.5, frame=_frame())
+
+    narrowed = service.incident_history(label="intrusion")
+    assert narrowed["total"] == 1
+    assert narrowed["labels"] == ["fall_detection", "intrusion"]
+    assert len(narrowed["cameras"]) == 2
+
+
 def test_frame_is_downscaled_before_upload():
     """A 1080p JPEG is ~10x the bytes of a 640px one, and the grid renders neither at size."""
     import cv2
@@ -162,10 +414,14 @@ def test_frame_is_downscaled_before_upload():
 # ------------------------------------------------------------------ routes
 # Every route below is behind auth now, so these use the signed-in fixtures from
 # `conftest.py` rather than a bare TestClient. Which fixture a test takes is itself an
-# assertion: every route in this file is the guard's — the live grid, the alerts, and camera
-# setup — so `guard_client` throughout, and `manager_client` appearing here would mean the
-# split had drifted. The manager's only surface is `/statistics`, tested in `test_auth.py`
-# alongside the 401/403 boundary itself.
+# assertion: every route in this file is the guard's — the live grid, the live alert buffer,
+# and camera setup — so `guard_client` throughout, and `manager_client` appearing here would
+# mean the split had drifted.
+#
+# The manager's surface is `/statistics` plus the read-only history routes (`/incidents`,
+# `/evidence`, `/similar`), which sit on the shared operator gate. All of it is tested in
+# `test_auth.py` alongside the 401/403 boundary itself, so that the read-versus-act line is
+# asserted in one place rather than inferred from which fixture each test happened to take.
 def test_health_and_demo_videos(guard_client):
     # /health stays public — it is the Docker healthcheck, which carries no cookie.
     assert guard_client.get("/health").json()["status"] == "ok"

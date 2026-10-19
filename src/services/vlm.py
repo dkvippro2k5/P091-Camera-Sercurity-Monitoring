@@ -61,30 +61,29 @@ def _mentions_controlled_activity(texts: list[str]) -> bool:
 
 # Ordered oldest-first and labelled in the prompt, because "did they fall or stand up" is
 # answerable only from the sequence. A single frame cannot separate a fall from lying down.
-_SYSTEM_PROMPT = """You review automated alerts from a residential security camera system.
+_SYSTEM_PROMPT = """Bạn là hệ thống phân tích cảnh báo camera an ninh cho nhân viên bảo vệ.
 
-A cheap motion/geometry rule has already fired on a video clip and produced measured evidence.
-Your job is to judge whether the alert describes a REAL incident of the stated type, or a false
-positive the rule could not rule out on its own.
+Một bộ luật chuyển động/hình học đã phát hiện sự kiện trong đoạn video và cung cấp bằng chứng đo được.
+Hãy xác định đây là sự cố THẬT đúng loại hay báo động giả mà bộ luật chưa loại bỏ được.
 
-The three incident types:
-- fall_detection: a person has fallen and may need medical help. Crouching, sitting down
-  deliberately, bending to pick something up, lying down on purpose, push-ups, planks,
-  burpees, stretching, and other controlled floor exercises are NOT falls. A fall must show
-  an uncontrolled or unexpected collapse, followed by remaining down or unable to recover.
-- intrusion: a person entered a restricted zone. Someone merely passing nearby is not.
-- abandoned_object: a bag or item left unattended with no owner nearby. An item beside a
-  seated or standing person is not abandoned.
 
-You are given frames in chronological order, labelled BEFORE (leading up to the moment the rule
-fired) and AFTER. Judge the transition between them, not any single frame.
+QUY TẮC:
+- fall_detection: phải thấy chuyển động ngã bất ngờ/không kiểm soát và người tiếp tục nằm hoặc không hồi phục. Ngồi, cúi, quỳ, nằm có chủ đích, chống đẩy, plank, burpee, giãn cơ là báo động giả.
+- intrusion: chỉ real khi người thực sự vượt vào vùng hạn chế; đi ngang bên ngoài không phải xâm nhập. Nếu ranh giới không rõ, dùng uncertain.
+- abandoned_object: chỉ real khi túi/đồ vật bị bỏ lại và không còn chủ nhân ở gần; đồ cạnh người hoặc đang được sử dụng không phải đồ bỏ lại.
 
-Answer only with the JSON object described by the schema. Keep `rationale` to one sentence an
-on-duty guard can read at a glance. Use "uncertain" honestly when the frames do not settle it —
-an unsure verdict is more useful than a confident wrong one.
+Các frame được sắp theo thời gian, nhãn BEFORE/AFTER. Đánh giá diễn biến của cả chuỗi, không dựa vào một frame.
 
-Provide `frame_observations` as one short visible-evidence note per frame in chronological
-order. Do not describe private chain-of-thought; report only what can be seen."""
+CHỈ trả JSON theo schema. `rationale` phải đúng một câu tiếng Việt, tối đa 35 từ, nêu đối tượng, diễn biến và bằng chứng chính; không lặp lại máy móc tên cảnh báo. `frame_observations` phải có đúng một ghi chú tiếng Việt cho mỗi frame, chỉ mô tả điều nhìn thấy. Không suy đoán danh tính, nguyên nhân hoặc ý định.
+
+Dùng uncertain nếu thiếu bằng chứng. confidence từ 0 đến 1: chỉ dùng 0.9-1.0 khi bản thân các frame đã đủ chắc chắn không còn nghi ngờ; 0.6-0.8 khi có khả năng cao nhưng chưa chắc; 0.5 trở xuống (hoặc uncertain) khi chuỗi hình mơ hồ hoặc mâu thuẫn với các phán quyết trước của camera này. Một phán quyết 'false_positive' mà bạn không chắc là câu trả lời tệ nhất: 'false_positive' confidence cao có thể bị tự động ẩn, nên bảo vệ sẽ không bao giờ thấy cảnh báo đó. Khi phân vân, hãy trả uncertain."""
+
+_LABEL_GUIDANCE = {
+    "fall_detection": "Tập trung vào chuyển đổi tư thế và khả năng hồi phục sau khi xuống sàn.",
+    "intrusion": "Tập trung vào việc người có vượt qua ranh giới vùng hạn chế hay không.",
+    "abandoned_object": "Tập trung vào khoảng cách giữa đồ vật và chủ nhân theo thời gian.",
+}
+
 
 _RESPONSE_SCHEMA = {
     "type": "json_schema",
@@ -95,7 +94,14 @@ _RESPONSE_SCHEMA = {
             "type": "object",
             "properties": {
                 "verdict": {"type": "string", "enum": ["real", "false_positive", "uncertain"]},
-                "confidence": {"type": "number"},
+                "confidence": {
+                    "type": "number",
+                    "description": (
+                        "0-1. Chỉ 0.9-1.0 khi các frame tự nó đã rõ ràng; 0.6-0.8 khi có khả "
+                        "năng cao nhưng chưa chắc; <=0.5 hoặc verdict 'uncertain' khi chuỗi hình "
+                        "mơ hồ hoặc mâu thuẫn với các phán quyết trước của camera này."
+                    ),
+                },
                 "rationale": {"type": "string"},
                 "frame_observations": {
                     "type": "array",
@@ -142,6 +148,14 @@ class TriageRequest(BaseModel):
     pre_count: int = 0
     # Rendered lines from past operator-labelled incidents on this camera (alert_history).
     examples: list[str] = Field(default_factory=list)
+    # True when `frames` were cropped to the one person this alert's track_id names
+    # (MonitoringService._collect_clip), rather than showing the full camera scene. The
+    # prompt needs to say so explicitly: without it, a model seeing a tight, single-person
+    # frame could read "nobody else visible" as evidence, when the truth is only that
+    # everyone else was cropped out of shot. See docs/plans/vlm-throughput-and-concurrent-
+    # events.md stage 3 — this is what makes several simultaneous alerts on one camera
+    # separable, each judged on the person it is actually about.
+    cropped: bool = False
 
 
 class VLMTriage(Protocol):
@@ -173,13 +187,28 @@ class OpenAIVLMTriage:
         model: str = "gpt-4o-mini",
         timeout_sec: float = 20.0,
         max_retries: int = 1,
+        base_url: str | None = None,
     ) -> None:
         from openai import OpenAI  # imported lazily so the package is optional at runtime
 
         self.model = model
         # The SDK's own retry handles the transient 429/5xx case; a hand-rolled loop around
         # a 20s timeout would multiply worst-case latency instead of bounding it.
-        self._client = OpenAI(api_key=api_key, timeout=timeout_sec, max_retries=max_retries)
+        # `base_url=None` keeps the SDK's own default (api.openai.com); anything else points
+        # at an OpenAI-compatible proxy (e.g. DashScope for Qwen) — without this, a configured
+        # OPENAI_BASE_URL was silently ignored and every call went to the real OpenAI API with
+        # a key that API had never issued, failing 401 on every single alert.
+        self._client = OpenAI(api_key=api_key, base_url=base_url or None, timeout=timeout_sec, max_retries=max_retries)
+        # Qwen's "thinking" models (qwen3*, e.g. qwen3.7-flash) default to an extended
+        # reasoning mode that burns thousands of hidden tokens per call — billed as output,
+        # not bounded by max_tokens — which llm_reasoner.py measured at 8-25s latency for a
+        # task that should take ~1s. Triage is a temperature=0.0 classification, so we opt
+        # out with the DashScope-only `enable_thinking: False` extension. The vision models
+        # (qwen-vl-plus/-max, qwen3-vl-*) do not run thinking mode and some reject the
+        # parameter, and the real OpenAI API rejects any unknown extra field — so send it
+        # only for a qwen3* model reached through a configured base_url.
+        wants_no_thinking = bool(base_url) and str(model).lower().startswith("qwen3")
+        self._extra_body = {"enable_thinking": False} if wants_no_thinking else {}
 
     def assess(self, request: TriageRequest) -> TriageVerdict:
         """Judge one alert. Never raises.
@@ -201,6 +230,8 @@ class OpenAIVLMTriage:
                 # Deterministic-ish: this is a classification, not a writing task.
                 temperature=0.0,
                 max_tokens=600,
+                # See __init__: disables Qwen's default thinking mode; empty for real OpenAI.
+                extra_body=getattr(self, "_extra_body", {}),
             )
             payload = json.loads(response.choices[0].message.content or "{}")
             frame_observations = [
@@ -208,10 +239,34 @@ class OpenAIVLMTriage:
                 for observation in payload.get("frame_observations", [])
                 if str(observation).strip()
             ]
-            if len(frame_observations) != len(request.frames):
-                raise ValueError(
-                    f"expected {len(request.frames)} frame observations, got {len(frame_observations)}"
+            # A count mismatch used to raise, which sent an otherwise-complete judgement --
+            # verdict, confidence, rationale and all -- down the `except` below and turned it
+            # into `uncertain` with a zeroed confidence. That trade is backwards: the
+            # observations are an annotation the guard reads alongside the verdict, while the
+            # verdict is the thing an alert exists to produce. Losing a "real, 0.95" on a
+            # fall because the model wrote five notes for six frames is a safety regression,
+            # not strictness.
+            #
+            # The count does drift in practice: `_RESPONSE_SCHEMA` cannot express "exactly N
+            # items", so the count is only ever *asked* for in the prompt, and `strict`
+            # json_schema is an OpenAI feature that the OpenAI-compatible providers this
+            # points at (Qwen and friends, via OPENAI_BASE_URL) do not enforce.
+            #
+            # When the count is wrong, the whole observation list is dropped rather than
+            # trimmed or padded. The response is a bare array with no frame indices, so a
+            # short list could be missing its last entry (padding at the end would be right)
+            # or an entry in the middle (every later note then describes the wrong frame).
+            # `frame_observations[i]` is read positionally against the evidence strip by both
+            # the modal and `embedding_text`, and a fall's BEFORE/AFTER captions pinned to
+            # the wrong frames actively mislead. A verdict with no per-frame notes is the
+            # honest degrade; a verdict with misaligned ones is not.
+            expected = len(request.frames)
+            if len(frame_observations) != expected:
+                logger.warning(
+                    f"VLM returned {len(frame_observations)} frame observations for {expected} frames; "
+                    "dropping the observations and keeping the verdict."
                 )
+                frame_observations = []
             verdict = payload.get("verdict", "uncertain")
             confidence = min(1.0, max(0.0, float(payload.get("confidence", 0.0))))
             rationale = str(payload.get("rationale", "")).strip()
@@ -272,6 +327,13 @@ class OpenAIVLMTriage:
             f"Frames: {request.pre_count} before the trigger, "
             f"{max(0, len(request.frames) - request.pre_count)} after, in chronological order."
         )
+        if request.cropped:
+            lines.append(
+                "These frames are cropped to the one person this alert is about, padded to "
+                "keep nearby context. Other people or objects may exist just outside the "
+                "crop -- do not conclude anyone is alone or unattended from the crop alone."
+            )
+        lines.append(f"Incident-specific focus: {_LABEL_GUIDANCE.get(request.label, 'Describe the visible event progression.')}" )
         if request.label == "fall_detection":
             lines.append(
                 "Fall check: require an uncontrolled collapse and sustained inability to recover. "
@@ -282,9 +344,13 @@ class OpenAIVLMTriage:
 
         if request.examples:
             lines.append("")
-            lines.append("Past incidents on this camera, as judged by the on-duty guard:")
+            lines.append("Các phán quyết trước đây của bảo vệ (mới nhất ở cuối):")
             lines.extend(f"- {example}" for example in request.examples)
-            lines.append("Use these to calibrate what this particular camera's false alarms look like.")
+            lines.append(
+                "Dùng để hiệu chỉnh: nếu đánh giá của bạn mâu thuẫn với một xu hướng nhất quán "
+                "trong các phán quyết này, hãy hạ confidence hoặc trả 'uncertain'. Chỉ giữ "
+                "confidence cao khi bằng chứng trong các frame tự nó đã rõ ràng."
+            )
 
         return "\n".join(lines)
 
@@ -470,6 +536,7 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
             api_key=settings.openai_api_key,
             model=settings.vlm_model,
             timeout_sec=settings.vlm_timeout_sec,
+            base_url=getattr(settings, "openai_base_url", "") or None,
         )
     except Exception as exc:  # noqa: BLE001 - a missing openai package must not block startup
         logger.error(f"Could not build the VLM client, continuing without triage: {exc}")

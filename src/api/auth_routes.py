@@ -95,11 +95,14 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
 
     # Any existing session is discarded rather than reused, so a session id an attacker
     # planted in the browser before login cannot survive into the authenticated session.
+    # Same event-loop concern as `users.authenticate` above: on PostgresSessionStore this is
+    # a real network round trip, not an in-memory dict operation.
     old_session_id = request.cookies.get(COOKIE_NAME)
     if old_session_id:
-        sessions.destroy(old_session_id)
+        await asyncio.to_thread(sessions.destroy, old_session_id)
 
-    _set_session_cookie(response, sessions.create(user.username))
+    new_session_id = await asyncio.to_thread(sessions.create, user.username)
+    _set_session_cookie(response, new_session_id)
     return user
 
 
@@ -114,7 +117,7 @@ async def logout(request: Request, response: Response) -> Response:
     """
     session_id = request.cookies.get(COOKIE_NAME)
     sessions = getattr(request.app.state, "sessions", None)
-    username = sessions.destroy(session_id) if sessions else None
+    username = await asyncio.to_thread(sessions.destroy, session_id) if sessions else None
 
     if username:
         # Tell any stream this operator has open to stop. Without it, `EventSource` keeps
@@ -140,4 +143,7 @@ async def logout(request: Request, response: Response) -> Response:
 @router.get("/auth/me", response_model=User)
 async def me(request: Request) -> User:
     """Who the current cookie belongs to. The frontend calls this on load to restore state."""
-    return current_user(request)
+    # current_user is called imperatively here rather than via Depends, so FastAPI's
+    # automatic threadpool wrapping for sync dependencies does not apply -- same blocking
+    # concern as the session calls above.
+    return await asyncio.to_thread(current_user, request)

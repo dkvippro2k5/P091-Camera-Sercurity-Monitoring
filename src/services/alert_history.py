@@ -30,7 +30,6 @@ The migration path stays open — only `recent_examples` would change.
 import json
 import logging
 import os
-import sqlite3
 import threading
 from datetime import UTC, datetime
 
@@ -62,7 +61,8 @@ class AlertHistory:
         if self.store is None and path == DEFAULT_HISTORY_PATH:
             try:
                 self.store = create_event_store()
-            except (OSError, ValueError):
+            except Exception:  # noqa: BLE001 - an unreachable database must not stop startup
+                logger.exception("Could not open the event store; falling back to the JSONL log")
                 self.store = None
         # Writes happen on the request thread and reads on a triage worker thread, so the
         # two need to be kept off each other's toes.
@@ -78,6 +78,7 @@ class AlertHistory:
         vlm_verdict: str | None = None,
         vlm_confidence: float | None = None,
         vlm_rationale: str | None = None,
+        vlm_error: str | None = None,
         judged_by: str | None = None,
         operator_note: str | None = None,
         actual_event_type: str | None = None,
@@ -96,6 +97,14 @@ class AlertHistory:
             "vlm_verdict": vlm_verdict,
             "vlm_confidence": vlm_confidence,
             "vlm_rationale": vlm_rationale,
+            # Why the assessment is missing, not just that it is. Every failure path -- a 401
+            # from the provider, a malformed response, a timeout, a saturated queue -- lands
+            # on the same `uncertain` verdict with an empty rationale, so without this the
+            # stored history cannot tell a model that genuinely could not decide from a
+            # provider that was never reached. That ambiguity is what let a misconfigured
+            # OPENAI_BASE_URL fail every single call for weeks while the UI showed nothing
+            # worse than "assessment unavailable".
+            "vlm_error": vlm_error,
             "operator_verdict": operator_verdict,
             "judged_by": judged_by,
             "operator_note": operator_note,
@@ -106,8 +115,11 @@ class AlertHistory:
             try:
                 self.store.insert_history(row)
                 return
-            except (OSError, sqlite3.Error):
-                logger.exception("Could not write alert history to SQLite")
+            # Broad by intent, for the reason spelled out in `incident_log`: the JSONL file is
+            # the fallback for the database being unusable, and naming today's driver's
+            # exception type is what let a Postgres error escape instead of falling back.
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not write alert history to the event store")
         try:
             with self._lock:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)

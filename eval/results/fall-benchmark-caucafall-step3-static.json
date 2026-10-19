@@ -1,0 +1,1883 @@
+{
+  "label": "step3-static",
+  "run_at": "2026-10-18T15:52:10.541244+00:00",
+  "elapsed_sec": 943.4,
+  "config": {
+    "dataset": "CAUCAFall (10 subjects, home, uncontrolled light)",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "pad_sec": 4.0,
+    "fall_dwell_sec": 3.0,
+    "alert_cooldown_sec": 30.0,
+    "onset_tolerance_sec": 0.5
+  },
+  "scores": {
+    "fall_clips": 50,
+    "adl_clips": 50,
+    "true_positives": 36,
+    "missed_falls": 14,
+    "false_alarms": 14,
+    "duplicate_alerts": 2,
+    "recall": 0.72,
+    "recall_ci95": [
+      0.5833461285401034,
+      0.8252598564231963
+    ],
+    "specificity": 0.72,
+    "specificity_ci95": [
+      0.5833461285401034,
+      0.8252598564231963
+    ],
+    "precision": 0.72,
+    "precision_ci95": [
+      0.5833461285401034,
+      0.8252598564231963
+    ],
+    "f1": 0.72,
+    "hard_negative_adls": 30,
+    "hard_negative_false_alarm_clips": 7,
+    "negative_footage_min": 14.6,
+    "false_alarms_per_hour": 57.5506708535541,
+    "latency_from_lying_median_sec": 3.4,
+    "latency_from_lying_max_sec": 8.15,
+    "missed_clip_ids": [
+      "s01-fall-forward",
+      "s01-fall-left",
+      "s01-fall-sitting",
+      "s02-fall-backwards",
+      "s03-fall-forward",
+      "s03-fall-left",
+      "s03-fall-sitting",
+      "s04-fall-backwards",
+      "s04-fall-forward",
+      "s04-fall-left",
+      "s04-fall-sitting",
+      "s08-fall-forward",
+      "s09-fall-forward",
+      "s09-fall-left"
+    ],
+    "false_alarm_clip_ids": [
+      "s01-kneel",
+      "s01-walk",
+      "s10-hop",
+      "s02-walk",
+      "s03-hop",
+      "s03-pick-up-object",
+      "s04-walk",
+      "s07-kneel",
+      "s07-walk",
+      "s08-hop",
+      "s08-kneel",
+      "s08-sit-down",
+      "s09-pick-up-object",
+      "s09-sit-down"
+    ],
+    "outcomes": [
+      {
+        "clip_id": "s01-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.7
+      },
+      {
+        "clip_id": "s01-fall-forward",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-fall-left",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.2
+      },
+      {
+        "clip_id": "s01-fall-sitting",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s01-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s10-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.1
+      },
+      {
+        "clip_id": "s10-fall-forward",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.75
+      },
+      {
+        "clip_id": "s10-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 5.9
+      },
+      {
+        "clip_id": "s10-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.1
+      },
+      {
+        "clip_id": "s10-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 7.0
+      },
+      {
+        "clip_id": "s10-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s10-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s10-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s10-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s10-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-fall-backwards",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-fall-forward",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.8
+      },
+      {
+        "clip_id": "s02-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 5.6
+      },
+      {
+        "clip_id": "s02-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.15
+      },
+      {
+        "clip_id": "s02-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.35
+      },
+      {
+        "clip_id": "s02-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s02-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.25
+      },
+      {
+        "clip_id": "s03-fall-forward",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-fall-left",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.55
+      },
+      {
+        "clip_id": "s03-fall-sitting",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s03-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-fall-backwards",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-fall-forward",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-fall-left",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.45
+      },
+      {
+        "clip_id": "s04-fall-sitting",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s04-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s05-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.4
+      },
+      {
+        "clip_id": "s05-fall-forward",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.3
+      },
+      {
+        "clip_id": "s05-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.2
+      },
+      {
+        "clip_id": "s05-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.65
+      },
+      {
+        "clip_id": "s05-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.95
+      },
+      {
+        "clip_id": "s05-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s05-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s05-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s05-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s05-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s06-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.25
+      },
+      {
+        "clip_id": "s06-fall-forward",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 4.25
+      },
+      {
+        "clip_id": "s06-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.65
+      },
+      {
+        "clip_id": "s06-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.75
+      },
+      {
+        "clip_id": "s06-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.25
+      },
+      {
+        "clip_id": "s06-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s06-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s06-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s06-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s06-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s07-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.0
+      },
+      {
+        "clip_id": "s07-fall-forward",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.85
+      },
+      {
+        "clip_id": "s07-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 1,
+        "latency_from_lying_sec": 4.15
+      },
+      {
+        "clip_id": "s07-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.5
+      },
+      {
+        "clip_id": "s07-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 4.85
+      },
+      {
+        "clip_id": "s07-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s07-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s07-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s07-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s07-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 1,
+        "latency_from_lying_sec": 3.8
+      },
+      {
+        "clip_id": "s08-fall-forward",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-fall-left",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 8.15
+      },
+      {
+        "clip_id": "s08-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.45
+      },
+      {
+        "clip_id": "s08-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 3.4
+      },
+      {
+        "clip_id": "s08-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s08-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-fall-backwards",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.55
+      },
+      {
+        "clip_id": "s09-fall-forward",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-fall-left",
+        "kind": "fall",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-fall-right",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 4.15
+      },
+      {
+        "clip_id": "s09-fall-sitting",
+        "kind": "fall",
+        "detected": true,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": 2.95
+      },
+      {
+        "clip_id": "s09-hop",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-kneel",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-pick-up-object",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-sit-down",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 1,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      },
+      {
+        "clip_id": "s09-walk",
+        "kind": "adl",
+        "detected": false,
+        "false_alarms": 0,
+        "duplicates": 0,
+        "latency_from_lying_sec": null
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "s01-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 6.25,
+      "analysed_sec": 10.25,
+      "sampled_frames": 52,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.6
+      ]
+    },
+    {
+      "clip_id": "s01-fall-forward",
+      "kind": "fall",
+      "footage_sec": 9.5,
+      "analysed_sec": 13.5,
+      "sampled_frames": 68,
+      "person_frame_fraction": 0.917,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-fall-left",
+      "kind": "fall",
+      "footage_sec": 4.3,
+      "analysed_sec": 8.3,
+      "sampled_frames": 42,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-fall-right",
+      "kind": "fall",
+      "footage_sec": 5.7,
+      "analysed_sec": 9.7,
+      "sampled_frames": 49,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "s01-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 9.1,
+      "analysed_sec": 13.1,
+      "sampled_frames": 66,
+      "person_frame_fraction": 0.674,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-hop",
+      "kind": "adl",
+      "footage_sec": 9.1,
+      "analysed_sec": 13.1,
+      "sampled_frames": 66,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-kneel",
+      "kind": "adl",
+      "footage_sec": 10.95,
+      "analysed_sec": 14.95,
+      "sampled_frames": 75,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.8
+      ]
+    },
+    {
+      "clip_id": "s01-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 5.85,
+      "analysed_sec": 9.85,
+      "sampled_frames": 50,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-sit-down",
+      "kind": "adl",
+      "footage_sec": 9.35,
+      "analysed_sec": 13.35,
+      "sampled_frames": 67,
+      "person_frame_fraction": 0.809,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s01-walk",
+      "kind": "adl",
+      "footage_sec": 12.1,
+      "analysed_sec": 16.1,
+      "sampled_frames": 81,
+      "person_frame_fraction": 0.984,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "s10-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 13.7,
+      "analysed_sec": 17.7,
+      "sampled_frames": 89,
+      "person_frame_fraction": 0.986,
+      "alert_times": [
+        7.0
+      ]
+    },
+    {
+      "clip_id": "s10-fall-forward",
+      "kind": "fall",
+      "footage_sec": 12.15,
+      "analysed_sec": 16.15,
+      "sampled_frames": 81,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "s10-fall-left",
+      "kind": "fall",
+      "footage_sec": 10.6,
+      "analysed_sec": 14.6,
+      "sampled_frames": 74,
+      "person_frame_fraction": 0.792,
+      "alert_times": [
+        8.4
+      ]
+    },
+    {
+      "clip_id": "s10-fall-right",
+      "kind": "fall",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.863,
+      "alert_times": [
+        6.8
+      ]
+    },
+    {
+      "clip_id": "s10-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 14.4,
+      "analysed_sec": 18.4,
+      "sampled_frames": 93,
+      "person_frame_fraction": 0.875,
+      "alert_times": [
+        10.8
+      ]
+    },
+    {
+      "clip_id": "s10-hop",
+      "kind": "adl",
+      "footage_sec": 12.4,
+      "analysed_sec": 16.4,
+      "sampled_frames": 83,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        10.8
+      ]
+    },
+    {
+      "clip_id": "s10-kneel",
+      "kind": "adl",
+      "footage_sec": 13.05,
+      "analysed_sec": 17.05,
+      "sampled_frames": 86,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s10-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 14.6,
+      "analysed_sec": 18.6,
+      "sampled_frames": 94,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s10-sit-down",
+      "kind": "adl",
+      "footage_sec": 11.7,
+      "analysed_sec": 15.7,
+      "sampled_frames": 79,
+      "person_frame_fraction": 0.983,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s10-walk",
+      "kind": "adl",
+      "footage_sec": 11.2,
+      "analysed_sec": 15.2,
+      "sampled_frames": 77,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 5.95,
+      "analysed_sec": 9.95,
+      "sampled_frames": 50,
+      "person_frame_fraction": 0.933,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-fall-forward",
+      "kind": "fall",
+      "footage_sec": 5.3,
+      "analysed_sec": 9.3,
+      "sampled_frames": 47,
+      "person_frame_fraction": 0.963,
+      "alert_times": [
+        5.0
+      ]
+    },
+    {
+      "clip_id": "s02-fall-left",
+      "kind": "fall",
+      "footage_sec": 5.45,
+      "analysed_sec": 9.45,
+      "sampled_frames": 48,
+      "person_frame_fraction": 0.929,
+      "alert_times": [
+        7.2
+      ]
+    },
+    {
+      "clip_id": "s02-fall-right",
+      "kind": "fall",
+      "footage_sec": 7.3,
+      "analysed_sec": 11.3,
+      "sampled_frames": 57,
+      "person_frame_fraction": 0.946,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "s02-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 7.85,
+      "analysed_sec": 11.85,
+      "sampled_frames": 60,
+      "person_frame_fraction": 0.975,
+      "alert_times": [
+        7.4
+      ]
+    },
+    {
+      "clip_id": "s02-hop",
+      "kind": "adl",
+      "footage_sec": 8.55,
+      "analysed_sec": 12.55,
+      "sampled_frames": 63,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-kneel",
+      "kind": "adl",
+      "footage_sec": 6.5,
+      "analysed_sec": 10.5,
+      "sampled_frames": 53,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 8.3,
+      "analysed_sec": 12.3,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.976,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-sit-down",
+      "kind": "adl",
+      "footage_sec": 5.6,
+      "analysed_sec": 9.6,
+      "sampled_frames": 49,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s02-walk",
+      "kind": "adl",
+      "footage_sec": 12.2,
+      "analysed_sec": 16.2,
+      "sampled_frames": 82,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "s03-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 8.3,
+      "analysed_sec": 12.3,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.881,
+      "alert_times": [
+        6.6
+      ]
+    },
+    {
+      "clip_id": "s03-fall-forward",
+      "kind": "fall",
+      "footage_sec": 7.65,
+      "analysed_sec": 11.65,
+      "sampled_frames": 59,
+      "person_frame_fraction": 0.974,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s03-fall-left",
+      "kind": "fall",
+      "footage_sec": 8.55,
+      "analysed_sec": 12.55,
+      "sampled_frames": 63,
+      "person_frame_fraction": 0.767,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s03-fall-right",
+      "kind": "fall",
+      "footage_sec": 11.0,
+      "analysed_sec": 15.0,
+      "sampled_frames": 76,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.2
+      ]
+    },
+    {
+      "clip_id": "s03-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.529,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s03-hop",
+      "kind": "adl",
+      "footage_sec": 8.1,
+      "analysed_sec": 12.1,
+      "sampled_frames": 61,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "s03-kneel",
+      "kind": "adl",
+      "footage_sec": 10.65,
+      "analysed_sec": 14.65,
+      "sampled_frames": 74,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s03-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 9.3,
+      "analysed_sec": 13.3,
+      "sampled_frames": 67,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        3.8
+      ]
+    },
+    {
+      "clip_id": "s03-sit-down",
+      "kind": "adl",
+      "footage_sec": 13.05,
+      "analysed_sec": 17.05,
+      "sampled_frames": 86,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s03-walk",
+      "kind": "adl",
+      "footage_sec": 8.8,
+      "analysed_sec": 12.8,
+      "sampled_frames": 65,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 9.6,
+      "analysed_sec": 13.6,
+      "sampled_frames": 69,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-fall-forward",
+      "kind": "fall",
+      "footage_sec": 8.4,
+      "analysed_sec": 12.4,
+      "sampled_frames": 63,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-fall-left",
+      "kind": "fall",
+      "footage_sec": 8.1,
+      "analysed_sec": 12.1,
+      "sampled_frames": 61,
+      "person_frame_fraction": 0.927,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-fall-right",
+      "kind": "fall",
+      "footage_sec": 7.5,
+      "analysed_sec": 11.5,
+      "sampled_frames": 58,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "s04-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 9.9,
+      "analysed_sec": 13.9,
+      "sampled_frames": 70,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-hop",
+      "kind": "adl",
+      "footage_sec": 7.2,
+      "analysed_sec": 11.2,
+      "sampled_frames": 57,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-kneel",
+      "kind": "adl",
+      "footage_sec": 11.1,
+      "analysed_sec": 15.1,
+      "sampled_frames": 76,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 8.95,
+      "analysed_sec": 12.95,
+      "sampled_frames": 65,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-sit-down",
+      "kind": "adl",
+      "footage_sec": 9.95,
+      "analysed_sec": 13.95,
+      "sampled_frames": 70,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s04-walk",
+      "kind": "adl",
+      "footage_sec": 12.0,
+      "analysed_sec": 16.0,
+      "sampled_frames": 81,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        4.2
+      ]
+    },
+    {
+      "clip_id": "s05-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 10.7,
+      "analysed_sec": 14.7,
+      "sampled_frames": 74,
+      "person_frame_fraction": 0.963,
+      "alert_times": [
+        4.8
+      ]
+    },
+    {
+      "clip_id": "s05-fall-forward",
+      "kind": "fall",
+      "footage_sec": 10.0,
+      "analysed_sec": 14.0,
+      "sampled_frames": 71,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.2
+      ]
+    },
+    {
+      "clip_id": "s05-fall-left",
+      "kind": "fall",
+      "footage_sec": 12.35,
+      "analysed_sec": 16.35,
+      "sampled_frames": 82,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "s05-fall-right",
+      "kind": "fall",
+      "footage_sec": 10.95,
+      "analysed_sec": 14.95,
+      "sampled_frames": 75,
+      "person_frame_fraction": 0.909,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "s05-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 11.45,
+      "analysed_sec": 15.45,
+      "sampled_frames": 78,
+      "person_frame_fraction": 0.931,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "s05-hop",
+      "kind": "adl",
+      "footage_sec": 6.1,
+      "analysed_sec": 10.1,
+      "sampled_frames": 51,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s05-kneel",
+      "kind": "adl",
+      "footage_sec": 10.4,
+      "analysed_sec": 14.4,
+      "sampled_frames": 73,
+      "person_frame_fraction": 0.981,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s05-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 13.55,
+      "analysed_sec": 17.55,
+      "sampled_frames": 88,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s05-sit-down",
+      "kind": "adl",
+      "footage_sec": 13.0,
+      "analysed_sec": 17.0,
+      "sampled_frames": 86,
+      "person_frame_fraction": 0.877,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s05-walk",
+      "kind": "adl",
+      "footage_sec": 11.3,
+      "analysed_sec": 15.3,
+      "sampled_frames": 77,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s06-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 11.7,
+      "analysed_sec": 15.7,
+      "sampled_frames": 79,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        7.8
+      ]
+    },
+    {
+      "clip_id": "s06-fall-forward",
+      "kind": "fall",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.961,
+      "alert_times": [
+        8.4
+      ]
+    },
+    {
+      "clip_id": "s06-fall-left",
+      "kind": "fall",
+      "footage_sec": 11.45,
+      "analysed_sec": 15.45,
+      "sampled_frames": 78,
+      "person_frame_fraction": 0.914,
+      "alert_times": [
+        6.2
+      ]
+    },
+    {
+      "clip_id": "s06-fall-right",
+      "kind": "fall",
+      "footage_sec": 11.45,
+      "analysed_sec": 15.45,
+      "sampled_frames": 78,
+      "person_frame_fraction": 0.759,
+      "alert_times": [
+        6.8
+      ]
+    },
+    {
+      "clip_id": "s06-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 12.4,
+      "analysed_sec": 16.4,
+      "sampled_frames": 83,
+      "person_frame_fraction": 0.984,
+      "alert_times": [
+        8.6
+      ]
+    },
+    {
+      "clip_id": "s06-hop",
+      "kind": "adl",
+      "footage_sec": 8.1,
+      "analysed_sec": 12.1,
+      "sampled_frames": 61,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s06-kneel",
+      "kind": "adl",
+      "footage_sec": 9.45,
+      "analysed_sec": 13.45,
+      "sampled_frames": 68,
+      "person_frame_fraction": 0.958,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s06-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s06-sit-down",
+      "kind": "adl",
+      "footage_sec": 9.45,
+      "analysed_sec": 13.45,
+      "sampled_frames": 68,
+      "person_frame_fraction": 0.979,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s06-walk",
+      "kind": "adl",
+      "footage_sec": 13.3,
+      "analysed_sec": 17.3,
+      "sampled_frames": 87,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s07-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 12.6,
+      "analysed_sec": 16.6,
+      "sampled_frames": 84,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        7.6
+      ]
+    },
+    {
+      "clip_id": "s07-fall-forward",
+      "kind": "fall",
+      "footage_sec": 8.1,
+      "analysed_sec": 12.1,
+      "sampled_frames": 61,
+      "person_frame_fraction": 0.976,
+      "alert_times": [
+        6.0
+      ]
+    },
+    {
+      "clip_id": "s07-fall-left",
+      "kind": "fall",
+      "footage_sec": 10.6,
+      "analysed_sec": 14.6,
+      "sampled_frames": 74,
+      "person_frame_fraction": 0.868,
+      "alert_times": [
+        7.8,
+        14.2
+      ]
+    },
+    {
+      "clip_id": "s07-fall-right",
+      "kind": "fall",
+      "footage_sec": 8.3,
+      "analysed_sec": 12.3,
+      "sampled_frames": 62,
+      "person_frame_fraction": 0.976,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "s07-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 10.35,
+      "analysed_sec": 14.35,
+      "sampled_frames": 72,
+      "person_frame_fraction": 0.808,
+      "alert_times": [
+        7.2
+      ]
+    },
+    {
+      "clip_id": "s07-hop",
+      "kind": "adl",
+      "footage_sec": 9.9,
+      "analysed_sec": 13.9,
+      "sampled_frames": 70,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s07-kneel",
+      "kind": "adl",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.98,
+      "alert_times": [
+        7.2
+      ]
+    },
+    {
+      "clip_id": "s07-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 7.65,
+      "analysed_sec": 11.65,
+      "sampled_frames": 59,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s07-sit-down",
+      "kind": "adl",
+      "footage_sec": 9.65,
+      "analysed_sec": 13.65,
+      "sampled_frames": 69,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s07-walk",
+      "kind": "adl",
+      "footage_sec": 9.65,
+      "analysed_sec": 13.65,
+      "sampled_frames": 69,
+      "person_frame_fraction": 0.98,
+      "alert_times": [
+        10.4
+      ]
+    },
+    {
+      "clip_id": "s08-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 10.6,
+      "analysed_sec": 14.6,
+      "sampled_frames": 74,
+      "person_frame_fraction": 0.717,
+      "alert_times": [
+        7.0,
+        14.0
+      ]
+    },
+    {
+      "clip_id": "s08-fall-forward",
+      "kind": "fall",
+      "footage_sec": 6.1,
+      "analysed_sec": 10.1,
+      "sampled_frames": 51,
+      "person_frame_fraction": 0.871,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s08-fall-left",
+      "kind": "fall",
+      "footage_sec": 10.1,
+      "analysed_sec": 14.1,
+      "sampled_frames": 71,
+      "person_frame_fraction": 0.667,
+      "alert_times": [
+        11.0
+      ]
+    },
+    {
+      "clip_id": "s08-fall-right",
+      "kind": "fall",
+      "footage_sec": 11.45,
+      "analysed_sec": 15.45,
+      "sampled_frames": 78,
+      "person_frame_fraction": 0.948,
+      "alert_times": [
+        5.4
+      ]
+    },
+    {
+      "clip_id": "s08-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 11.7,
+      "analysed_sec": 15.7,
+      "sampled_frames": 79,
+      "person_frame_fraction": 0.949,
+      "alert_times": [
+        7.4
+      ]
+    },
+    {
+      "clip_id": "s08-hop",
+      "kind": "adl",
+      "footage_sec": 8.3,
+      "analysed_sec": 12.3,
+      "sampled_frames": 62,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        10.2
+      ]
+    },
+    {
+      "clip_id": "s08-kneel",
+      "kind": "adl",
+      "footage_sec": 12.8,
+      "analysed_sec": 16.8,
+      "sampled_frames": 85,
+      "person_frame_fraction": 0.984,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "s08-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 13.3,
+      "analysed_sec": 17.3,
+      "sampled_frames": 87,
+      "person_frame_fraction": 0.985,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s08-sit-down",
+      "kind": "adl",
+      "footage_sec": 10.6,
+      "analysed_sec": 14.6,
+      "sampled_frames": 74,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        14.6
+      ]
+    },
+    {
+      "clip_id": "s08-walk",
+      "kind": "adl",
+      "footage_sec": 10.8,
+      "analysed_sec": 14.8,
+      "sampled_frames": 75,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s09-fall-backwards",
+      "kind": "fall",
+      "footage_sec": 12.6,
+      "analysed_sec": 16.6,
+      "sampled_frames": 84,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        5.8
+      ]
+    },
+    {
+      "clip_id": "s09-fall-forward",
+      "kind": "fall",
+      "footage_sec": 7.4,
+      "analysed_sec": 11.4,
+      "sampled_frames": 58,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s09-fall-left",
+      "kind": "fall",
+      "footage_sec": 10.35,
+      "analysed_sec": 14.35,
+      "sampled_frames": 72,
+      "person_frame_fraction": 0.942,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s09-fall-right",
+      "kind": "fall",
+      "footage_sec": 9.45,
+      "analysed_sec": 13.45,
+      "sampled_frames": 68,
+      "person_frame_fraction": 0.958,
+      "alert_times": [
+        7.0
+      ]
+    },
+    {
+      "clip_id": "s09-fall-sitting",
+      "kind": "fall",
+      "footage_sec": 10.8,
+      "analysed_sec": 14.8,
+      "sampled_frames": 75,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        7.4
+      ]
+    },
+    {
+      "clip_id": "s09-hop",
+      "kind": "adl",
+      "footage_sec": 10.6,
+      "analysed_sec": 14.6,
+      "sampled_frames": 74,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s09-kneel",
+      "kind": "adl",
+      "footage_sec": 10.8,
+      "analysed_sec": 14.8,
+      "sampled_frames": 75,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    },
+    {
+      "clip_id": "s09-pick-up-object",
+      "kind": "adl",
+      "footage_sec": 11.0,
+      "analysed_sec": 15.0,
+      "sampled_frames": 76,
+      "person_frame_fraction": 1.0,
+      "alert_times": [
+        6.4
+      ]
+    },
+    {
+      "clip_id": "s09-sit-down",
+      "kind": "adl",
+      "footage_sec": 11.9,
+      "analysed_sec": 15.9,
+      "sampled_frames": 80,
+      "person_frame_fraction": 0.983,
+      "alert_times": [
+        8.4
+      ]
+    },
+    {
+      "clip_id": "s09-walk",
+      "kind": "adl",
+      "footage_sec": 11.7,
+      "analysed_sec": 15.7,
+      "sampled_frames": 79,
+      "person_frame_fraction": 1.0,
+      "alert_times": []
+    }
+  ]
+}

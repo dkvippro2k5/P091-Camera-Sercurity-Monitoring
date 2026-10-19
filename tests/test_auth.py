@@ -16,7 +16,7 @@ from src.api.vision_routes import event_stream
 from src.services.login_limiter import LoginLimiter
 from src.services.security import hash_password, verify_password
 from src.services.sessions import COOKIE_NAME, SessionStore
-from src.services.user_store import UserStore
+from src.services.user_store import User, UserStore
 from tests.conftest import TEST_WORK_FACTOR
 
 # Every route a guard must not reach, as (method, path). Kept as a list, and swept in a loop,
@@ -40,6 +40,10 @@ AUTHENTICATED_ONLY = [
 
 OPERATOR_ONLY = [
     ("get", "/api/v1/monitoring/status"),
+    ("get", "/api/v1/incidents"),
+    ("get", "/api/v1/evidence/nope"),
+    ("get", "/api/v1/alerts/nope/similar"),
+    ("get", "/api/v1/incidents/nope/frames"),
 ]
 
 
@@ -69,6 +73,20 @@ class _StreamRequest:
 
     async def is_disconnected(self) -> bool:
         return False
+
+
+def _open_stream(client, username: str):
+    """Call the route the way FastAPI would, minus the framework.
+
+    `event_stream` takes its identity from the router's `require_guard` dependency rather
+    than re-resolving the session itself, so calling the coroutine directly has to supply
+    what the injector otherwise would. The cookie on `_StreamRequest` is still what the
+    in-loop revocation check reads — that is the thing under test and it is untouched.
+    """
+    return event_stream(
+        _StreamRequest(client, username),
+        guard=User(username=username, role="guard", display_name=username),
+    )
 
 
 # ---------------------------------------------------------------- privilege boundary
@@ -117,9 +135,50 @@ def test_a_guard_can_configure_cameras(guard_client):
 
 
 def test_a_manager_cannot_reach_guard_routes_but_can_read_shared_status(manager_client):
+    """The manager boundary is *read versus act*, and this is where that line falls.
+
+    A manager reviewing the room's work reaches the durable incident history and the stored
+    evidence stills it links to — auditing a guard's verdict against a label and a timestamp
+    alone is not auditing it. What stays refused is the live surface and every write: the
+    camera list, the live alert buffer behind the guard's rail, and the verdict route below.
+    """
+    # Refused: live footage and camera control.
     assert manager_client.get("/api/v1/cameras").status_code == 403
+    # Refused: the live ring buffer behind the guard's rail. The manager's equivalent is
+    # `/incidents`, which is the durable log rather than this process's tail.
     assert manager_client.get("/api/v1/alerts").status_code == 403
+    # Refused: the guard's write path. Reviewing is not judging.
+    assert manager_client.post("/api/v1/alerts/anything/verdict", json={"verdict": "real"}).status_code == 403
+    assert manager_client.post("/api/v1/alerts/anything/acknowledge").status_code == 403
+    # Refused: the live alert stream.
+    assert manager_client.get("/api/v1/events").status_code == 403
+
+    # Allowed: shared status, and the read-only history surface.
     assert manager_client.get("/api/v1/monitoring/status").status_code == 200
+    assert manager_client.get("/api/v1/incidents").status_code == 200
+    assert manager_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    # Empty rather than 404: an incident whose frames are gone is a panel with no strip, and
+    # a manager auditing a verdict needs the same frames the guard judged from.
+    assert manager_client.get("/api/v1/incidents/anything/frames").status_code == 200
+    # 404 rather than 403: the gate passed and the handler ran on an id that does not exist.
+    # A 403 here would mean evidence had drifted back behind the guard-only router and the
+    # thumbnails in the history list would silently stop resolving.
+    assert manager_client.get("/api/v1/evidence/does-not-exist").status_code == 404
+
+
+def test_a_guard_keeps_the_history_surface_too(guard_client):
+    """Widening these to the shared gate must not have moved them off the guard.
+
+    The guard's rail and modal read `/evidence` and `/similar` on every alert they open. A
+    change that handed those to the manager by taking them from the guard would break the
+    screen the product exists for, and would do it silently — the images would just stop
+    appearing.
+    """
+    assert guard_client.get("/api/v1/incidents").status_code == 200
+    assert guard_client.get("/api/v1/alerts/anything/similar").status_code == 200
+    assert guard_client.get("/api/v1/incidents/anything/frames").status_code == 200
+    assert guard_client.get("/api/v1/evidence/does-not-exist").status_code == 404
+    assert guard_client.get("/api/v1/alerts").status_code == 200
 
 
 def test_every_gated_route_is_401_when_signed_out(anon_client):
@@ -400,7 +459,7 @@ async def test_a_revoked_session_ends_the_event_stream(auth_app):
     service = test_client.app.state.monitoring
     service.bind_loop(asyncio.get_running_loop())
 
-    response = await event_stream(_StreamRequest(test_client, "gwen"))
+    response = await _open_stream(test_client, "gwen")
     events = response.body_iterator
 
     service.publish_event("alert.created", {"id": "warmup"})
@@ -428,7 +487,7 @@ async def test_a_revocation_for_someone_else_leaves_the_stream_open(auth_app):
     service = test_client.app.state.monitoring
     service.bind_loop(asyncio.get_running_loop())
 
-    response = await event_stream(_StreamRequest(test_client, "gwen"))
+    response = await _open_stream(test_client, "gwen")
     events = response.body_iterator
 
     service.publish_event("auth.revoked", {"username": "someone-else"})

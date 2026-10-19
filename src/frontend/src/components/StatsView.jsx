@@ -10,6 +10,20 @@ function number(value) {
   return new Intl.NumberFormat().format(value ?? 0)
 }
 
+/**
+ * The manager's aggregate report.
+ *
+ * Mounted once and then kept alive for the session — `App` hides this screen rather than
+ * unmounting it when the manager switches to the history tab, so `data` and the socket below
+ * survive the switch. Two consequences worth knowing before editing:
+ *
+ *   - Effects here run once per *session*, not once per visit. Anything that should happen
+ *     each time the screen is opened cannot live in a `[]`-keyed effect any more.
+ *   - The socket stays connected while the screen is hidden. That is deliberate: it costs one
+ *     idle WebSocket and means the numbers are already current when the manager comes back,
+ *     rather than a placeholder and a refetch. It closes on sign-out, when `App` empties
+ *     `visitedScreens` and this really does unmount.
+ */
 export default function StatsView({ status }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -22,7 +36,27 @@ export default function StatsView({ status }) {
     const connect = () => {
       if (cancelled) return
       socket = new WebSocket(api.managerLiveUrl())
-      socket.onmessage = () => {
+      socket.onmessage = (event) => {
+        // Only refetch for messages that mean the numbers changed.
+        //
+        // Every message used to trigger one, and two of the three kinds never carry a change:
+        // `manager.connected` is the greeting sent the instant the socket opens, and
+        // `manager.status` is a camera-health heartbeat the server emits every 5 seconds
+        // whether or not anything happened. So the screen re-read `/statistics` — three JSONL
+        // files on the server — twice on open and then every five seconds for as long as the
+        // dashboard stayed up, to redraw figures that were almost always identical.
+        //
+        // Unparseable frames are ignored rather than treated as a change: a refetch is the
+        // expensive branch, so the safe default when the payload makes no sense is to skip it
+        // and wait for the next real event.
+        let type
+        try {
+          type = JSON.parse(event.data)?.type
+        } catch {
+          return
+        }
+        if (type === 'manager.connected' || type === 'manager.status') return
+
         // The event stream is the invalidation signal; the statistics endpoint remains the
         // single source of truth for the aggregate report and heat-map data.
         api.statistics().then((body) => !cancelled && setData(body)).catch(() => {})
@@ -42,18 +76,21 @@ export default function StatsView({ status }) {
 
   useEffect(() => {
     let cancelled = false
-    api.statistics()
+    // `cached: true` only here. This is the screen's first paint, where last session's figures
+    // beat a placeholder; the socket-driven refresh above deliberately bypasses the cache
+    // because its whole job is to fetch what the cache does not have.
+    api.statistics(true)
       .then((body) => !cancelled && setData(body))
       .catch((err) => !cancelled && setError(err.message))
     return () => { cancelled = true }
   }, [])
 
   if (error) {
-    return <div className="stats-error" role="alert"><span className="status-mark danger">!</span><div><h4>Statistics unavailable</h4><p>{error}</p></div></div>
+    return <div className="stats-error" role="alert"><span className="status-mark danger">!</span><div><h4>Không thể tải thống kê</h4><p>{error}</p></div></div>
   }
-  if (!data) return <div className="stats-loading">Preparing manager view…</div>
+  if (!data) return <div className="stats-loading">Đang chuẩn bị báo cáo…</div>
 
-  const { report, operational, heatmap } = data
+  const { report, operational } = data
   const total = operational.total_alerts || 0
   const reviewed = operational.reviewed_alerts || 0
   const reviewRate = total ? reviewed / total : null
@@ -67,29 +104,29 @@ export default function StatsView({ status }) {
     <section className="manager-dashboard" aria-labelledby="manager-page-title">
       <header className="manager-hero">
         <div>
-          <p className="eyebrow"><span className="live-dot" /> Operations intelligence</p>
-          <h1 id="manager-page-title">Manager overview</h1>
-          <p className="hero-copy">A clear view of detection quality, review workload, and where attention is accumulating.</p>
+          <p className="eyebrow"><span className="live-dot" /> Thông tin vận hành</p>
+          <h1 id="manager-page-title">Tổng quan quản lý</h1>
+          <p className="hero-copy">Theo dõi chất lượng phát hiện, khối lượng xử lý và các điểm cần chú ý.</p>
         </div>
         <div className="hero-stamp">
-          <span>Last activity</span>
-          <strong>{operational.last_alert ? new Date(operational.last_alert).toLocaleString() : 'No alerts yet'}</strong>
+          <span>Hoạt động gần nhất</span>
+          <strong>{operational.last_alert ? new Date(operational.last_alert).toLocaleString('vi-VN') : 'Chưa có cảnh báo'}</strong>
         </div>
       </header>
 
       {report.warnings?.length > 0 && (
         <section className="manager-warning" role="note">
           <span className="status-mark warning">!</span>
-          <div><strong>Read the sample with care</strong><p>{report.warnings[0]}</p></div>
-          {report.warnings.length > 1 && <span className="warning-count">+{report.warnings.length - 1} more</span>}
+          <div><strong>Lưu ý khi đọc mẫu dữ liệu</strong><p>{report.warnings[0]}</p></div>
+          {report.warnings.length > 1 && <span className="warning-count">+{report.warnings.length - 1} cảnh báo</span>}
         </section>
       )}
 
       <section className="manager-kpis" aria-label="Executive metrics">
-        <MetricCard label="Detection precision" value={pct(report.rule_precision)} detail="Reviewed incidents classified correctly" tone="good" />
-        <MetricCard label="False alarm rate" value={pct(report.false_alarm_rate)} detail="Across labelled alerts" tone={report.false_alarm_rate > 0.3 ? 'bad' : 'neutral'} />
-        <MetricCard label="Review coverage" value={pct(reviewRate)} detail={`${number(reviewed)} of ${number(total)} alerts judged`} tone="neutral" />
-        <MetricCard label="Live backlog" value={number(operational.live_unacknowledged)} detail="Alerts awaiting guard action" tone={operational.live_unacknowledged ? 'bad' : 'good'} />
+        <MetricCard label="Độ chính xác phát hiện" value={pct(report.rule_precision)} detail="Sự cố đã xem được phân loại đúng" tone="good" />
+        <MetricCard label="Tỷ lệ báo động giả" value={pct(report.false_alarm_rate)} detail="Trên các cảnh báo đã gắn nhãn" tone={report.false_alarm_rate > 0.3 ? 'bad' : 'neutral'} />
+        <MetricCard label="Mức độ xử lý" value={pct(reviewRate)} detail={`${number(reviewed)}/${number(total)} cảnh báo đã kết luận`} tone="neutral" />
+        <MetricCard label="Hàng đợi trực tiếp" value={number(operational.live_unacknowledged)} detail="Cảnh báo đang chờ bảo vệ xử lý" tone={operational.live_unacknowledged ? 'bad' : 'good'} />
       </section>
 
       <section className="manager-primary-grid">
@@ -102,32 +139,26 @@ export default function StatsView({ status }) {
         <CameraHotspots rows={cameraRows} />
       </section>
 
-      <HeatMap points={heatmap?.points || []} />
-
       {report.comparisons?.length > 0 && <TriagePanel rows={report.comparisons} agreement={report.triage_agreement} coverage={report.triage_coverage} />}
 
       <footer className="manager-footer">
-        <span>Data window</span>
-        <strong>{operational.first_alert ? new Date(operational.first_alert).toLocaleDateString() : '—'} to {operational.last_alert ? new Date(operational.last_alert).toLocaleDateString() : '—'}</strong>
+        <span>Khoảng dữ liệu</span>
+        <strong>{operational.first_alert ? new Date(operational.first_alert).toLocaleDateString('vi-VN') : '—'} đến {operational.last_alert ? new Date(operational.last_alert).toLocaleDateString('vi-VN') : '—'}</strong>
         <span className="footer-separator" />
-        <span>Reviewers</span>
-        <strong>{operational.reviewers?.length ? operational.reviewers.join(', ') : 'None recorded'}</strong>
+        <span>Người xử lý</span>
+        <strong>{operational.reviewers?.length ? operational.reviewers.join(', ') : 'Chưa ghi nhận'}</strong>
         <span className="footer-separator" />
-        <span>Recall</span>
-        <strong className="footer-muted">Not measurable from surfaced alerts</strong>
+        <span>Độ bao phủ</span>
+        <strong className="footer-muted">Không thể đo từ các cảnh báo đã hiển thị</strong>
       </footer>
     </section>
   )
 }
 
-function HeatMap({ points }) {
-  const max = Math.max(...points.map((point) => point.total || 0), 1)
-  return <article className="viz-panel heatmap-panel">
-    <div className="panel-heading"><div><p className="eyebrow">Simulated floor plan</p><h2>Incident heat map</h2></div><span className="panel-stat">{points.length} cameras</span></div>
-    {points.length ? <div className="heatmap-canvas" role="img" aria-label="Simulated incident heat map">
-      {points.map((point) => <span key={point.camera_id} className="heatmap-point" title={`${point.camera_name}: ${point.total} alerts`} style={{ left: `${point.x}%`, top: `${point.y}%`, '--intensity': point.total / max }}><b>{point.total}</b></span>)}
-    </div> : <EmptyState text="No incident locations recorded" />}
-  </article>
+function shouldShowChartLabel(index, count) {
+  if (count <= 7) return true
+  const step = Math.ceil((count - 1) / 5)
+  return index === 0 || index === count - 1 || index % step === 0
 }
 
 function MetricCard({ label, value, detail, tone }) {
@@ -154,33 +185,33 @@ function TrendChart({ days }) {
   const area = points.length ? `${padX},${height - padY} ${line} ${width - padX},${height - padY}` : ''
 
   return <article className="viz-panel trend-panel">
-    <div className="panel-heading"><div><p className="eyebrow">Signal over time</p><h2>Alert activity</h2></div><span className="panel-stat">{number(values.reduce((sum, value) => sum + value, 0))} total</span></div>
+    <div className="panel-heading"><div><p className="eyebrow">Tín hiệu theo thời gian</p><h2>Hoạt động cảnh báo</h2></div><span className="panel-stat">Tổng {number(values.reduce((sum, value) => sum + value, 0))}</span></div>
     {points.length ? <div className="trend-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Daily alert activity trend">
       {[0.25, 0.5, 0.75].map((fraction) => <line key={fraction} x1={padX} x2={width - padX} y1={height - padY - fraction * (height - padY * 2)} y2={height - padY - fraction * (height - padY * 2)} className="chart-gridline" />)}
       <polygon points={area} className="chart-area" />
       <polyline points={line} className="chart-line" />
       {points.map(([x, y], index) => <circle key={index} cx={x} cy={y} r="4" className="chart-point"><title>{days[index].date}: {days[index].total} alerts</title></circle>)}
-    </svg><div className="chart-labels">{days.map((day) => <span key={day.date}>{day.date}</span>)}</div></div> : <EmptyState text="No alert activity in this window" />}
+    </svg><div className="chart-labels">{days.map((day, index) => <span key={day.date} className={shouldShowChartLabel(index, days.length) ? '' : 'chart-label-muted'}>{day.date}</span>)}</div></div> : <EmptyState text="Không có cảnh báo trong khoảng này" />}
   </article>
 }
 
 function ReviewPulse({ reviewed, total, activeCameras, totalCameras }) {
   const ratio = total ? Math.round((reviewed / total) * 100) : 0
   return <article className="viz-panel pulse-panel">
-    <div className="panel-heading"><div><p className="eyebrow">Operator readiness</p><h2>Review pulse</h2></div><span className="panel-icon">↗</span></div>
-    <div className="pulse-main"><div className="donut" style={{ '--progress': `${ratio * 3.6}deg` }}><div><strong>{ratio}%</strong><span>reviewed</span></div></div><div className="pulse-copy"><strong>{reviewed ? `${number(reviewed)} judgements recorded` : 'No judgements yet'}</strong><span>{total ? `${number(total - reviewed)} alerts still need a decision` : 'The review queue is clear'}</span></div></div>
-    <div className="pulse-foot"><span><i className="pulse-key green" />Cameras live</span><strong>{activeCameras !== null && totalCameras !== null ? `${activeCameras}/${totalCameras}` : '—'}</strong></div>
+    <div className="panel-heading"><div><p className="eyebrow">Mức độ sẵn sàng</p><h2>Tiến độ xử lý</h2></div><span className="panel-icon">↗</span></div>
+    <div className="pulse-main"><div className="donut" style={{ '--progress': `${ratio * 3.6}deg` }}><div><strong>{ratio}%</strong><span>đã xem</span></div></div><div className="pulse-copy"><strong>{reviewed ? `Đã ghi nhận ${number(reviewed)} kết luận` : 'Chưa có kết luận'}</strong><span>{total ? `Còn ${number(total - reviewed)} cảnh báo cần xử lý` : 'Hàng đợi đã trống'}</span></div></div>
+    <div className="pulse-foot"><span><i className="pulse-key green" />Camera trực tiếp</span><strong>{activeCameras !== null && totalCameras !== null ? `${activeCameras}/${totalCameras}` : '—'}</strong></div>
   </article>
 }
 
 function IncidentMix({ rows }) {
   const max = Math.max(...rows.map((row) => row.total || row.reviewed || 0), 1)
-  return <article className="viz-panel mix-panel"><div className="panel-heading"><div><p className="eyebrow">Classification quality</p><h2>Incident mix</h2></div><span className="panel-stat">{rows.length} types</span></div>{rows.length ? <div className="mix-list">{rows.map((row) => { const total = row.total || row.reviewed || 0; const precision = row.precision; const meta = incidentMeta(row.label); return <div className="mix-row" key={row.label}><div className="mix-row-top"><strong>{meta.short}</strong><span>{number(total)} reviewed · {pct(precision)} precision</span></div><div className="mix-track"><span style={{ width: `${(total / max) * 100}%` }} /><b style={{ left: `${Math.min(100, (precision || 0) * 100)}%` }} /></div></div>})}</div> : <EmptyState text="No reviewed incidents yet" />}</article>
+  return <article className="viz-panel mix-panel"><div className="panel-heading"><div><p className="eyebrow">Chất lượng phân loại</p><h2>Cơ cấu sự cố</h2></div><span className="panel-stat">{rows.length} loại</span></div>{rows.length ? <div className="mix-list">{rows.map((row) => { const total = row.total || row.reviewed || 0; const precision = row.precision; const meta = incidentMeta(row.label); return <div className="mix-row" key={row.label}><div className="mix-row-top"><strong>{meta.short}</strong><span>{number(total)} đã xem · chính xác {pct(precision)}</span></div><div className="mix-track"><span style={{ width: `${(total / max) * 100}%` }} /><b style={{ left: `${Math.min(100, (precision || 0) * 100)}%` }} /></div></div>})}</div> : <EmptyState text="Chưa có sự cố được xử lý" />}</article>
 }
 
 function CameraHotspots({ rows }) {
   const max = Math.max(...rows.map((row) => row.total || 0), 1)
-  return <article className="viz-panel camera-panel"><div className="panel-heading"><div><p className="eyebrow">Where attention lands</p><h2>Camera hotspots</h2></div><span className="panel-stat">{rows.length} cameras</span></div>{rows.length ? <div className="hotspot-list">{rows.slice().sort((a, b) => b.total - a.total).map((row) => <div className="hotspot-row" key={row.camera_id}><div className="hotspot-label"><strong>{row.camera_name}</strong><span>{number(row.total)} alerts · {row.total ? Math.round((row.reviewed / row.total) * 100) : 0}% reviewed</span></div><div className="hotspot-track"><span style={{ width: `${(row.total / max) * 100}%` }} /></div></div>)}</div> : <EmptyState text="No camera alerts recorded" />}</article>
+  return <article className="viz-panel camera-panel"><div className="panel-heading"><div><p className="eyebrow">Điểm cần chú ý</p><h2>Camera có nhiều sự cố</h2></div><span className="panel-stat">{rows.length} camera</span></div>{rows.length ? <div className="hotspot-list">{rows.slice().sort((a, b) => b.total - a.total).map((row) => <div className="hotspot-row" key={row.camera_id}><div className="hotspot-label"><strong>{row.camera_name}</strong><span>{number(row.total)} cảnh báo · {row.total ? Math.round((row.reviewed / row.total) * 100) : 0}% đã xem</span></div><div className="hotspot-track"><span style={{ width: `${(row.total / max) * 100}%` }} /></div></div>)}</div> : <EmptyState text="Chưa ghi nhận cảnh báo camera" />}</article>
 }
 
 function TriagePanel({ rows, agreement, coverage }) {

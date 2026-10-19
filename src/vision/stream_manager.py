@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from src.vision.detector import IncidentDetector
+from src.vision.fall_pose import FallPoseEstimator
 from src.vision.motion import MotionGate
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import RuleEngine
@@ -141,8 +142,10 @@ class MultiStreamManager:
         pipeline_factory: Callable[[], VisionPipeline] | None = None,
         global_on_incident_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
         global_on_frame_callback: Callable[[str, FrameAnalysisResult, np.ndarray], None] | None = None,
+        global_on_raw_frame_callback: Callable[[str, np.ndarray], None] | None = None,
         tune_torch_threads: bool = True,
         max_concurrent_inferences: int | None = None,
+        capture_max_height: int = 0,
     ):
         """Initialize the multi-stream manager.
 
@@ -170,6 +173,12 @@ class MultiStreamManager:
         self._pipeline_factory = pipeline_factory or self._make_default_factory(shared_pipeline)
         self.global_on_incident_callback = global_on_incident_callback
         self.global_on_frame_callback = global_on_frame_callback
+        # Raw frame straight from each worker's display loop, at display_fps — the pre-roll
+        # ring's feed, decoupled from the inference cadence. Called on the display thread,
+        # so it must be cheap (a JPEG encode + deque append).
+        self.global_on_raw_frame_callback = global_on_raw_frame_callback
+        # Passed to every worker: downscale decoded frames to this height (0 = native).
+        self._capture_max_height = capture_max_height
         concurrency = (
             self._default_inference_concurrency()
             if max_concurrent_inferences is None
@@ -228,6 +237,7 @@ class MultiStreamManager:
         detector = template.detector
         engine = template.rule_engine
         gate = template.motion_gate
+        pose = template.fall_pose_estimator
 
         def factory() -> VisionPipeline:
             return VisionPipeline(
@@ -236,6 +246,7 @@ class MultiStreamManager:
                     conf_threshold=detector.conf_threshold,
                     target_labels=detector.target_labels,
                     use_tracking=detector.use_tracking,
+                    tracker_config=detector.tracker_config,
                 ),
                 rule_engine=RuleEngine(
                     # Zones are immutable config and carry no per-stream state, so the
@@ -256,6 +267,12 @@ class MultiStreamManager:
                     fall_persistence_grace_sec=engine.fall_persistence_grace_sec,
                     fall_recovery_ratio=engine.fall_recovery_ratio,
                     fall_min_indicators=engine.fall_min_indicators,
+                    fall_min_descent_speed=engine.fall_min_descent_speed,
+                    fall_static_dwell_sec=engine.fall_static_dwell_sec,
+                    fall_furniture_overlap=engine.fall_furniture_overlap,
+                    fall_pose_upright_deg=engine.fall_pose_upright_deg,
+                    fall_pose_upright_fraction=engine.fall_pose_upright_fraction,
+                    fall_pose_min_coverage=engine.fall_pose_min_coverage,
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,
@@ -275,6 +292,12 @@ class MultiStreamManager:
                     min_changed_fraction=gate.min_changed_fraction,
                     heartbeat_sec=gate.heartbeat_sec,
                     diff_size=gate.diff_size,
+                ),
+                # One model per worker: ultralytics predictors are not safe to share across threads.
+                fall_pose_estimator=(
+                    FallPoseEstimator(pose.model_path, pose.keypoint_conf, pose.min_match_iou)
+                    if pose is not None and pose.enabled
+                    else None
                 ),
             )
 
@@ -314,10 +337,12 @@ class MultiStreamManager:
                 rtsp_url=rtsp_url,
                 pipeline=self._pipeline_factory(),
                 on_result_callback=self._handle_worker_result,
+                on_raw_frame_callback=self.global_on_raw_frame_callback,
                 target_fps=target_fps,
                 max_reconnect_attempts=max_reconnect_attempts,
                 loop_finite_sources=loop_finite_sources,
                 inference_semaphore=self._inference_semaphore,
+                capture_max_height=self._capture_max_height,
             )
             self.workers[camera_id] = worker
 
@@ -357,6 +382,49 @@ class MultiStreamManager:
                 "stale rather than error. Check average_inference_capacity_fps in "
                 "get_status(), and see MultiStreamManager's docstring for scaling options."
             )
+
+    def latest_display_jpeg(self, camera_id: str) -> bytes | None:
+        """The named camera's newest high-cadence display frame, or None if it has none yet
+        (not added, not started, or the display thread hasn't encoded its first frame)."""
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.get_latest_display_jpeg() if worker else None
+
+    def last_tracks(self, camera_id: str) -> dict[str, tuple[float, float, float, float]]:
+        """The named camera's most recent tracked person boxes, normalized [0, 1]. Empty
+        dict if the camera has no worker or no inference has run yet. See
+        `VisionPipeline.last_tracks` for why normalized and why this is safe to read from
+        another thread."""
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.pipeline.last_tracks() if worker else {}
+
+    def h264_encoder(self, camera_id: str):
+        """The named camera's fMP4 encoder, or None if it has no worker or H.264 is off.
+
+        Returned for the video WebSocket to subscribe to; see `H264StreamEncoder`. Callers
+        must also check `.available` — an encoder exists but is unusable on a host with no
+        working H.264 encoder, and that is the signal to fall back to MJPEG.
+        """
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        return worker.get_h264_encoder() if worker else None
+
+    def start_camera(self, camera_id: str) -> bool:
+        """Start the named camera's threads if it has a worker. False if it has none.
+
+        `CameraStreamWorker.start` is itself idempotent, so calling this on an already-running
+        camera is harmless. Exposed because `add_camera(autostart=False)` leaves the decision
+        to the caller, and the deferred-start path in `MonitoringService` needs to make that
+        decision later — from the request that attaches the first viewer, rather than from
+        the one that created the camera.
+        """
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        if worker is None:
+            return False
+        worker.start()
+        return True
 
     def remove_camera(self, camera_id: str) -> bool:
         """Stop and remove a camera stream by ID."""

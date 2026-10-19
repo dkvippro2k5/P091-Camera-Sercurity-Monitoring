@@ -58,6 +58,75 @@ def test_detector_with_no_model_returns_nothing():
     assert detector.detect(dummy_frame) == []
 
 
+def test_confidence_gates_new_tracks_but_lets_an_established_track_continue():
+    """A person lying on the floor scores below DETECTOR_CONFIDENCE; their track must survive.
+
+    Before this, detections below the threshold were dropped before tracking, so the track
+    broke at the moment of impact and the fall rule never saw the person land.
+    """
+    detector = IncidentDetector(model_path=None, conf_threshold=0.4)
+
+    assert not detector._passes_confidence("track_7", 0.3)  # weak and never established
+    assert not detector._passes_confidence(None, 0.3)  # weak and untracked
+    assert detector._passes_confidence("track_7", 0.8)  # clears the gate -> established
+    assert detector._passes_confidence("track_7", 0.3)  # same track, now lying, still reported
+    assert not detector._passes_confidence("track_8", 0.3)
+
+
+def _fake_tracking_model(frames: list[list[tuple[int, int, float]]]):
+    """A stand-in for YOLO.track(): each call returns the next frame's (track id, class, conf)."""
+    import torch
+
+    class _Box:
+        def __init__(self, track_id: int, cls: int, conf: float):
+            self.xyxy = torch.tensor([[10.0, 10.0, 60.0, 40.0]])
+            self.conf = torch.tensor([conf])
+            self.cls = torch.tensor([float(cls)])
+            self.id = torch.tensor([float(track_id)])
+
+    class _Result:
+        names = {0: "person", 59: "bed"}
+
+        def __init__(self, boxes):
+            self.boxes = boxes
+
+    class _Model:
+        def __init__(self):
+            self.calls = iter(frames)
+
+        def track(self, frame, **kwargs):
+            return [_Result([_Box(*b) for b in next(self.calls)])]
+
+    return _Model()
+
+
+def test_a_person_track_stays_a_person_when_yolo_calls_it_a_bed():
+    """YOLO often labels someone lying on the floor "bed"; the tracker keeps the same ID.
+    Dropped, the person vanished mid-fall; kept as "bed", it overwrote their track state."""
+    detector = IncidentDetector(model_path=None, conf_threshold=0.4, target_labels=["person", "bed"])
+    detector.model = _fake_tracking_model([[(1, 0, 0.9)], [(1, 59, 0.5)], [(2, 59, 0.8)]])
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_1", "person")]
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_1", "person")]
+    # A track that was never a person is a real bed.
+    assert [(d.track_id, d.label) for d in detector.detect(frame)] == [("track_2", "bed")]
+
+
+def test_the_pinned_tracker_config_ships_with_the_repo():
+    """Unpinned, model.track() follows the installed ultralytics default (TrackTrack in 8.4.143)."""
+    import yaml
+
+    from src.vision.detector import DEFAULT_TRACKER_CONFIG
+
+    path = IncidentDetector._resolve_weights(DEFAULT_TRACKER_CONFIG)
+    assert path is not None
+    with open(path, encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    assert config["tracker_type"] == "bytetrack"
+    assert config["track_low_thresh"] < 0.4
+
+
 def test_vision_pipeline_frame_process():
     pipeline = VisionPipeline()
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -117,6 +186,42 @@ def test_camera_id_propagates_into_detections():
     assert result.timestamp is not None
     assert result.detections, f"no detections in the first 15 frames of '{clips[0]}'"
     assert all(d.camera_id == "cam_lobby_07" for d in result.detections)
+
+
+def test_last_tracks_normalizes_person_boxes_to_the_frame_size():
+    """`last_tracks` is what MonitoringService crops the VLM clip to a track with (see
+    docs/plans/vlm-throughput-and-concurrent-events.md stage 3) -- it must report boxes as
+    fractions of the frame, not pixels, since the ring reads them back at whatever
+    resolution that particular frame happens to be at.
+    """
+    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
+    # Bypass detection entirely -- this pins the normalization math in last_tracks, not
+    # YOLO's output, so it needs no model weights and no real footage.
+    pipeline._last_detections = [
+        IncidentDetection(
+            label="person",
+            track_id="person_1",
+            confidence=0.9,
+            bbox=BoundingBox(xmin=100, ymin=50, xmax=300, ymax=450),
+        ),
+        IncidentDetection(
+            label="backpack",
+            track_id="bag_1",
+            confidence=0.8,
+            bbox=BoundingBox(xmin=10, ymin=10, xmax=20, ymax=20),
+        ),
+    ]
+    pipeline._last_detections_frame_size = (400, 500)  # (width, height)
+
+    tracks = pipeline.last_tracks()
+
+    assert set(tracks) == {"person_1"}, "only person tracks are returned"
+    assert tracks["person_1"] == pytest.approx((0.25, 0.1, 0.75, 0.9))
+
+
+def test_last_tracks_is_empty_before_the_first_inference():
+    pipeline = VisionPipeline(detector=IncidentDetector(model_path=None))
+    assert pipeline.last_tracks() == {}
 
 
 def test_torch_thread_tuning_is_idempotent():

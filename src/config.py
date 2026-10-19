@@ -22,9 +22,18 @@ class Settings(BaseSettings):
     # this API with an opaque CORS error that looks like the backend is down.
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     allowed_hosts: str = "localhost,127.0.0.1,test,testserver"
+    # Whether startup re-adds the cameras saved in the registry. On by default, because a
+    # deployment that restarts must come back watching what it was watching. Turn it off for
+    # local work, where the saved set is whatever the last experiment left behind and having
+    # it start itself means every `--reload` re-opens six video files and floods the alert
+    # queue before anyone has asked for a camera at all.
+    restore_cameras_on_start: bool = True
 
     # LLM
     openai_api_key: str = ""
+    # Empty keeps the official OpenAI endpoint. Set to point the same OpenAI-compatible
+    # client at a proxy/alternate provider (e.g. an internal gateway) without touching code.
+    openai_base_url: str = ""
     model_name: str = "gpt-4o-mini"
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
@@ -47,17 +56,57 @@ class Settings(BaseSettings):
     vlm_max_frames: int = Field(default=6, ge=2, le=16)
     vlm_timeout_sec: float = Field(default=20.0, gt=0.0)
     vlm_history_examples: int = Field(default=6, ge=0, le=32)
+    # How many semantically-similar past incidents (pgvector lookup, EMBEDDINGS_ENABLED) to
+    # fold into the triage prompt *before* the model answers, so a consistent contradiction
+    # in the neighbours can pull its confidence down. 0 disables. Has no effect when
+    # embeddings are off — the lookup returns nothing.
+    vlm_similar_examples: int = Field(default=3, ge=0, le=16)
+    vlm_similar_min_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
+    # A false_positive verdict at or above this confidence hides the alert from the guard
+    # queue entirely (frontend isAutoSuppressed). Confidence is self-reported by the model
+    # with no calibration, so keep this high; raise it toward 1.0 while trust in a new
+    # deployment is still being established. Served to the client in monitoring/status.
+    vlm_auto_suppress_confidence: float = Field(default=0.9, ge=0.0, le=1.0)
 
     # Monitoring
     # Per (camera, label) floor between alerts. One flickering track would otherwise
     # open a modal on every frame it flickers.
     alert_cooldown_sec: float = Field(default=30.0, ge=0.0)
+    # Abandoned-object rule. 2s is a demo/illustration default so a short clip shows the
+    # alert fire; PETS2006/AVSS-style production deployments use 30-60s. Not a RuleEngine
+    # default because that module is pinned by its test suite — this is the one construction
+    # site that reads Settings, and stream_manager already copies these onto every worker.
+    abandon_sec: float = Field(default=2.0, gt=0.0)
+    owner_radius_ratio: float = Field(default=0.25, gt=0.0, le=1.0)
+    stationary_tolerance_ratio: float = Field(default=0.02, gt=0.0, le=1.0)
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
+    # On a CPU host DO NOT raise this above the default: several 4K inferences in parallel
+    # thrash the cores and drop each camera to a fraction of an fps. Measured on this box,
+    # 4 cameras: sem=2 -> ~3.6 fps/cam, sem=4 -> ~0.2 fps/cam.
     camera_max_concurrent_inferences: int = Field(default=0, ge=0, le=32)
+    # Downscale every decoded frame to this height before detection / tracking / display /
+    # the VLM ring (0 = keep native). The single most effective knob for a CPU host with
+    # 1440p or 4K sources: a 4K frame is ~5x the pipeline cost of a 720p one. 720 is a good
+    # default there; leave 0 if sources are already <=1080p or the host has a GPU.
+    camera_capture_max_height: int = Field(default=0, ge=0, le=2160)
     detector_confidence: float = Field(default=0.40, ge=0.0, le=1.0)
-    model_weights_path: str = "src/vision/weights/yolo26l.pt"
-    detector_target_labels: str = "person,backpack,handbag,suitcase"
+    # `yolo26n.pt` is not shipped in this repo and no build step fetches it, so that used
+    # to be the default here — a fresh clone with no .env override raised FileNotFoundError
+    # from IncidentDetector on the very first camera. `yolo26s.pt` is the weight file this
+    # repo actually carries (see the .env template's own comment: n was tried and reverted
+    # for missing over half its detections against l on a real clip; s matches l's recall
+    # at ~3x the speed). A GPU deployment should still override to yolo26l.pt via
+    # MODEL_WEIGHTS_PATH, as .env.example documents.
+    model_weights_path: str = "src/vision/weights/yolo26s.pt"
+    # bed/couch are context only: the fall rule's static-lying layer does not report someone
+    # lying on one. Dropping them from the list turns that check off, not the layer.
+    detector_target_labels: str = "person,backpack,handbag,suitcase,bed,couch"
+    # COCO-keypoint pose model for the fall rule's pose gate, which holds back a fall alert
+    # while the torso stays upright (kneeling, sitting down, picking something up). Not
+    # shipped in the repo; a missing file only logs a warning and leaves the gate off.
+    # Empty turns it off explicitly.
+    fall_pose_weights_path: str = "src/vision/weights/yolo26s-pose.pt"
     # Auth
     # scrypt cost as a power of two. Measured on the dev box (2026-08-10): 14 -> 122 ms,
     # 15 -> 164 ms, 16 -> 333 ms. 14 sits in the 80-150 ms band — real cost to an attacker,
@@ -97,10 +146,11 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     embedding_model: str = "text-embedding-3-small"
 
-    # Zalo OA notifications. Disabled until an official OA token and recipient IDs exist.
-    zalo_enabled: bool = False
-    zalo_access_token: str = ""
-    zalo_recipients: str = ""
+    # Telegram notifications. Disabled until a bot token and chat IDs exist.
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    # Comma-separated user or group chat IDs. Telegram accepts both in the same list.
+    telegram_chat_ids: str = ""
     notification_max_retries: int = Field(default=3, ge=0, le=10)
     notification_backoff_sec: float = Field(default=2.0, gt=0.0, le=60.0)
 

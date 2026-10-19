@@ -14,6 +14,22 @@ from src.main import app
 TEST_WORK_FACTOR = 12
 
 
+@pytest.fixture(autouse=True)
+def _registry_restore_is_on(monkeypatch):
+    """Pin `restore_cameras_on_start` on, whatever the developer's own `.env` says.
+
+    `MonitoringService.__init__` reads it, and turning it off locally — which is the point
+    of the setting — otherwise silently changes what several tests are asserting about
+    `_restore_registry`. Tests must describe the code's behaviour, not the machine's config;
+    this is the same isolation `auth_app` applies to `database_url` for the same reason.
+    """
+    from src.config import get_settings
+    from src.services import monitoring as monitoring_module
+
+    pinned = get_settings().model_copy(update={"restore_cameras_on_start": True})
+    monkeypatch.setattr(monitoring_module, "get_settings", lambda: pinned)
+
+
 @pytest_asyncio.fixture
 async def client():
     """Async HTTP client for testing API endpoints."""
@@ -66,6 +82,24 @@ def isolated_data(monkeypatch, tmp_path):
     history_path = str(tmp_path / "vlm_history.jsonl")
     monkeypatch.setattr(monitoring_module, "IncidentDetector", lambda **_: IncidentDetector(model_path=None))
     monkeypatch.setattr(monitoring_module, "REGISTRY_PATH", str(tmp_path / "cameras.json"))
+    # Same isolation concern as database_url in `auth_app`: EMBEDDINGS_ENABLED=true in a
+    # developer's real .env would otherwise make every MonitoringService() constructed in
+    # this suite open a real connection to whatever Postgres DATABASE_URL points at, and
+    # call the real embeddings API, on every test -- not just slow, but a real spend against
+    # someone's API quota for tests that have nothing to do with this feature.
+    monkeypatch.setattr(monitoring_module, "create_embedding_store", lambda: None)
+    monkeypatch.setattr(monitoring_module, "build_embedder", lambda settings: None)
+    # `create_camera_registry` now selects Postgres purely on DATABASE_URL (matching every
+    # other store), so a developer whose real .env points at Postgres would otherwise have
+    # every MonitoringService() in this suite open a connection to it just to load an empty
+    # camera roster. Force the local-file registry at the isolated path.
+    from src.services.camera_registry import FileCameraRegistry
+
+    monkeypatch.setattr(
+        monitoring_module,
+        "create_camera_registry",
+        lambda path: FileCameraRegistry(str(tmp_path / "cameras.json")),
+    )
     monkeypatch.setattr(monitoring_module, "AlertHistory", lambda: AlertHistory(path=history_path))
     monkeypatch.setattr(monitoring_module, "IncidentLog", lambda: IncidentLog(path=str(tmp_path / "incidents.jsonl")))
     monkeypatch.setattr(
@@ -88,6 +122,7 @@ def auth_app(monkeypatch, tmp_path, isolated_data):
 
     Yields `(TestClient, UserStore)` so a test can add an account or flip `active` directly.
     """
+    from src.config import get_settings
     from src.services.sessions import SessionStore
     from src.services.user_store import UserStore
 
@@ -100,6 +135,14 @@ def auth_app(monkeypatch, tmp_path, isolated_data):
 
     monkeypatch.setattr(main_module, "UserStore", lambda: users)
     monkeypatch.setattr(main_module, "SessionStore", lambda **_: sessions)
+
+    # `use_postgres` in the lifespan reads settings.database_url directly, bypassing the two
+    # patches above entirely whenever a developer's real .env points at a real Postgres URL
+    # (as opposed to the sqlite:// default) — the suite would otherwise hit a live network
+    # database with a fresh schema that has none of the users seeded below. Force sqlite here
+    # so the suite's behavior never depends on what happens to be in the local .env.
+    sqlite_settings = get_settings().model_copy(update={"database_url": f"sqlite:///{tmp_path / 'unused.db'}"})
+    monkeypatch.setattr(main_module, "get_settings", lambda: sqlite_settings)
 
     users.add_user("gwen", "guard-password", "guard", "Gwen the Guard", work_factor=TEST_WORK_FACTOR)
     users.add_user("morgan", "manager-password", "manager", "Morgan the Manager", work_factor=TEST_WORK_FACTOR)

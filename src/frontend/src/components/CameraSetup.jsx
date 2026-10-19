@@ -1,11 +1,28 @@
-import { useState, useEffect } from 'react'
-import PolygonCanvas from './PolygonCanvas'
+import { useState, useEffect, useRef } from 'react'
+import PendingSourceTile from './PendingSourceTile'
 import { api } from '../api'
-import { describeWindow, toWindowString } from '../activeHours'
+import { toWindowString } from '../activeHours'
 import { incidentMeta } from '../incidents'
 
+const SOURCE_LABELS = { demo: 'Video mẫu', upload: 'Tải video lên', rtsp: 'Luồng RTSP' }
+
+function deriveRtspName(url) {
+  try {
+    return new URL(url).hostname || 'Luồng RTSP'
+  } catch {
+    return 'Luồng RTSP'
+  }
+}
+
 /**
- * The guard's camera screen: what exists, plus the form to add another.
+ * The guard's camera screen: what exists, plus the form to add more.
+ *
+ * Adding is queue-then-submit rather than one-shot: the operator builds up a list of
+ * sources — any mix of RTSP streams, sample clips, and uploaded files — each with its own
+ * name, zone and schedule, then adds them all at once. This replaced two separate paths (a
+ * single-source form and a no-zone "batch upload for testing" section) that did the same
+ * job through different doors; the batch path in particular could never draw a zone; folding
+ * multi-upload into the same queue removes that gap instead of caging it off in a toggle.
  *
  * The existing-camera list here is now convenience rather than the only route to a delete —
  * the guard owns both this screen and the live grid, whose tiles carry their own delete
@@ -13,85 +30,139 @@ import { incidentMeta } from '../incidents'
  * shown the current roster next to the form is how you notice a camera is already configured
  * before adding it twice.
  */
-export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete }) {
-  const [name, setName] = useState('')
-  const [sourceType, setSourceType] = useState('demo')
-  const [source, setSource] = useState('')
+export default function CameraSetup({ onAddBatch, onCancel, cameras = [], onDelete }) {
+  const [pendingSources, setPendingSources] = useState([])
+  const [sourceType, setSourceType] = useState('rtsp')
+  const [rtspInput, setRtspInput] = useState('')
+  const [demoSelection, setDemoSelection] = useState('')
   const [demos, setDemos] = useState([])
-  const [intrusionEnabled, setIntrusionEnabled] = useState(false)
-  const [polygon, setPolygon] = useState([])
-  // Always-armed is the default. The PRD's example window is 22:00-05:00, but defaulting to
-  // it would mean a camera added at 14:00 silently watches nothing for eight hours — the
-  // failure has to be opted into, not inherited.
-  const [hoursEnabled, setHoursEnabled] = useState(false)
-  const [startTime, setStartTime] = useState('22:00')
-  const [endTime, setEndTime] = useState('05:00')
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [imageError, setImageError] = useState(false)
+  const nextKeyRef = useRef(0)
 
   useEffect(() => {
     api
       .listDemoVideos()
       .then((videos) => {
         setDemos(videos)
-        if (videos.length) setSource(videos[0].id)
+        if (videos.length) setDemoSelection(videos[0].id)
       })
       .catch((err) => setError(err.message))
   }, [])
 
-  // The polygon is drawn on a still from *this* source, so switching source invalidates
-  // whatever was drawn — keeping it would place the zone against a different scene.
-  useEffect(() => {
-    setPolygon([])
-    setImageError(false)
-  }, [sourceType, source])
+  function addEntry({ source_type, source, name }) {
+    setPendingSources((prev) => [
+      ...prev,
+      {
+        key: `src-${nextKeyRef.current++}`,
+        name,
+        source_type,
+        source,
+        intrusion_enabled: false,
+        polygon: [],
+        // Always-armed is the default. The PRD's example window is 22:00-05:00, but
+        // defaulting to it would mean a camera added at 14:00 silently watches nothing
+        // for eight hours — the failure has to be opted into, not inherited.
+        hours_enabled: false,
+        start_time: '22:00',
+        end_time: '05:00',
+        image_error: false,
+      },
+    ])
+  }
 
-  const canPreview = Boolean(source) && (sourceType !== 'rtsp' || source.startsWith('rtsp://'))
-  const previewUrl = canPreview ? api.previewFrameUrl(sourceType, source) : null
-
-  async function handleUpload(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    setBusy(true)
-    setError(null)
-    try {
-      const { filename } = await api.uploadVideo(file)
-      // The server-generated name is what the backend can resolve; the original filename
-      // is never used as a path.
-      setSource(filename)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
+  function addRtspEntry() {
+    const url = rtspInput.trim()
+    if (!url.startsWith('rtsp://')) {
+      setError('Nhập URL RTSP hợp lệ, bắt đầu bằng rtsp://')
+      return
     }
+    setError(null)
+    addEntry({ source_type: 'rtsp', source: url, name: deriveRtspName(url) })
+    setRtspInput('')
+  }
+
+  function addDemoEntry() {
+    if (!demoSelection) return
+    const demo = demos.find((d) => d.id === demoSelection)
+    addEntry({ source_type: 'demo', source: demoSelection, name: demo?.name ?? 'Video mẫu' })
+  }
+
+  // Every selected file becomes its own queued camera. Uploads run sequentially (one big
+  // multi-part POST per file is simpler than a fan-out, and this is an interactive add
+  // flow, not a path that needs to race itself) so `uploadStatus` can report which file is
+  // in flight.
+  async function handleUploadFiles(event) {
+    const files = Array.from(event.target.files || [])
+    if (!files.length) return
+
+    setUploadBusy(true)
+    setError(null)
+    const failures = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      setUploadStatus(`Đang tải ${i + 1}/${files.length}: ${file.name}`)
+      try {
+        const { filename } = await api.uploadVideo(file)
+        addEntry({
+          source_type: 'upload',
+          source: filename,
+          name: file.name.replace(/\.[^/.]+$/, '').slice(0, 64) || `Camera ${i + 1}`,
+        })
+      } catch (err) {
+        failures.push(`${file.name}: ${err.message}`)
+      }
+    }
+
+    setUploadStatus(null)
+    setUploadBusy(false)
+    event.target.value = ''
+    if (failures.length) setError(failures.join('; '))
+  }
+
+  function updateEntry(key, patch) {
+    setPendingSources((prev) => prev.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)))
+  }
+
+  function removeEntry(key) {
+    setPendingSources((prev) => prev.filter((entry) => entry.key !== key))
   }
 
   async function handleSubmit(event) {
     event.preventDefault()
     setError(null)
 
-    if (intrusionEnabled && polygon.length < 3) {
-      setError('Draw at least 3 points on the preview to define the restricted zone.')
-      return
-    }
-    if (intrusionEnabled && hoursEnabled && startTime === endTime) {
-      setError('Zone hours start and end are the same time. Pick a different end time, or switch to always armed.')
+    const invalid = pendingSources.filter((entry) => {
+      if (!entry.intrusion_enabled) return false
+      if (entry.polygon.length < 3) return true
+      if (entry.hours_enabled && entry.start_time === entry.end_time) return true
+      return false
+    })
+    if (invalid.length) {
+      setError(
+        `Hoàn tất vùng giám sát cho: ${invalid.map((e) => e.name || 'camera chưa đặt tên').join(', ')}. ` +
+          'Cần ít nhất 3 điểm trên ảnh xem trước, và giờ bắt đầu/kết thúc phải khác nhau.'
+      )
       return
     }
 
     setBusy(true)
     try {
-      await onAdd({
-        name: name.trim() || 'Camera',
-        source_type: sourceType,
-        source,
-        intrusion_enabled: intrusionEnabled,
-        zone_polygon: intrusionEnabled ? polygon : null,
-        // Only meaningful alongside a zone, so it rides with the polygon rather than
-        // being sent for a camera that has intrusion switched off.
-        zone_active_hours: intrusionEnabled ? toWindowString(hoursEnabled, startTime, endTime) : null,
-      })
+      await onAddBatch(
+        pendingSources.map((entry) => ({
+          name: entry.name.trim() || 'Camera mới',
+          source_type: entry.source_type,
+          source: entry.source,
+          intrusion_enabled: entry.intrusion_enabled,
+          zone_polygon: entry.intrusion_enabled ? entry.polygon : null,
+          zone_active_hours: entry.intrusion_enabled
+            ? toWindowString(entry.hours_enabled, entry.start_time, entry.end_time)
+            : null,
+        }))
+      )
     } catch (err) {
       setError(err.message)
     } finally {
@@ -99,177 +170,105 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
     }
   }
 
-  const SOURCE_LABELS = { demo: 'Prepared demo', upload: 'Upload video', rtsp: 'RTSP stream' }
-  // Recomputed on render rather than memoized: it reads the current clock, and the whole
-  // point is that it reflects the moment the operator is looking at it.
-  const windowNote = describeWindow(startTime, endTime)
-
   return (
     <div className="setup">
       <header className="setup-page-head">
         <div>
-          <p className="eyebrow">Camera configuration</p>
-          <h1>Manage cameras</h1>
-          <p>Sources, detection rules, and monitoring zones.</p>
+          <p className="eyebrow">Cấu hình camera</p>
+          <h1>Quản lý camera</h1>
+          <p>Nguồn phát, quy tắc phát hiện và vùng giám sát.</p>
         </div>
-        <button type="button" onClick={onCancel}>Return to live grid</button>
+        <button type="button" onClick={onCancel}>Quay lại màn hình giám sát</button>
       </header>
 
       <CameraList cameras={cameras} onDelete={onDelete} />
 
       <form onSubmit={handleSubmit} className="setup-split">
-        {/* Left Column: Form Fields */}
+        {/* Left Column: add-source controls */}
         <div className="setup-col-form">
           <div className="setup-form-head">
-            <span className="setup-step">01</span>
-            <div><h2>Add a camera</h2><p>Choose a source and detection policy.</p></div>
+            <div><h2>Thêm camera</h2><p>Thêm một hoặc nhiều nguồn video, rồi cấu hình từng nguồn ở bên phải.</p></div>
           </div>
-          <label className="field">
-            <span>Camera name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Lobby north" />
-            <span className="hint">Shown on the live tile and in every alert from this camera.</span>
-          </label>
 
           <fieldset>
-            <legend>Video source</legend>
+            <legend>Nguồn video</legend>
 
-            <div className="choices">
-              {['demo', 'upload', 'rtsp'].map((type) => (
-                <label key={type} className="choice">
+            <div className="choices source-choices">
+              {['rtsp', 'demo', 'upload'].map((type) => (
+                <label key={type} className={`choice ${type === 'rtsp' ? 'choice-primary' : 'choice-secondary'}`}>
                   <input
                     type="radio"
                     name="source_type"
                     value={type}
                     checked={sourceType === type}
-                    onChange={() => {
-                      setSourceType(type)
-                      setSource(type === 'demo' && demos.length ? demos[0].id : '')
-                    }}
+                    onChange={() => setSourceType(type)}
                   />
-                  {SOURCE_LABELS[type]}
+                  <span className="choice-copy">
+                    <strong>{SOURCE_LABELS[type]}</strong>
+                    <small>
+                      {type === 'rtsp' && 'Kết nối camera an ninh trực tiếp'}
+                      {type === 'demo' && 'Dùng video mẫu để thử nghiệm'}
+                      {type === 'upload' && 'Tải lên một hoặc nhiều tệp video'}
+                    </small>
+                  </span>
                 </label>
               ))}
             </div>
 
             {sourceType === 'demo' && (
-              <label className="field">
-                <span className="visually-hidden">Demo clip</span>
-                <select value={source} onChange={(e) => setSource(e.target.value)}>
-                  {demos.map((demo) => (
-                    <option key={demo.id} value={demo.id}>
-                      {demo.name}
-                      {demo.suggested_label ? ` — shows ${demo.suggested_label.replace('_', ' ')}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="field">
+                <span className="visually-hidden">Video mẫu</span>
+                <div className="inline-add">
+                  <select value={demoSelection} onChange={(e) => setDemoSelection(e.target.value)}>
+                    {demos.map((demo) => (
+                      <option key={demo.id} value={demo.id}>
+                        {demo.name}
+                        {demo.suggested_label ? ` — minh họa ${incidentMeta(demo.suggested_label).short.toLowerCase()}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="compact" onClick={addDemoEntry} disabled={!demoSelection}>
+                    Thêm vào danh sách
+                  </button>
+                </div>
+              </div>
             )}
 
             {sourceType === 'upload' && (
               <div className="field">
-                <input type="file" accept="video/mp4,video/x-matroska,video/quicktime" onChange={handleUpload} />
-                {source && <small className="ok">Uploaded as {source}</small>}
+                <input
+                  type="file"
+                  multiple
+                  accept="video/mp4,video/x-matroska,video/quicktime"
+                  onChange={handleUploadFiles}
+                  disabled={uploadBusy}
+                />
+                {uploadBusy && uploadStatus && <small className="hint">{uploadStatus}</small>}
               </div>
             )}
 
             {sourceType === 'rtsp' && (
-              <label className="field">
+              <div className="field">
                 <span className="visually-hidden">RTSP URL</span>
-                <input
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
-                />
-              </label>
-            )}
-          </fieldset>
-
-          <fieldset>
-            <legend>Detection rules</legend>
-            <p className="always-on">
-              <span className="tag">Fall detection</span>
-              <span className="tag">Abandoned object</span>
-              <span>always active</span>
-            </p>
-
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={intrusionEnabled}
-                onChange={(e) => setIntrusionEnabled(e.target.checked)}
-              />
-              <span className="toggle-text">
-                <strong>Intrusion detection</strong>
-                <span className="hint">Alerts when a person stands inside a zone you draw on the preview.</span>
-              </span>
-            </label>
-
-            {intrusionEnabled && (
-              <div className="zone-hours">
-                <span className="fact-label">Active monitoring hours</span>
-
-                <div className="choices">
-                  <label className="choice">
-                    <input
-                      type="radio"
-                      name="zone_hours"
-                      checked={!hoursEnabled}
-                      onChange={() => setHoursEnabled(false)}
-                    />
-                    Always armed
-                  </label>
-                  <label className="choice">
-                    <input
-                      type="radio"
-                      name="zone_hours"
-                      checked={hoursEnabled}
-                      onChange={() => setHoursEnabled(true)}
-                    />
-                    Set hours only
-                  </label>
-                </div>
-
-                {hoursEnabled && (
-                  <div className="time-range">
-                    <label className="field compact-field">
-                      <span>From</span>
-                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-                    </label>
-                    <label className="field compact-field">
-                      <span>To</span>
-                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-                    </label>
-                  </div>
-                )}
-
-                {/* Real-time Status Feedback Card */}
-                <div className="active-hours-status-card" aria-live="polite">
-                  <div className="status-header">
-                    <span className="status-label">Monitoring status</span>
-                    {!hoursEnabled ? (
-                      <span className="status-badge armed">
-                        <span className="pulse-dot green" aria-hidden="true" />
-                        Armed
-                      </span>
-                    ) : windowNote.armed ? (
-                      <span className="status-badge armed">
-                        <span className="pulse-dot green" aria-hidden="true" />
-                        Armed
-                      </span>
-                    ) : (
-                      <span className="status-badge disarmed">
-                        <span className="badge-dot amber" aria-hidden="true" />
-                        Disarmed
-                      </span>
-                    )}
-                  </div>
-                  <small className={!hoursEnabled || windowNote.armed ? 'ok' : 'warn'}>
-                    {!hoursEnabled ? 'Always armed — 24/7 active monitoring enabled.' : windowNote.text}
-                  </small>
+                <div className="inline-add">
+                  <input
+                    value={rtspInput}
+                    onChange={(e) => setRtspInput(e.target.value)}
+                    placeholder="rtsp://user:pass@192.168.1.50:554/stream1"
+                  />
+                  <button type="button" className="compact" onClick={addRtspEntry} disabled={!rtspInput.trim()}>
+                    Thêm vào danh sách
+                  </button>
                 </div>
               </div>
             )}
           </fieldset>
+
+          <p className="always-on">
+            <span className="tag">Phát hiện té ngã</span>
+            <span className="tag">Vật bị bỏ lại</span>
+            <span>luôn hoạt động cho mọi camera</span>
+          </p>
 
           {error && (
             <p className="err" role="alert">
@@ -279,59 +278,46 @@ export default function CameraSetup({ onAdd, onCancel, cameras = [], onDelete })
           )}
 
           <div className="actions">
-            <button type="submit" className="primary" disabled={busy || !source}>
-              {busy ? 'Starting…' : 'Add camera'}
+            <button type="submit" className="primary" disabled={busy || uploadBusy || pendingSources.length === 0}>
+              {busy ? 'Đang khởi động…' : pendingSources.length ? `Thêm ${pendingSources.length} camera` : 'Thêm camera'}
             </button>
-            {!source && !busy && <span className="hint">Choose a video source to continue.</span>}
+            {uploadBusy && <span className="hint">Đang tải video lên…</span>}
+            {!uploadBusy && pendingSources.length === 0 && !busy && (
+              <span className="hint">Thêm ít nhất một nguồn video để tiếp tục.</span>
+            )}
           </div>
         </div>
 
-        {/* Right Column: Visual Live Canvas Sticky Card */}
-        <div className="setup-col-preview">
+        {/* Right Column: preview grid, one tile per queued source */}
+        <div className={pendingSources.length > 1 ? 'setup-col-preview multi' : 'setup-col-preview'}>
           <div className="setup-preview-card">
             <div className="setup-preview-head">
-              <div><span className="setup-step">02</span><h2>Preview and zone</h2></div>
-              {previewUrl && intrusionEnabled && (
-                <span className={polygon.length < 3 ? 'zone-points-badge warning' : 'zone-points-badge active'}>
-                  <span className={polygon.length < 3 ? 'badge-dot amber' : 'badge-dot green'} aria-hidden="true" />
-                  {polygon.length < 3
-                    ? `${polygon.length}/3 points drawn`
-                    : `${polygon.length} points active`}
-                </span>
-              )}
-              {previewUrl && !intrusionEnabled && (
-                <span className="status-badge disarmed">
-                  <span className="badge-dot amber" aria-hidden="true" />
-                  Zone off
+              <div><span className="setup-step">02</span><h2>Xem trước và vùng giám sát</h2></div>
+              {pendingSources.length > 0 && (
+                <span className="zone-points-badge active">
+                  <span className="badge-dot green" aria-hidden="true" />
+                  {pendingSources.length} nguồn đã thêm
                 </span>
               )}
             </div>
 
-            {previewUrl && !imageError ? (
-              <div className="preview-container">
-                {intrusionEnabled ? (
-                  <div className="preview-canvas-wrap">
-                    <PolygonCanvas imageUrl={previewUrl} points={polygon} onChange={setPolygon} onError={() => setImageError(true)} />
-                  </div>
-                ) : (
-                  <div className="preview-image-wrap">
-                    <div className="polygon-stage">
-                      <img src={previewUrl} alt="Camera preview frame" onError={() => setImageError(true)} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : imageError ? (
-              <div className="preview-placeholder">
-                <span className="preview-placeholder-icon error" aria-hidden="true">!</span>
-                <h4>RTSP connection failed</h4>
-                <p>Check the stream URL, credentials, and camera network connection.</p>
-              </div>
-            ) : (
+            {pendingSources.length === 0 ? (
               <div className="preview-placeholder">
                 <span className="preview-placeholder-icon" aria-hidden="true">+</span>
-                <h4>No source selected</h4>
-                <p>The preview will appear when a video source is ready.</p>
+                <h4>Chưa có nguồn nào</h4>
+                <p>Thêm luồng RTSP, video mẫu hoặc tải video lên ở bên trái để xem trước và vẽ vùng giám sát.</p>
+              </div>
+            ) : (
+              <div className="pending-grid">
+                {pendingSources.map((entry) => (
+                  <PendingSourceTile
+                    key={entry.key}
+                    entry={entry}
+                    onChange={updateEntry}
+                    onRemove={removeEntry}
+                    disabled={busy}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -355,10 +341,9 @@ function CameraList({ cameras, onDelete }) {
   return (
     <section className="camera-list">
       <div className="setup-head">
-        <h2>Configured cameras</h2>
+        <h2>Camera đã cấu hình</h2>
         <p>
-          {cameras.length} camera{cameras.length === 1 ? '' : 's'}, {cameras.filter((c) => c.running).length} currently
-          streaming. These are the feeds on your live grid.
+          Có {cameras.length} camera, {cameras.filter((c) => c.running).length} camera đang phát trực tiếp trên màn hình giám sát.
         </p>
       </div>
 
@@ -367,7 +352,7 @@ function CameraList({ cameras, onDelete }) {
           <li key={camera.id} className="camera-row">
             <span className={camera.running ? 'status-chip live' : 'status-chip offline'}>
               <span className="dot" aria-hidden="true" />
-              {camera.running ? 'Live' : 'Offline'}
+              {camera.running ? 'Trực tiếp' : 'Ngoại tuyến'}
             </span>
 
             <span className="camera-row-name" title={camera.name}>
@@ -390,8 +375,8 @@ function CameraList({ cameras, onDelete }) {
             <button
               className="icon compact danger"
               onClick={() => onDelete(camera.id)}
-              aria-label={`Remove camera ${camera.name}`}
-              title={`Remove ${camera.name}`}
+              aria-label={`Xóa camera ${camera.name}`}
+              title={`Xóa ${camera.name}`}
             >
               <span aria-hidden="true">✕</span>
             </button>

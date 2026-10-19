@@ -1,126 +1,114 @@
-# P-091 Security Monitor Architecture
+# Kiến trúc P-091 Security Monitor
 
-This repository contains a local, multi-camera incident-monitoring MVP. A guard registers a
-video, upload, or RTSP camera, and the backend continuously analyzes frames with YOLO/OpenCV.
-Temporal rules turn tracked objects into fall, abandoned-object, and intrusion events. When
-enabled, a real OpenAI vision model reviews up to six evidence frames and prior labelled
-examples before the guard records the final verdict.
+Kho lưu trữ này là một MVP giám sát sự cố đa camera theo thời gian thực. Bảo vệ đăng ký và thêm
+một camera từ video, upload file hoặc RTSP, còn backend liên tục phân tích từng frame bằng YOLO/OpenCV.
+Các rule theo thời gian biến các object được track thành sự kiện té ngã, vật thể bỏ quên và xâm nhập.
+Khi được bật, mô hình thị giác OpenAI sẽ đánh giá tối đa sáu frame bằng chứng cùng các ví dụ đã gán nhãn
+trước khi bảo vệ ghi verdict cuối cùng.
 
-## Component And Data Flow
+## Thành phần và luồng dữ liệu
 
 ```mermaid
-flowchart LR
-    subgraph Input[Camera Inputs]
-        FILE[MP4 / uploaded video]
-        RTSP[IP camera or MediaMTX RTSP]
+%%{init: {'theme': 'base', 'themeVariables': { 'fontFamily': 'Arial', 'fontSize': '14px', 'lineColor': '#111111', 'primaryTextColor': '#111111', 'primaryColor': '#ffffff', 'primaryBorderColor': '#111111', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'clusterBkg': '#ffffff', 'clusterBorder': '#111111', 'background': '#ffffff'}}}%%
+flowchart TB
+    classDef node fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1px
+    classDef group fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1px
+
+    subgraph D1["1. Nguồn video"]
+        FILE["Video / RTSP"]
     end
 
-    subgraph Browser[React Browser]
-        SETUP[Camera setup and zone polygon]
-        GRID[Live camera grid]
-        ALERT[Alert modal and guard verdict]
-        MANAGER[Manager statistics]
+    subgraph D2["2. Vision pipeline"]
+        CAPTURE["OpenCV capture"]
+        YOLO["YOLO + tracking"]
+        RULE["RuleEngine"]
+        OVERLAY["Annotated frame"]
     end
 
-    subgraph API[FastAPI process]
-        AUTH[Cookie sessions and role checks]
-        ROUTES[REST routes]
-        MONITOR[MonitoringService]
-        SSE[SSE alert events]
-        MJPEG[MJPEG camera streams]
+    subgraph D3["3. Backend"]
+        MONITOR["MonitoringService"]
+        ROUTES["REST API"]
+        AUTH["Auth / session"]
+        SSE["SSE alerts"]
     end
 
-    subgraph Vision[Per-camera worker]
-        CAPTURE[OpenCV VideoCapture]
-        GATE[Motion gate]
-        YOLO[YOLO object detection and tracking]
-        RULES[Temporal RuleEngine]
-        POSTURE[Optional fall-posture model]
-        OVERLAY[Annotated frame and ring buffer]
+    subgraph D4["4. Frontend"]
+        LOGIN["Login"]
+        GRID["Camera grid"]
+        ALERT["Alert + verdict"]
     end
 
-    subgraph Triage[Evidence triage]
-        COLLECT[Pre/post evidence sampler]
-        VLM[OpenAI vision model]
-        HISTORY[Labelled alert history]
+    subgraph D5["5. Review AI"]
+        VLM["VLM triage"]
+        HISTORY["History examples"]
     end
 
-    subgraph Storage[File-backed state]
-        REG[data/cameras.json]
-        INCIDENTS[data/incidents.jsonl]
-        VLMLOG[data/vlm_history.jsonl]
-        USERS[data/users.json]
-        UPLOADS[data/uploads]
+    subgraph D6["6. Storage chung"]
+        STORE["Local state / persistence"]
     end
 
-    FILE --> CAPTURE
-    RTSP --> CAPTURE
-    SETUP -->|REST| ROUTES
-    ROUTES --> AUTH
-    AUTH --> MONITOR
-    CAPTURE --> GATE --> YOLO --> RULES
-    YOLO --> POSTURE
-    RULES --> OVERLAY
-    POSTURE --> OVERLAY
-    OVERLAY --> MJPEG --> GRID
-    RULES -->|incident callback| MONITOR
+    FILE --> CAPTURE --> YOLO --> RULE --> OVERLAY
+    OVERLAY --> GRID
+    RULE -->|alert| MONITOR
     MONITOR --> SSE --> ALERT
-    MONITOR --> COLLECT --> VLM
+    MONITOR --> VLM
     HISTORY --> VLM
-    VLM -->|real / false_positive / uncertain| MONITOR
-    ALERT -->|acknowledge or guard verdict| ROUTES
-    MANAGER -->|GET statistics| ROUTES
-    MONITOR --> REG
-    MONITOR --> INCIDENTS
-    MONITOR --> VLMLOG
-    AUTH --> USERS
-    ROUTES --> UPLOADS
+    VLM -->|verdict| MONITOR
+
+    LOGIN --> ROUTES --> AUTH --> MONITOR
+    ALERT --> ROUTES
+
+    MONITOR --> STORE
+    AUTH --> STORE
+    ROUTES --> STORE
+
+    class FILE,CAPTURE,YOLO,RULE,OVERLAY,MONITOR,ROUTES,AUTH,SSE,LOGIN,GRID,ALERT,VLM,HISTORY,STORE node;
+    class D1,D2,D3,D4,D5,D6 group;
 ```
 
-## Runtime Responsibilities
+## Trách nhiệm runtime
 
-| Component | Responsibility |
+| Thành phần | Trách nhiệm |
 | --- | --- |
-| React/Vite frontend | Login, camera setup, polygon drawing, MJPEG grid, SSE alerts, manager view |
-| FastAPI | Authentication, camera and alert APIs, MJPEG/SSE transport, statistics |
-| `MonitoringService` | Camera registry, worker lifecycle, evidence buffers, triage jobs, and persistence |
-| `MultiStreamManager` | Independent pipeline and tracker for every camera |
-| `VisionPipeline` | Motion gate, detection, rules, evidence frames, and overlays |
-| `IncidentDetector` | YOLO tracking for `person`, `backpack`, `handbag`, and `suitcase` |
-| `RuleEngine` | Fall indicators, polygon intrusion, abandoned-object dwell, stitching, and cooldowns |
-| `FallPostureDetector` | Optional specialized fall model; it is not used for intrusion |
-| `VLMTriage` | Real OpenAI vision review of frames, rule evidence, and labelled history |
-| JSON/JSONL files | Local persistence for cameras, users, incidents, and VLM history |
-| MediaMTX | Optional RTSP relay used to loop local videos as camera streams |
+| React/Vite frontend | Đăng nhập, cấu hình camera, vẽ polygon, lưới MJPEG, SSE alert, manager view |
+| FastAPI | Authentication, camera và alert APIs, MJPEG/SSE transport, thống kê |
+| `MonitoringService` | Camera registry, lifecycle worker, evidence buffers, triage jobs và persistence |
+| `MultiStreamManager` | Pipeline và tracker độc lập cho từng camera |
+| `VisionPipeline` | Motion gate, detection, rules, evidence frames và overlay |
+| `IncidentDetector` | YOLO tracking cho `person`, `backpack`, `handbag`, `suitcase` |
+| `RuleEngine` | Chỉ báo té ngã, xâm nhập bằng polygon, dwell abandoned-object, stitching, cooldown |
+| `FallPostureDetector` | Mô hình chuyên biệt cho fall; không dùng cho intrusion |
+| `VLMTriage` | Review bằng OpenAI trên các frame, rule evidence và lịch sử đã gán nhãn |
+| JSON/JSONL files | Persistence local cho camera, user, incident và VLM history |
+| MediaMTX | Relay RTSP tùy chọn để loop video local thành camera |
 
-## Incident Flow
+## Luồng phát hiện sự cố
 
-1. A worker reads a frame from a file or RTSP source.
-2. YOLO produces tracked objects. `DETECTOR_CONFIDENCE` defaults to `0.40`.
-3. The rule engine evaluates history. Intrusion uses the person's foot point in the normalized
-   polygon, with a lower-body overlap fallback for partial occlusion.
-4. An incident is published to the guard through SSE and written to the local incident log.
-5. The asynchronous LangGraph incident workflow waits for post-roll frames, samples before/
-   after evidence, and sends the rule reason plus recent labelled examples to the VLM when enabled.
-6. The workflow annotates the alert with the VLM result. The guard records the final real/false verdict.
-7. The manager endpoint aggregates reviewed history and operational statistics.
+1. Worker đọc frame từ file hoặc RTSP.
+2. YOLO tạo tracked objects. `DETECTOR_CONFIDENCE` mặc định là `0.40`.
+3. Rule engine đánh giá lịch sử. Xâm nhập dùng điểm chân của người trong polygon chuẩn hóa,
+   với fallback overlap phần thân dưới khi bị che khuất.
+4. Một incident được publish tới bảo vệ qua SSE và ghi vào local incident log.
+5. Workflow LangGraph bất đồng bộ chờ post-roll frames, thu mẫu evidence trước/sau và gửi rule
+   reason cùng ví dụ gán nhãn gần đây tới VLM khi bật.
+6. Workflow gắn verdict từ VLM vào alert. Bảo vệ ghi verdict cuối cùng real/false.
+7. Manager endpoint tổng hợp lịch sử review và số liệu vận hành.
 
-## Transport And Authentication
+## Transport và xác thực
 
 - REST: `/api/v1/*`
-- Video: authenticated MJPEG at `/api/v1/cameras/{camera_id}/stream`
-- Alerts: authenticated Server-Sent Events at `/api/v1/events`
-- Sessions: HttpOnly cookie with guard and manager role enforcement
+- Video: MJPEG xác thực tại `/api/v1/cameras/{camera_id}/stream`
+- Alerts: Server-Sent Events xác thực tại `/api/v1/events`
+- Sessions: HttpOnly cookie với role enforcement cho guard và manager
 - Health check: public `GET /health`
 
-## LangGraph Workflows
+## LangGraph workflows
 
-`src/agents/incident_workflow.py` orchestrates post-alert evidence review asynchronously. It is
-not on the camera frame path: YOLO, tracking, and temporal rules remain direct and deterministic.
-`POST /api/v1/chat` uses a separate conversational LangGraph graph.
+`src/agents/incident_workflow.py` điều phối workflow review sau alert theo kiểu bất đồng bộ. Nó không
+nằm trên camera frame path: YOLO, tracking và temporal rules vẫn chạy trực tiếp, xác định và ổn định.
+`POST /api/v1/chat` dùng một conversational LangGraph graph riêng.
 
-## Deployment
+## Triển khai
 
-Local development runs Uvicorn and Vite separately. Docker Compose runs FastAPI and an
-nginx-served frontend; model weights are mounted read-only and runtime state is mounted at
-`./data`.
+Phát triển local chạy Uvicorn và Vite riêng biệt. Docker Compose chạy FastAPI và frontend được phục vụ bởi
+nginx; model weights mount read-only và runtime state mount vào `./data`.

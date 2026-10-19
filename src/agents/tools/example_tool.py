@@ -54,7 +54,7 @@ def calculate(expression: str) -> str:
 def _eval_node(node: ast.AST) -> float:
     """Recursively evaluate AST node using safe operators only."""
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, (int, float)):
+        if isinstance(node.value, int | float):
             return node.value
         raise ValueError(f"Unsupported constant type: {type(node.value)}")
     elif isinstance(node, ast.UnaryOp):

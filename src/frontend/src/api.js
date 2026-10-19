@@ -10,8 +10,46 @@ const BASE = '/api/v1'
  */
 let onUnauthorized = () => {}
 
+/**
+ * Absolute ws:// or wss:// URL for a path under BASE.
+ *
+ * WebSocket, unlike fetch, has no relative form and no `credentials` option — it always
+ * sends the origin's cookies, and always needs a full URL. Deriving the scheme from
+ * `location.protocol` rather than hardcoding it is what keeps this working behind TLS.
+ */
+function wsUrl(path) {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${scheme}//${window.location.host}${BASE}${path}`
+}
+
 export function setUnauthorizedHandler(handler) {
   onUnauthorized = typeof handler === 'function' ? handler : () => {}
+}
+
+/**
+ * The last `/statistics` body this session saw, so reopening the report screen paints from it
+ * instead of a placeholder while the fresh copy is on its way. See `api.statistics`.
+ *
+ * Deliberately module-level rather than component state: the point is to survive the screen
+ * being unmounted. That also means it survives a *session* change, which it must not — the
+ * report is one operator's view of their own site. `clearApiCache` is what empties it, and
+ * `App.signedOut` calls it on every logout and every 401.
+ */
+let _statisticsCache = null
+
+function cacheStatistics(body) {
+  _statisticsCache = body
+  return body
+}
+
+/**
+ * Drop everything cached from a previous session.
+ *
+ * Called on sign-out and on any 401. Without it, the next operator to sign in at a shared
+ * terminal would see the previous one's figures for the moment before the refresh lands.
+ */
+export function clearApiCache() {
+  _statisticsCache = null
 }
 
 async function request(path, options = {}) {
@@ -69,9 +107,24 @@ export const api = {
   listCameras: () => request('/cameras'),
   status: () => request('/monitoring/status'),
   listAlerts: () => request('/alerts'),
+  notificationSettings: () => request('/notifications'),
+  setNotificationEnabled: (enabled) => request('/notifications', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }),
 
   deleteCamera: (id) => request(`/cameras/${id}`, { method: 'DELETE' }),
+  replayCamera: (id) => request(`/cameras/${id}/replay`, { method: 'POST' }),
   acknowledge: (id) => request(`/alerts/${id}/acknowledge`, { method: 'POST' }),
+
+  // Empty list whenever the feature is off or nothing similar has been judged yet -- never
+  // an error the modal needs to handle specially. See docs/database/schema.sql (PLANNED).
+  // `limit` and `minSimilarity` come from the VLM's confidence (`similarIncidentQuery`):
+  // fewer, closer neighbours when the assessment is strong, more context when it is weak.
+  similarIncidents: (id, { limit = 5, minSimilarity = 0 } = {}) =>
+    request(`/alerts/${id}/similar?limit=${limit}&min_similarity=${minSimilarity}`),
+
+  // The evidence strip of one past incident, fetched only when a guard expands that
+  // neighbour -- rebuilding it probes storage per frame, so it is not worth doing for rows
+  // nobody opens.
+  incidentFrames: (id) => request(`/incidents/${id}/frames`),
 
   // The HITL judgement (PRD §3.2). Distinct from acknowledge: this one records whether the
   // incident was real, and is the only call that appends to the labelled history.
@@ -103,12 +156,51 @@ export const api = {
   },
 
   // --- Manager surface ----------------------------------------------------------------------
-  statistics: () => request('/statistics'),
+  /**
+   * The manager's aggregate report.
+   *
+   * `cached` asks for the last response this session received, if there is one, and refreshes
+   * it in the background — the screen paints immediately with slightly stale numbers instead
+   * of a placeholder. Only the *first* load of the screen passes it; the WebSocket-driven
+   * refresh does not, because that call exists precisely to fetch numbers the cache does not
+   * have yet and serving it from the cache would make the live update never arrive.
+   *
+   * Worth being explicit about the staleness this introduces: a reader can see figures up to
+   * one refresh old for the moment the screen opens. That is the trade being made — this
+   * response costs three JSONL files re-read on the server, and the alternative is a spinner
+   * on every visit to a screen the operator was looking at a minute ago. The revalidation
+   * lands within the same second, and `/manager/live` keeps it current after that.
+   */
+  statistics: (cached = false) => {
+    if (!cached) return request('/statistics').then(cacheStatistics)
+    if (_statisticsCache) {
+      // Fire and forget: the caller already has something to render, and a failed refresh
+      // must not reject a promise that was resolved from the cache.
+      request('/statistics').then(cacheStatistics).catch(() => {})
+      return Promise.resolve(_statisticsCache)
+    }
+    return request('/statistics').then(cacheStatistics)
+  },
+
+  // The durable event log, paged. Distinct from `listAlerts`, which is the guard's live ring
+  // buffer: this one survives a restart and is what the history screen reads. Undefined
+  // filters are dropped rather than sent as the string "undefined", which the route's
+  // `verdict` pattern would reject with a 422.
+  incidents: ({ limit = 50, offset = 0, cameraId, label, verdict } = {}) => {
+    const params = new URLSearchParams({ limit, offset })
+    if (cameraId) params.set('camera_id', cameraId)
+    if (label) params.set('label', label)
+    if (verdict) params.set('verdict', verdict)
+    return request(`/incidents?${params}`)
+  },
 
   previewFrameUrl: (sourceType, source) =>
     `${BASE}/preview-frame?source_type=${sourceType}&source=${encodeURIComponent(source)}`,
 
   streamUrl: (id) => `${BASE}/cameras/${id}/stream`,
+  snapshotUrl: (id) => `${BASE}/cameras/${id}/snapshot`,
   eventsUrl: () => `${BASE}/events`,
-  managerLiveUrl: () => `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${BASE}/manager/live`,
+  managerLiveUrl: () => wsUrl('/manager/live'),
+  // H.264/fMP4 socket the grid prefers over `streamUrl`'s MJPEG. See `VideoFeed`.
+  videoUrl: (id) => wsUrl(`/cameras/${id}/video`),
 }
