@@ -1,80 +1,534 @@
 {
   "label": "baseline",
-  "run_at": "2026-10-19T05:15:57.436346+00:00",
-  "elapsed_sec": 1278.2,
+  "run_at": "2026-10-19T07:25:03.029122+00:00",
+  "elapsed_sec": 1097.3,
   "config": {
-    "dataset": "CAVIAR Lisbon shopping centre, front view (26 clips)",
+    "dataset": "CAVIAR Lisbon, front view (26 clips), zone = shop floor",
     "weights": "src/vision/weights/yolo26s.pt",
     "detector_confidence": 0.4,
     "target_fps": 5.0,
     "alert_cooldown_sec": 30.0,
-    "zone_px": [
-      [
-        212,
-        60
+    "zones_px": {
+      "WalkByShop1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
       ],
-      [
-        335,
-        60
+      "EnterExitCrossingPaths1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
       ],
-      [
-        335,
-        146
+      "EnterExitCrossingPaths2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
       ],
-      [
-        212,
-        146
+      "OneLeaveShop1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneLeaveShop2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneLeaveShopReenter1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneLeaveShopReenter2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneShopOneWait1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneShopOneWait2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopEnter1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopEnter2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopMoveEnter1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopMoveEnter2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopMoveNoEnter1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopMoveNoEnter2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopNoEnter1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "OneStopNoEnter2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "ShopAssistant1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "ShopAssistant2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "ThreePastShop1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "ThreePastShop2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "TwoEnterShop1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "TwoEnterShop2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "TwoEnterShop3": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "TwoLeaveShop1": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
+      ],
+      "TwoLeaveShop2": [
+        [
+          212,
+          60
+        ],
+        [
+          335,
+          60
+        ],
+        [
+          335,
+          146
+        ],
+        [
+          212,
+          146
+        ]
       ]
-    ],
+    },
     "min_inside_sec": 0.4,
-    "near_boundary_px": 15.0,
-    "match_radius_px": 40.0
+    "near_boundary_px_at_288": 15.0,
+    "match_radius_px_at_288": 40.0
   },
   "scores": {
     "clips": 26,
     "footage_min": 24.15,
     "entries": 70,
-    "detected": 49,
-    "false_alarms": 71,
-    "duplicate_alerts": 13,
-    "false_alarms_via_lower_body": 49,
-    "recall": 0.7,
+    "detected": 44,
+    "false_alarms": 73,
+    "duplicate_alerts": 12,
+    "false_alarms_via_lower_body": 47,
+    "recall": 0.6285714285714286,
     "recall_ci95": [
-      0.584554617438188,
-      0.7946354326148984
+      0.5114698481852806,
+      0.7322951839917036
     ],
-    "precision": 0.4083333333333333,
+    "precision": 0.37606837606837606,
     "precision_ci95": [
-      0.3245599028350716,
-      0.4977938135251822
+      0.29355101398866745,
+      0.46646540419844695
     ],
-    "f1": 0.5157894736842105,
-    "false_alarms_per_hour": 176.41212522776212,
+    "f1": 0.47058823529411764,
+    "false_alarms_per_hour": 181.38148086798077,
     "boundary_walkers": 27,
-    "boundary_walkers_alarmed": 23,
-    "boundary_false_alarm_rate": 0.8518518518518519,
+    "boundary_walkers_alarmed": 20,
+    "boundary_false_alarm_rate": 0.7407407407407407,
     "boundary_false_alarm_rate_ci95": [
-      0.6752093665317052,
-      0.9408416814035512
+      0.553210695973843,
+      0.8682979157713322
     ],
-    "latency_median_sec": 1.44,
-    "latency_max_sec": 17.0,
+    "latency_median_sec": 1.64,
+    "latency_max_sec": 18.4,
     "outcomes": [
       {
         "clip_id": "WalkByShop1",
         "entries": 1,
-        "detected": 1,
+        "detected": 0,
         "duplicates": 0,
-        "false_alarms": 2,
+        "false_alarms": 4,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
-        "latencies_sec": [
-          -1.0
+        "latencies_sec": [],
+        "missed_entries": [
+          "obj4@93.8s"
         ],
-        "missed_entries": [],
         "false_alarm_details": [
           "67.2s lower_body other",
-          "89.4s lower_body other"
+          "70.0s lower_body other",
+          "89.4s lower_body other",
+          "90.8s lower_body other"
         ]
       },
       {
@@ -82,7 +536,7 @@
         "entries": 2,
         "detected": 2,
         "duplicates": 0,
-        "false_alarms": 1,
+        "false_alarms": 0,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
@@ -90,35 +544,32 @@
           -1.0
         ],
         "missed_entries": [],
-        "false_alarm_details": [
-          "11.6s foot other"
-        ]
+        "false_alarm_details": []
       },
       {
         "clip_id": "EnterExitCrossingPaths2",
         "entries": 3,
         "detected": 2,
         "duplicates": 0,
-        "false_alarms": 2,
+        "false_alarms": 1,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
           4.6,
-          8.0
+          9.2
         ],
         "missed_entries": [
           "obj1@12.9s"
         ],
         "false_alarm_details": [
-          "10.8s lower_body other",
-          "12.0s foot other"
+          "11.0s lower_body other"
         ]
       },
       {
         "clip_id": "OneLeaveShop1",
         "entries": 2,
         "detected": 1,
-        "duplicates": 1,
+        "duplicates": 0,
         "false_alarms": 0,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
@@ -134,12 +585,12 @@
         "clip_id": "OneLeaveShop2",
         "entries": 1,
         "detected": 1,
-        "duplicates": 1,
+        "duplicates": 0,
         "false_alarms": 0,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
-          3.8
+          3.2
         ],
         "missed_entries": [],
         "false_alarm_details": []
@@ -168,20 +619,19 @@
         "entries": 2,
         "detected": 1,
         "duplicates": 0,
-        "false_alarms": 4,
+        "false_alarms": 3,
         "boundary_walkers": 1,
         "boundary_walkers_alarmed": 1,
         "latencies_sec": [
-          6.12
+          5.72
         ],
         "missed_entries": [
           "obj2@19.0s"
         ],
         "false_alarm_details": [
           "0.0s lower_body walker",
-          "9.4s foot other",
           "17.8s lower_body other",
-          "18.6s foot other"
+          "18.4s foot other"
         ]
       },
       {
@@ -197,14 +647,14 @@
         ],
         "missed_entries": [],
         "false_alarm_details": [
-          "22.8s foot other",
+          "21.0s foot other",
           "32.8s lower_body walker"
         ]
       },
       {
         "clip_id": "OneShopOneWait2",
         "entries": 5,
-        "detected": 4,
+        "detected": 3,
         "duplicates": 1,
         "false_alarms": 2,
         "boundary_walkers": 1,
@@ -212,11 +662,11 @@
         "latencies_sec": [
           -0.72,
           5.72,
-          -0.8,
           -0.96
         ],
         "missed_entries": [
-          "obj0@17.5s"
+          "obj0@17.5s",
+          "obj9@53.6s"
         ],
         "false_alarm_details": [
           "16.4s lower_body other",
@@ -226,23 +676,24 @@
       {
         "clip_id": "OneStopEnter1",
         "entries": 3,
-        "detected": 2,
-        "duplicates": 0,
-        "false_alarms": 4,
+        "detected": 1,
+        "duplicates": 1,
+        "false_alarms": 5,
         "boundary_walkers": 1,
         "boundary_walkers_alarmed": 1,
         "latencies_sec": [
-          -0.96,
           0.76
         ],
         "missed_entries": [
+          "obj2@13.4s",
           "obj1@16.6s"
         ],
         "false_alarm_details": [
-          "2.0s foot other",
           "4.0s lower_body walker",
+          "4.6s foot other",
           "12.0s lower_body other",
-          "14.2s lower_body other"
+          "14.0s lower_body other",
+          "23.0s foot other"
         ]
       },
       {
@@ -250,7 +701,7 @@
         "entries": 2,
         "detected": 2,
         "duplicates": 0,
-        "false_alarms": 0,
+        "false_alarms": 1,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
@@ -258,20 +709,22 @@
           10.24
         ],
         "missed_entries": [],
-        "false_alarm_details": []
+        "false_alarm_details": [
+          "97.2s foot other"
+        ]
       },
       {
         "clip_id": "OneStopMoveEnter1",
         "entries": 6,
         "detected": 4,
         "duplicates": 0,
-        "false_alarms": 8,
+        "false_alarms": 6,
         "boundary_walkers": 4,
-        "boundary_walkers_alarmed": 4,
+        "boundary_walkers_alarmed": 2,
         "latencies_sec": [
-          3.76,
+          4.76,
           -0.6,
-          0.84,
+          0.64,
           1.64
         ],
         "missed_entries": [
@@ -280,13 +733,11 @@
         ],
         "false_alarm_details": [
           "0.0s lower_body walker",
-          "1.2s foot other",
-          "11.2s lower_body walker",
+          "3.2s foot other",
+          "18.2s foot other",
           "19.4s lower_body other",
-          "25.4s lower_body walker",
           "38.4s lower_body walker",
-          "40.0s foot other",
-          "58.6s foot other"
+          "39.6s foot other"
         ]
       },
       {
@@ -294,7 +745,7 @@
         "entries": 3,
         "detected": 2,
         "duplicates": 0,
-        "false_alarms": 3,
+        "false_alarms": 4,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
@@ -306,6 +757,7 @@
         ],
         "false_alarm_details": [
           "11.0s lower_body other",
+          "38.0s foot other",
           "39.8s lower_body other",
           "80.8s foot other"
         ]
@@ -313,16 +765,17 @@
       {
         "clip_id": "OneStopMoveNoEnter1",
         "entries": 1,
-        "detected": 1,
-        "duplicates": 1,
-        "false_alarms": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 2,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
-        "latencies_sec": [
-          0.88
+        "latencies_sec": [],
+        "missed_entries": [
+          "obj1@22.5s"
         ],
-        "missed_entries": [],
         "false_alarm_details": [
+          "17.8s foot other",
           "20.6s lower_body other"
         ]
       },
@@ -330,18 +783,17 @@
         "clip_id": "OneStopMoveNoEnter2",
         "entries": 1,
         "detected": 1,
-        "duplicates": 1,
-        "false_alarms": 3,
+        "duplicates": 0,
+        "false_alarms": 2,
         "boundary_walkers": 1,
         "boundary_walkers_alarmed": 1,
         "latencies_sec": [
-          0.68
+          2.88
         ],
         "missed_entries": [],
         "false_alarm_details": [
           "9.4s lower_body other",
-          "35.6s lower_body walker",
-          "40.8s foot other"
+          "35.8s lower_body walker"
         ]
       },
       {
@@ -349,27 +801,28 @@
         "entries": 0,
         "detected": 0,
         "duplicates": 0,
-        "false_alarms": 1,
+        "false_alarms": 2,
         "boundary_walkers": 1,
         "boundary_walkers_alarmed": 1,
         "latencies_sec": [],
         "missed_entries": [],
         "false_alarm_details": [
+          "17.6s foot other",
           "21.4s lower_body walker"
         ]
       },
       {
         "clip_id": "OneStopNoEnter2",
         "entries": 1,
-        "detected": 0,
+        "detected": 1,
         "duplicates": 0,
         "false_alarms": 4,
         "boundary_walkers": 2,
         "boundary_walkers_alarmed": 2,
-        "latencies_sec": [],
-        "missed_entries": [
-          "obj2@38.7s"
+        "latencies_sec": [
+          0.52
         ],
+        "missed_entries": [],
         "false_alarm_details": [
           "21.2s lower_body walker",
           "21.8s foot other",
@@ -382,12 +835,12 @@
         "entries": 5,
         "detected": 5,
         "duplicates": 3,
-        "false_alarms": 3,
+        "false_alarms": 2,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
           0.4,
-          0.84,
+          0.64,
           0.72,
           1.92,
           0.32
@@ -395,22 +848,21 @@
         "missed_entries": [],
         "false_alarm_details": [
           "14.8s lower_body other",
-          "55.6s foot other",
-          "58.8s lower_body other"
+          "55.2s foot other"
         ]
       },
       {
         "clip_id": "ShopAssistant2",
         "entries": 4,
         "detected": 4,
-        "duplicates": 3,
+        "duplicates": 5,
         "false_alarms": 7,
         "boundary_walkers": 3,
         "boundary_walkers_alarmed": 2,
         "latencies_sec": [
-          12.8,
-          1.12,
-          1.44,
+          12.6,
+          0.52,
+          1.04,
           1.04
         ],
         "missed_entries": [],
@@ -418,10 +870,10 @@
           "12.0s lower_body other",
           "18.4s lower_body walker",
           "23.2s foot other",
-          "53.0s foot other",
           "91.2s foot other",
-          "126.0s lower_body walker",
-          "127.0s foot other"
+          "125.8s lower_body walker",
+          "127.6s foot other",
+          "137.8s foot other"
         ]
       },
       {
@@ -443,14 +895,15 @@
         "entries": 0,
         "detected": 0,
         "duplicates": 0,
-        "false_alarms": 2,
+        "false_alarms": 3,
         "boundary_walkers": 3,
         "boundary_walkers_alarmed": 2,
         "latencies_sec": [],
         "missed_entries": [],
         "false_alarm_details": [
           "18.0s lower_body walker",
-          "26.2s lower_body walker"
+          "26.2s lower_body walker",
+          "27.2s foot other"
         ]
       },
       {
@@ -458,9 +911,9 @@
         "entries": 5,
         "detected": 2,
         "duplicates": 0,
-        "false_alarms": 3,
+        "false_alarms": 4,
         "boundary_walkers": 2,
-        "boundary_walkers_alarmed": 1,
+        "boundary_walkers_alarmed": 0,
         "latencies_sec": [
           11.96,
           7.44
@@ -473,22 +926,22 @@
         "false_alarm_details": [
           "19.0s lower_body other",
           "19.4s lower_body other",
-          "65.0s lower_body walker"
+          "20.2s foot other",
+          "51.2s foot other"
         ]
       },
       {
         "clip_id": "TwoEnterShop2",
         "entries": 10,
-        "detected": 5,
+        "detected": 4,
         "duplicates": 0,
-        "false_alarms": 7,
+        "false_alarms": 8,
         "boundary_walkers": 4,
         "boundary_walkers_alarmed": 4,
         "latencies_sec": [
-          17.0,
-          9.44,
+          18.4,
           4.6,
-          1.68,
+          6.68,
           1.32
         ],
         "missed_entries": [
@@ -496,42 +949,43 @@
           "obj5@18.4s",
           "obj4@18.5s",
           "obj4@22.6s",
+          "obj11@38.4s",
           "obj6@41.4s"
         ],
         "false_alarm_details": [
           "0.0s lower_body walker",
-          "7.8s foot other",
           "11.2s lower_body walker",
+          "12.6s foot other",
           "14.8s lower_body walker",
           "16.8s lower_body other",
           "17.0s lower_body other",
-          "39.0s lower_body walker"
+          "38.2s foot other",
+          "39.2s lower_body walker"
         ]
       },
       {
         "clip_id": "TwoEnterShop3",
         "entries": 6,
-        "detected": 3,
+        "detected": 2,
         "duplicates": 1,
-        "false_alarms": 5,
+        "false_alarms": 4,
         "boundary_walkers": 0,
         "boundary_walkers_alarmed": 0,
         "latencies_sec": [
-          16.12,
-          10.84,
-          9.2
+          0.12,
+          9.0
         ],
         "missed_entries": [
           "obj1@11.1s",
           "obj0@11.1s",
-          "obj2@17.6s"
+          "obj2@17.6s",
+          "obj4@23.4s"
         ],
         "false_alarm_details": [
           "9.0s lower_body other",
           "9.6s lower_body other",
-          "11.4s foot other",
-          "12.2s lower_body other",
-          "39.6s lower_body other"
+          "12.0s lower_body other",
+          "14.6s lower_body other"
         ]
       },
       {
@@ -544,7 +998,7 @@
         "boundary_walkers_alarmed": 1,
         "latencies_sec": [
           6.64,
-          1.12
+          0.92
         ],
         "missed_entries": [],
         "false_alarm_details": [
@@ -567,7 +1021,7 @@
         ],
         "missed_entries": [],
         "false_alarm_details": [
-          "10.2s foot other"
+          "11.0s foot other"
         ]
       }
     ]
@@ -584,7 +1038,16 @@
             222.0,
             178.0
           ],
-          "track_id": "track_14",
+          "track_id": "track_16",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 70.0,
+          "foot": [
+            285.0,
+            147.0
+          ],
+          "track_id": "track_23",
           "via": "lower_body"
         },
         {
@@ -593,16 +1056,16 @@
             208.0,
             168.0
           ],
-          "track_id": "track_46",
+          "track_id": "track_43",
           "via": "lower_body"
         },
         {
-          "time_sec": 92.8,
+          "time_sec": 90.8,
           "foot": [
             285.5,
-            146.0
+            147.0
           ],
-          "track_id": "track_53",
+          "track_id": "track_47",
           "via": "lower_body"
         }
       ]
@@ -615,29 +1078,20 @@
         {
           "time_sec": 7.0,
           "foot": [
-            223.0,
+            222.5,
             121.0
           ],
-          "track_id": "track_3",
+          "track_id": "track_4",
           "via": "foot"
         },
         {
           "time_sec": 8.4,
           "foot": [
             330.0,
-            160.0
+            159.0
           ],
-          "track_id": "track_8",
+          "track_id": "track_10",
           "via": "lower_body"
-        },
-        {
-          "time_sec": 11.6,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_5",
-          "via": "foot"
         }
       ]
     },
@@ -649,38 +1103,29 @@
         {
           "time_sec": 4.6,
           "foot": [
-            234.5,
+            235.0,
             110.0
           ],
-          "track_id": "track_2",
+          "track_id": "track_3",
           "via": "foot"
         },
         {
-          "time_sec": 8.0,
-          "foot": [
-            299.5,
-            126.0
-          ],
-          "track_id": "track_11",
-          "via": "foot"
-        },
-        {
-          "time_sec": 10.8,
-          "foot": [
-            213.0,
-            159.0
-          ],
-          "track_id": "track_15",
-          "via": "lower_body"
-        },
-        {
-          "time_sec": 12.0,
+          "time_sec": 9.2,
           "foot": [
             300.5,
             127.0
           ],
-          "track_id": "track_21",
+          "track_id": "track_20",
           "via": "foot"
+        },
+        {
+          "time_sec": 11.0,
+          "foot": [
+            220.0,
+            159.0
+          ],
+          "track_id": "track_19",
+          "via": "lower_body"
         }
       ]
     },
@@ -697,15 +1142,6 @@
           ],
           "track_id": "track_1",
           "via": "foot"
-        },
-        {
-          "time_sec": 3.2,
-          "foot": [
-            309.0,
-            119.0
-          ],
-          "track_id": "track_2",
-          "via": "foot"
         }
       ]
     },
@@ -715,21 +1151,12 @@
       "sampled_frames": 224,
       "alerts": [
         {
-          "time_sec": 3.8,
+          "time_sec": 3.2,
           "foot": [
-            233.5,
-            114.0
+            235.0,
+            113.0
           ],
-          "track_id": "track_4",
-          "via": "foot"
-        },
-        {
-          "time_sec": 7.8,
-          "foot": [
-            299.5,
-            126.0
-          ],
-          "track_id": "track_5",
+          "track_id": "track_1",
           "via": "foot"
         }
       ]
@@ -742,10 +1169,10 @@
         {
           "time_sec": 4.8,
           "foot": [
-            229.5,
+            230.0,
             121.0
           ],
-          "track_id": "track_5",
+          "track_id": "track_6",
           "via": "foot"
         },
         {
@@ -754,16 +1181,16 @@
             299.0,
             127.0
           ],
-          "track_id": "track_6",
+          "track_id": "track_9",
           "via": "foot"
         },
         {
           "time_sec": 14.8,
           "foot": [
-            318.5,
+            319.0,
             158.0
           ],
-          "track_id": "track_9",
+          "track_id": "track_13",
           "via": "lower_body"
         }
       ]
@@ -783,39 +1210,30 @@
           "via": "lower_body"
         },
         {
-          "time_sec": 7.4,
+          "time_sec": 7.0,
           "foot": [
-            237.5,
-            120.0
+            236.0,
+            116.0
           ],
-          "track_id": "track_22",
-          "via": "foot"
-        },
-        {
-          "time_sec": 9.4,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_27",
+          "track_id": "track_20",
           "via": "foot"
         },
         {
           "time_sec": 17.8,
           "foot": [
-            224.0,
+            224.5,
             163.0
           ],
-          "track_id": "track_34",
+          "track_id": "track_36",
           "via": "lower_body"
         },
         {
-          "time_sec": 18.6,
+          "time_sec": 18.4,
           "foot": [
             299.5,
             127.0
           ],
-          "track_id": "track_35",
+          "track_id": "track_40",
           "via": "foot"
         }
       ]
@@ -828,19 +1246,19 @@
         {
           "time_sec": 19.6,
           "foot": [
-            213.5,
+            213.0,
             156.0
           ],
-          "track_id": "track_8",
+          "track_id": "track_10",
           "via": "lower_body"
         },
         {
-          "time_sec": 22.8,
+          "time_sec": 21.0,
           "foot": [
-            300.5,
+            299.0,
             127.0
           ],
-          "track_id": "track_27",
+          "track_id": "track_14",
           "via": "foot"
         },
         {
@@ -849,7 +1267,7 @@
             331.5,
             159.0
           ],
-          "track_id": "track_35",
+          "track_id": "track_38",
           "via": "lower_body"
         },
         {
@@ -871,17 +1289,17 @@
         {
           "time_sec": 15.6,
           "foot": [
-            242.0,
+            241.5,
             156.0
           ],
-          "track_id": "track_25",
+          "track_id": "track_23",
           "via": "lower_body"
         },
         {
           "time_sec": 16.4,
           "foot": [
-            271.0,
-            161.0
+            270.5,
+            160.0
           ],
           "track_id": "track_12",
           "via": "lower_body"
@@ -892,7 +1310,7 @@
             299.5,
             126.0
           ],
-          "track_id": "track_41",
+          "track_id": "track_32",
           "via": "foot"
         },
         {
@@ -901,25 +1319,16 @@
             302.5,
             127.0
           ],
-          "track_id": "track_57",
+          "track_id": "track_47",
           "via": "foot"
         },
         {
           "time_sec": 42.4,
           "foot": [
-            314.0,
+            314.5,
             123.0
           ],
-          "track_id": "track_60",
-          "via": "foot"
-        },
-        {
-          "time_sec": 52.8,
-          "foot": [
-            299.5,
-            126.0
-          ],
-          "track_id": "track_83",
+          "track_id": "track_52",
           "via": "foot"
         },
         {
@@ -928,7 +1337,7 @@
             214.0,
             155.0
           ],
-          "track_id": "track_77",
+          "track_id": "track_82",
           "via": "lower_body"
         }
       ]
@@ -939,15 +1348,6 @@
       "sampled_frames": 300,
       "alerts": [
         {
-          "time_sec": 2.0,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_7",
-          "via": "foot"
-        },
-        {
           "time_sec": 4.0,
           "foot": [
             210.0,
@@ -957,31 +1357,40 @@
           "via": "lower_body"
         },
         {
+          "time_sec": 4.6,
+          "foot": [
+            299.5,
+            127.0
+          ],
+          "track_id": "track_10",
+          "via": "foot"
+        },
+        {
           "time_sec": 12.0,
           "foot": [
             327.5,
             157.0
           ],
-          "track_id": "track_19",
-          "via": "lower_body"
-        },
-        {
-          "time_sec": 12.4,
-          "foot": [
-            299.0,
-            127.0
-          ],
-          "track_id": "track_11",
-          "via": "foot"
-        },
-        {
-          "time_sec": 14.2,
-          "foot": [
-            214.5,
-            162.0
-          ],
           "track_id": "track_16",
           "via": "lower_body"
+        },
+        {
+          "time_sec": 14.0,
+          "foot": [
+            210.0,
+            162.0
+          ],
+          "track_id": "track_14",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 23.0,
+          "foot": [
+            300.0,
+            127.0
+          ],
+          "track_id": "track_27",
+          "via": "foot"
         },
         {
           "time_sec": 53.8,
@@ -989,7 +1398,16 @@
             221.5,
             123.0
           ],
-          "track_id": "track_39",
+          "track_id": "track_41",
+          "via": "foot"
+        },
+        {
+          "time_sec": 56.4,
+          "foot": [
+            299.5,
+            127.0
+          ],
+          "track_id": "track_44",
           "via": "foot"
         }
       ]
@@ -1003,18 +1421,27 @@
           "time_sec": 56.6,
           "foot": [
             218.5,
-            155.0
+            156.0
           ],
-          "track_id": "track_48",
+          "track_id": "track_36",
           "via": "lower_body"
         },
         {
           "time_sec": 93.0,
           "foot": [
             235.5,
-            108.0
+            107.0
           ],
-          "track_id": "track_70",
+          "track_id": "track_47",
+          "via": "foot"
+        },
+        {
+          "time_sec": 97.2,
+          "foot": [
+            299.5,
+            126.0
+          ],
+          "track_id": "track_53",
           "via": "foot"
         }
       ]
@@ -1034,48 +1461,39 @@
           "via": "lower_body"
         },
         {
-          "time_sec": 1.2,
+          "time_sec": 3.2,
           "foot": [
-            299.0,
+            299.5,
             127.0
           ],
           "track_id": "track_2",
           "via": "foot"
         },
         {
-          "time_sec": 11.2,
+          "time_sec": 18.2,
           "foot": [
-            311.0,
-            157.0
+            299.0,
+            126.0
           ],
-          "track_id": "track_15",
-          "via": "lower_body"
+          "track_id": "track_42",
+          "via": "foot"
         },
         {
           "time_sec": 19.4,
           "foot": [
             214.5,
-            156.0
+            157.0
           ],
-          "track_id": "track_20",
+          "track_id": "track_23",
           "via": "lower_body"
         },
         {
-          "time_sec": 24.8,
+          "time_sec": 25.8,
           "foot": [
-            300.5,
-            127.0
-          ],
-          "track_id": "track_55",
-          "via": "foot"
-        },
-        {
-          "time_sec": 25.4,
-          "foot": [
-            220.0,
+            238.5,
             158.0
           ],
-          "track_id": "track_47",
+          "track_id": "track_68",
           "via": "lower_body"
         },
         {
@@ -1084,43 +1502,34 @@
             226.0,
             163.0
           ],
-          "track_id": "track_86",
+          "track_id": "track_104",
           "via": "lower_body"
         },
         {
-          "time_sec": 40.0,
+          "time_sec": 39.6,
           "foot": [
-            299.5,
+            299.0,
             127.0
           ],
-          "track_id": "track_101",
+          "track_id": "track_105",
           "via": "foot"
         },
         {
           "time_sec": 40.2,
           "foot": [
-            232.0,
+            232.5,
             157.0
           ],
-          "track_id": "track_102",
+          "track_id": "track_103",
           "via": "lower_body"
         },
         {
-          "time_sec": 52.2,
+          "time_sec": 52.0,
           "foot": [
-            222.0,
-            130.0
+            220.0,
+            128.0
           ],
-          "track_id": "track_117",
-          "via": "foot"
-        },
-        {
-          "time_sec": 58.6,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_135",
+          "track_id": "track_126",
           "via": "foot"
         },
         {
@@ -1129,7 +1538,7 @@
             222.0,
             127.0
           ],
-          "track_id": "track_136",
+          "track_id": "track_134",
           "via": "foot"
         }
       ]
@@ -1142,10 +1551,10 @@
         {
           "time_sec": 11.0,
           "foot": [
-            326.5,
+            327.0,
             162.0
           ],
-          "track_id": "track_3",
+          "track_id": "track_4",
           "via": "lower_body"
         },
         {
@@ -1154,34 +1563,43 @@
             300.0,
             127.0
           ],
-          "track_id": "track_5",
+          "track_id": "track_7",
+          "via": "foot"
+        },
+        {
+          "time_sec": 38.0,
+          "foot": [
+            299.0,
+            127.0
+          ],
+          "track_id": "track_26",
           "via": "foot"
         },
         {
           "time_sec": 39.8,
           "foot": [
-            218.5,
+            218.0,
             154.0
           ],
-          "track_id": "track_22",
+          "track_id": "track_29",
           "via": "lower_body"
         },
         {
           "time_sec": 80.8,
           "foot": [
-            238.0,
-            124.0
+            238.5,
+            123.0
           ],
-          "track_id": "track_39",
+          "track_id": "track_47",
           "via": "foot"
         },
         {
           "time_sec": 80.8,
           "foot": [
-            300.0,
+            299.5,
             127.0
           ],
-          "track_id": "track_40",
+          "track_id": "track_48",
           "via": "foot"
         }
       ]
@@ -1192,31 +1610,22 @@
       "sampled_frames": 333,
       "alerts": [
         {
+          "time_sec": 17.8,
+          "foot": [
+            299.0,
+            127.0
+          ],
+          "track_id": "track_21",
+          "via": "foot"
+        },
+        {
           "time_sec": 20.6,
           "foot": [
             214.5,
             163.0
           ],
-          "track_id": "track_6",
+          "track_id": "track_5",
           "via": "lower_body"
-        },
-        {
-          "time_sec": 23.4,
-          "foot": [
-            299.0,
-            127.0
-          ],
-          "track_id": "track_28",
-          "via": "foot"
-        },
-        {
-          "time_sec": 29.2,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_32",
-          "via": "foot"
         }
       ]
     },
@@ -1228,20 +1637,11 @@
         {
           "time_sec": 9.4,
           "foot": [
-            328.5,
+            329.0,
             161.0
           ],
           "track_id": "track_3",
           "via": "lower_body"
-        },
-        {
-          "time_sec": 11.6,
-          "foot": [
-            300.0,
-            127.0
-          ],
-          "track_id": "track_10",
-          "via": "foot"
         },
         {
           "time_sec": 13.8,
@@ -1249,26 +1649,17 @@
             300.0,
             127.0
           ],
-          "track_id": "track_15",
+          "track_id": "track_13",
           "via": "foot"
         },
         {
-          "time_sec": 35.6,
+          "time_sec": 35.8,
           "foot": [
-            336.5,
+            330.0,
             159.0
           ],
-          "track_id": "track_40",
+          "track_id": "track_45",
           "via": "lower_body"
-        },
-        {
-          "time_sec": 40.8,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_43",
-          "via": "foot"
         }
       ]
     },
@@ -1278,12 +1669,21 @@
       "sampled_frames": 145,
       "alerts": [
         {
+          "time_sec": 17.6,
+          "foot": [
+            300.0,
+            126.0
+          ],
+          "track_id": "track_9",
+          "via": "foot"
+        },
+        {
           "time_sec": 21.4,
           "foot": [
-            216.5,
+            216.0,
             162.0
           ],
-          "track_id": "track_6",
+          "track_id": "track_3",
           "via": "lower_body"
         }
       ]
@@ -1299,7 +1699,7 @@
             249.0,
             161.0
           ],
-          "track_id": "track_6",
+          "track_id": "track_5",
           "via": "lower_body"
         },
         {
@@ -1317,8 +1717,17 @@
             328.5,
             161.0
           ],
-          "track_id": "track_19",
+          "track_id": "track_17",
           "via": "lower_body"
+        },
+        {
+          "time_sec": 39.2,
+          "foot": [
+            299.0,
+            127.0
+          ],
+          "track_id": "track_20",
+          "via": "foot"
         },
         {
           "time_sec": 43.2,
@@ -1326,7 +1735,7 @@
             234.0,
             156.0
           ],
-          "track_id": "track_38",
+          "track_id": "track_40",
           "via": "lower_body"
         }
       ]
@@ -1346,10 +1755,10 @@
           "via": "foot"
         },
         {
-          "time_sec": 6.2,
+          "time_sec": 6.0,
           "foot": [
-            222.5,
-            133.0
+            222.0,
+            132.0
           ],
           "track_id": "track_2",
           "via": "foot"
@@ -1357,7 +1766,7 @@
         {
           "time_sec": 14.8,
           "foot": [
-            218.5,
+            219.0,
             163.0
           ],
           "track_id": "track_21",
@@ -1366,19 +1775,19 @@
         {
           "time_sec": 17.8,
           "foot": [
-            300.0,
+            300.5,
             127.0
           ],
-          "track_id": "track_30",
+          "track_id": "track_29",
           "via": "foot"
         },
         {
           "time_sec": 24.6,
           "foot": [
-            222.5,
+            224.5,
             159.0
           ],
-          "track_id": "track_46",
+          "track_id": "track_38",
           "via": "lower_body"
         },
         {
@@ -1387,34 +1796,34 @@
             234.5,
             131.0
           ],
-          "track_id": "track_48",
+          "track_id": "track_47",
           "via": "foot"
         },
         {
-          "time_sec": 53.2,
+          "time_sec": 53.0,
           "foot": [
-            240.0,
+            241.0,
             127.0
           ],
-          "track_id": "track_77",
+          "track_id": "track_60",
+          "via": "foot"
+        },
+        {
+          "time_sec": 55.2,
+          "foot": [
+            300.0,
+            127.0
+          ],
+          "track_id": "track_69",
           "via": "foot"
         },
         {
           "time_sec": 55.4,
           "foot": [
-            234.5,
-            128.0
+            247.0,
+            138.0
           ],
-          "track_id": "track_83",
-          "via": "foot"
-        },
-        {
-          "time_sec": 55.6,
-          "foot": [
-            299.5,
-            127.0
-          ],
-          "track_id": "track_85",
+          "track_id": "track_71",
           "via": "foot"
         },
         {
@@ -1423,17 +1832,8 @@
             220.5,
             139.0
           ],
-          "track_id": "track_88",
+          "track_id": "track_73",
           "via": "foot"
-        },
-        {
-          "time_sec": 58.8,
-          "foot": [
-            222.5,
-            157.0
-          ],
-          "track_id": "track_97",
-          "via": "lower_body"
         }
       ]
     },
@@ -1448,7 +1848,7 @@
             320.0,
             165.0
           ],
-          "track_id": "track_5",
+          "track_id": "track_3",
           "via": "lower_body"
         },
         {
@@ -1464,99 +1864,108 @@
           "time_sec": 23.2,
           "foot": [
             300.0,
-            127.0
+            126.0
           ],
-          "track_id": "track_39",
+          "track_id": "track_26",
           "via": "foot"
         },
         {
-          "time_sec": 27.4,
+          "time_sec": 27.2,
           "foot": [
-            246.5,
-            151.0
+            233.0,
+            155.0
           ],
-          "track_id": "track_26",
+          "track_id": "track_49",
           "via": "lower_body"
         },
         {
           "time_sec": 42.0,
           "foot": [
-            304.0,
+            304.5,
             132.0
           ],
-          "track_id": "track_76",
+          "track_id": "track_55",
           "via": "foot"
         },
         {
-          "time_sec": 49.0,
+          "time_sec": 48.4,
           "foot": [
-            232.5,
-            141.0
+            300.5,
+            126.0
           ],
-          "track_id": "track_88",
+          "track_id": "track_65",
           "via": "foot"
         },
         {
-          "time_sec": 52.2,
+          "time_sec": 48.4,
           "foot": [
-            230.0,
-            120.0
+            221.0,
+            137.0
           ],
-          "track_id": "track_94",
+          "track_id": "track_66",
           "via": "foot"
         },
         {
-          "time_sec": 53.0,
+          "time_sec": 51.8,
           "foot": [
-            299.5,
-            127.0
+            223.5,
+            118.0
+          ],
+          "track_id": "track_70",
+          "via": "foot"
+        },
+        {
+          "time_sec": 87.0,
+          "foot": [
+            300.0,
+            126.0
+          ],
+          "track_id": "track_65",
+          "via": "foot"
+        },
+        {
+          "time_sec": 91.0,
+          "foot": [
+            246.0,
+            124.0
+          ],
+          "track_id": "track_96",
+          "via": "foot"
+        },
+        {
+          "time_sec": 91.2,
+          "foot": [
+            300.0,
+            126.0
           ],
           "track_id": "track_98",
           "via": "foot"
         },
         {
-          "time_sec": 91.2,
+          "time_sec": 125.8,
           "foot": [
-            299.5,
-            127.0
+            234.5,
+            160.0
           ],
-          "track_id": "track_125",
-          "via": "foot"
-        },
-        {
-          "time_sec": 91.2,
-          "foot": [
-            244.5,
-            125.0
-          ],
-          "track_id": "track_127",
-          "via": "foot"
-        },
-        {
-          "time_sec": 126.0,
-          "foot": [
-            229.0,
-            161.0
-          ],
-          "track_id": "track_148",
+          "track_id": "track_118",
           "via": "lower_body"
         },
         {
-          "time_sec": 127.0,
+          "time_sec": 127.6,
           "foot": [
             299.5,
-            127.0
+            126.0
           ],
-          "track_id": "track_147",
+          "track_id": "track_117",
           "via": "foot"
         },
         {
-          "time_sec": 133.0,
+          "time_sec": 132.8,
           "foot": [
-            235.0,
-            117.0
+            235.5,
+            116.0
           ],
-          "track_id": "track_154",
+          "track_id": "track_123",
           "via": "foot"
         },
         {
@@ -1565,7 +1974,16 @@
             221.0,
             136.0
           ],
-          "track_id": "track_155",
+          "track_id": "track_131",
+          "via": "foot"
+        },
+        {
+          "time_sec": 137.8,
+          "foot": [
+            299.0,
+            126.0
+          ],
+          "track_id": "track_122",
           "via": "foot"
         }
       ]
@@ -1581,7 +1999,7 @@
             306.0,
             158.0
           ],
-          "track_id": "track_35",
+          "track_id": "track_31",
           "via": "lower_body"
         }
       ]
@@ -1597,7 +2015,7 @@
             306.0,
             154.0
           ],
-          "track_id": "track_19",
+          "track_id": "track_14",
           "via": "lower_body"
         },
         {
@@ -1606,8 +2024,17 @@
             302.0,
             159.0
           ],
-          "track_id": "track_26",
+          "track_id": "track_20",
           "via": "lower_body"
+        },
+        {
+          "time_sec": 27.2,
+          "foot": [
+            299.5,
+            126.0
+          ],
+          "track_id": "track_38",
+          "via": "foot"
         }
       ]
     },
@@ -1622,7 +2049,7 @@
             226.5,
             163.0
           ],
-          "track_id": "track_8",
+          "track_id": "track_10",
           "via": "lower_body"
         },
         {
@@ -1631,8 +2058,17 @@
             221.0,
             155.0
           ],
-          "track_id": "track_21",
+          "track_id": "track_27",
           "via": "lower_body"
+        },
+        {
+          "time_sec": 20.2,
+          "foot": [
+            299.5,
+            127.0
+          ],
+          "track_id": "track_28",
+          "via": "foot"
         },
         {
           "time_sec": 49.6,
@@ -1640,7 +2076,16 @@
             236.0,
             127.0
           ],
-          "track_id": "track_54",
+          "track_id": "track_58",
+          "via": "foot"
+        },
+        {
+          "time_sec": 51.2,
+          "foot": [
+            299.5,
+            127.0
+          ],
+          "track_id": "track_56",
           "via": "foot"
         },
         {
@@ -1649,17 +2094,8 @@
             231.5,
             137.0
           ],
-          "track_id": "track_58",
+          "track_id": "track_62",
           "via": "foot"
-        },
-        {
-          "time_sec": 65.0,
-          "foot": [
-            323.0,
-            156.0
-          ],
-          "track_id": "track_81",
-          "via": "lower_body"
         }
       ]
     },
@@ -1678,22 +2114,22 @@
           "via": "lower_body"
         },
         {
-          "time_sec": 7.8,
-          "foot": [
-            299.0,
-            126.0
-          ],
-          "track_id": "track_14",
-          "via": "foot"
-        },
-        {
           "time_sec": 11.2,
           "foot": [
-            316.0,
+            315.5,
             161.0
           ],
-          "track_id": "track_24",
+          "track_id": "track_31",
           "via": "lower_body"
+        },
+        {
+          "time_sec": 12.6,
+          "foot": [
+            299.0,
+            127.0
+          ],
+          "track_id": "track_35",
+          "via": "foot"
         },
         {
           "time_sec": 14.8,
@@ -1701,16 +2137,16 @@
             231.0,
             160.0
           ],
-          "track_id": "track_21",
+          "track_id": "track_27",
           "via": "lower_body"
         },
         {
           "time_sec": 16.8,
           "foot": [
             217.0,
-            161.0
+            162.0
           ],
-          "track_id": "track_35",
+          "track_id": "track_41",
           "via": "lower_body"
         },
         {
@@ -1719,34 +2155,34 @@
             249.5,
             163.0
           ],
-          "track_id": "track_27",
+          "track_id": "track_34",
           "via": "lower_body"
         },
         {
-          "time_sec": 39.0,
+          "time_sec": 38.2,
           "foot": [
-            213.5,
+            299.5,
+            127.0
+          ],
+          "track_id": "track_56",
+          "via": "foot"
+        },
+        {
+          "time_sec": 39.2,
+          "foot": [
+            226.0,
             161.0
           ],
-          "track_id": "track_67",
+          "track_id": "track_57",
           "via": "lower_body"
         },
         {
           "time_sec": 45.8,
           "foot": [
-            239.0,
+            238.5,
             106.0
           ],
-          "track_id": "track_75",
-          "via": "foot"
-        },
-        {
-          "time_sec": 47.8,
-          "foot": [
-            317.0,
-            125.0
-          ],
-          "track_id": "track_80",
+          "track_id": "track_64",
           "via": "foot"
         },
         {
@@ -1755,25 +2191,25 @@
             220.5,
             126.0
           ],
-          "track_id": "track_83",
+          "track_id": "track_69",
           "via": "foot"
         },
         {
-          "time_sec": 49.2,
+          "time_sec": 54.2,
           "foot": [
-            299.5,
-            127.0
+            295.0,
+            145.0
           ],
-          "track_id": "track_84",
+          "track_id": "track_74",
           "via": "foot"
         },
         {
-          "time_sec": 53.8,
+          "time_sec": 55.2,
           "foot": [
-            294.5,
-            144.0
+            310.0,
+            137.0
           ],
-          "track_id": "track_89",
+          "track_id": "track_75",
           "via": "foot"
         }
       ]
@@ -1787,9 +2223,9 @@
           "time_sec": 9.0,
           "foot": [
             335.0,
-            162.0
+            161.0
           ],
-          "track_id": "track_10",
+          "track_id": "track_6",
           "via": "lower_body"
         },
         {
@@ -1798,70 +2234,52 @@
             295.0,
             161.0
           ],
-          "track_id": "track_12",
+          "track_id": "track_8",
           "via": "lower_body"
         },
         {
-          "time_sec": 11.4,
+          "time_sec": 12.0,
           "foot": [
-            299.0,
+            337.0,
+            160.0
+          ],
+          "track_id": "track_10",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 14.6,
+          "foot": [
+            308.0,
+            153.0
+          ],
+          "track_id": "track_21",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 16.4,
+          "foot": [
+            299.5,
             126.0
           ],
-          "track_id": "track_16",
+          "track_id": "track_1",
           "via": "foot"
         },
         {
-          "time_sec": 12.2,
+          "time_sec": 34.0,
           "foot": [
-            332.0,
-            159.0
-          ],
-          "track_id": "track_15",
-          "via": "lower_body"
-        },
-        {
-          "time_sec": 32.4,
-          "foot": [
-            271.0,
-            133.0
-          ],
-          "track_id": "track_28",
-          "via": "foot"
-        },
-        {
-          "time_sec": 34.2,
-          "foot": [
-            222.0,
+            223.5,
             119.0
           ],
-          "track_id": "track_53",
+          "track_id": "track_40",
           "via": "foot"
         },
         {
-          "time_sec": 34.2,
+          "time_sec": 36.4,
           "foot": [
-            239.0,
-            117.0
+            300.0,
+            127.0
           ],
-          "track_id": "track_54",
-          "via": "foot"
-        },
-        {
-          "time_sec": 39.6,
-          "foot": [
-            335.0,
-            162.0
-          ],
-          "track_id": "track_60",
-          "via": "lower_body"
-        },
-        {
-          "time_sec": 41.6,
-          "foot": [
-            266.0,
-            134.0
-          ],
-          "track_id": "track_70",
+          "track_id": "track_45",
           "via": "foot"
         }
       ]
@@ -1883,37 +2301,37 @@
         {
           "time_sec": 10.4,
           "foot": [
-            235.5,
+            235.0,
             111.0
           ],
-          "track_id": "track_10",
+          "track_id": "track_14",
           "via": "foot"
         },
         {
-          "time_sec": 11.6,
+          "time_sec": 11.4,
           "foot": [
-            220.0,
-            124.0
+            219.5,
+            121.0
           ],
-          "track_id": "track_12",
+          "track_id": "track_15",
           "via": "foot"
         },
         {
           "time_sec": 44.6,
           "foot": [
-            302.5,
+            303.0,
             156.0
           ],
-          "track_id": "track_37",
+          "track_id": "track_33",
           "via": "lower_body"
         },
         {
           "time_sec": 46.0,
           "foot": [
-            233.0,
+            233.5,
             158.0
           ],
-          "track_id": "track_44",
+          "track_id": "track_41",
           "via": "lower_body"
         }
       ]
@@ -1926,10 +2344,10 @@
         {
           "time_sec": 7.6,
           "foot": [
-            235.5,
+            236.0,
             115.0
           ],
-          "track_id": "track_2",
+          "track_id": "track_1",
           "via": "foot"
         },
         {
@@ -1942,12 +2360,12 @@
           "via": "foot"
         },
         {
-          "time_sec": 10.2,
+          "time_sec": 11.0,
           "foot": [
-            299.0,
+            299.5,
             127.0
           ],
-          "track_id": "track_7",
+          "track_id": "track_5",
           "via": "foot"
         }
       ]

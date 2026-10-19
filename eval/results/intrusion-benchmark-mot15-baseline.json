@@ -1,0 +1,762 @@
+{
+  "label": "baseline",
+  "run_at": "2026-10-19T07:28:32.324607+00:00",
+  "elapsed_sec": 209.1,
+  "config": {
+    "dataset": "MOT15 static cameras: PETS09-S2L1, Venice-2, ADL-Rundle-6",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "alert_cooldown_sec": 30.0,
+    "zones_px": {
+      "PETS09-S2L1": [
+        [
+          440,
+          240
+        ],
+        [
+          700,
+          240
+        ],
+        [
+          700,
+          330
+        ],
+        [
+          440,
+          330
+        ]
+      ],
+      "Venice-2": [
+        [
+          900,
+          650
+        ],
+        [
+          1500,
+          650
+        ],
+        [
+          1500,
+          900
+        ],
+        [
+          900,
+          900
+        ]
+      ],
+      "ADL-Rundle-6": [
+        [
+          800,
+          700
+        ],
+        [
+          1400,
+          700
+        ],
+        [
+          1400,
+          860
+        ],
+        [
+          800,
+          860
+        ]
+      ]
+    },
+    "min_inside_sec": 0.4,
+    "near_boundary_px_at_288": 15.0,
+    "match_radius_px_at_288": 40.0
+  },
+  "scores": {
+    "clips": 3,
+    "footage_min": 2.52,
+    "entries": 51,
+    "detected": 37,
+    "false_alarms": 18,
+    "duplicate_alerts": 3,
+    "false_alarms_via_lower_body": 14,
+    "recall": 0.7254901960784313,
+    "recall_ci95": [
+      0.5905308805092127,
+      0.8288587798945684
+    ],
+    "precision": 0.6727272727272727,
+    "precision_ci95": [
+      0.5410297617609947,
+      0.7818710431117484
+    ],
+    "f1": 0.6981132075471698,
+    "false_alarms_per_hour": 428.9373870564172,
+    "boundary_walkers": 15,
+    "boundary_walkers_alarmed": 6,
+    "boundary_false_alarm_rate": 0.4,
+    "boundary_false_alarm_rate_ci95": [
+      0.19824228082594664,
+      0.642535572434923
+    ],
+    "latency_median_sec": -0.07,
+    "latency_max_sec": 1.27,
+    "outcomes": [
+      {
+        "clip_id": "PETS09-S2L1",
+        "entries": 31,
+        "detected": 20,
+        "duplicates": 0,
+        "false_alarms": 10,
+        "boundary_walkers": 2,
+        "boundary_walkers_alarmed": 1,
+        "latencies_sec": [
+          0.0,
+          -0.29,
+          0.57,
+          0.0,
+          -0.57,
+          -0.86,
+          -0.14,
+          -0.29,
+          -0.14,
+          -0.14,
+          -0.14,
+          -0.29,
+          0.29,
+          -0.29,
+          -0.14,
+          -0.14,
+          -0.29,
+          0.14,
+          -0.0,
+          -0.14
+        ],
+        "missed_entries": [
+          "obj12@5.4s",
+          "obj11@6.0s",
+          "obj13@9.1s",
+          "obj19@15.7s",
+          "obj14@38.7s",
+          "obj1@51.3s",
+          "obj10@65.0s",
+          "obj2@72.6s",
+          "obj18@81.6s",
+          "obj3@90.1s",
+          "obj1@91.9s"
+        ],
+        "false_alarm_details": [
+          "3.9s lower_body other",
+          "4.3s lower_body other",
+          "7.7s lower_body other",
+          "14.7s foot other",
+          "35.7s lower_body other",
+          "62.9s lower_body other",
+          "70.3s lower_body other",
+          "71.3s foot other",
+          "89.0s lower_body other",
+          "96.4s lower_body walker"
+        ]
+      },
+      {
+        "clip_id": "Venice-2",
+        "entries": 9,
+        "detected": 7,
+        "duplicates": 2,
+        "false_alarms": 5,
+        "boundary_walkers": 3,
+        "boundary_walkers_alarmed": 3,
+        "latencies_sec": [
+          0.27,
+          -0.27,
+          -0.17,
+          1.13,
+          0.07,
+          0.0,
+          -0.07
+        ],
+        "missed_entries": [
+          "obj7@9.7s",
+          "obj6@16.8s"
+        ],
+        "false_alarm_details": [
+          "0.0s foot walker",
+          "0.0s lower_body walker",
+          "7.8s lower_body other",
+          "8.6s lower_body walker",
+          "16.2s lower_body walker"
+        ]
+      },
+      {
+        "clip_id": "ADL-Rundle-6",
+        "entries": 11,
+        "detected": 10,
+        "duplicates": 1,
+        "false_alarms": 3,
+        "boundary_walkers": 10,
+        "boundary_walkers_alarmed": 2,
+        "latencies_sec": [
+          0.03,
+          -0.13,
+          0.87,
+          0.03,
+          1.17,
+          0.37,
+          0.37,
+          -0.1,
+          1.27,
+          0.0
+        ],
+        "missed_entries": [
+          "obj18@8.7s"
+        ],
+        "false_alarm_details": [
+          "3.4s lower_body walker",
+          "5.0s lower_body other",
+          "17.2s foot walker"
+        ]
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "PETS09-S2L1",
+      "footage_sec": 113.571,
+      "sampled_frames": 568,
+      "alerts": [
+        {
+          "time_sec": 0.0,
+          "foot": [
+            661.5,
+            322.0
+          ],
+          "track_id": "track_2",
+          "via": "foot"
+        },
+        {
+          "time_sec": 0.857,
+          "foot": [
+            498.0,
+            241.0
+          ],
+          "track_id": "track_1",
+          "via": "foot"
+        },
+        {
+          "time_sec": 3.857,
+          "foot": [
+            701.0,
+            356.0
+          ],
+          "track_id": "track_9",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 4.286,
+          "foot": [
+            647.0,
+            353.0
+          ],
+          "track_id": "track_8",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 5.714,
+          "foot": [
+            447.0,
+            273.0
+          ],
+          "track_id": "track_21",
+          "via": "foot"
+        },
+        {
+          "time_sec": 7.714,
+          "foot": [
+            666.0,
+            361.0
+          ],
+          "track_id": "track_22",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 14.714,
+          "foot": [
+            441.5,
+            258.0
+          ],
+          "track_id": "track_36",
+          "via": "foot"
+        },
+        {
+          "time_sec": 17.286,
+          "foot": [
+            698.5,
+            305.0
+          ],
+          "track_id": "track_43",
+          "via": "foot"
+        },
+        {
+          "time_sec": 19.857,
+          "foot": [
+            439.5,
+            262.0
+          ],
+          "track_id": "track_55",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 20.0,
+          "foot": [
+            693.0,
+            337.0
+          ],
+          "track_id": "track_53",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 22.429,
+          "foot": [
+            432.5,
+            291.0
+          ],
+          "track_id": "track_62",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 32.429,
+          "foot": [
+            707.0,
+            310.0
+          ],
+          "track_id": "track_75",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 35.714,
+          "foot": [
+            620.5,
+            355.0
+          ],
+          "track_id": "track_76",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 43.429,
+          "foot": [
+            632.5,
+            240.0
+          ],
+          "track_id": "track_9",
+          "via": "foot"
+        },
+        {
+          "time_sec": 43.429,
+          "foot": [
+            596.0,
+            240.0
+          ],
+          "track_id": "track_8",
+          "via": "foot"
+        },
+        {
+          "time_sec": 48.714,
+          "foot": [
+            442.0,
+            266.0
+          ],
+          "track_id": "track_22",
+          "via": "foot"
+        },
+        {
+          "time_sec": 49.0,
+          "foot": [
+            476.0,
+            240.0
+          ],
+          "track_id": "track_83",
+          "via": "foot"
+        },
+        {
+          "time_sec": 62.857,
+          "foot": [
+            633.0,
+            355.0
+          ],
+          "track_id": "track_94",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 63.0,
+          "foot": [
+            505.5,
+            241.0
+          ],
+          "track_id": "track_93",
+          "via": "foot"
+        },
+        {
+          "time_sec": 67.429,
+          "foot": [
+            435.0,
+            319.0
+          ],
+          "track_id": "track_92",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 70.286,
+          "foot": [
+            583.5,
+            357.0
+          ],
+          "track_id": "track_97",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 71.286,
+          "foot": [
+            574.5,
+            301.0
+          ],
+          "track_id": "track_98",
+          "via": "foot"
+        },
+        {
+          "time_sec": 73.429,
+          "foot": [
+            707.0,
+            316.0
+          ],
+          "track_id": "track_101",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 82.857,
+          "foot": [
+            696.5,
+            328.0
+          ],
+          "track_id": "track_126",
+          "via": "foot"
+        },
+        {
+          "time_sec": 89.0,
+          "foot": [
+            609.5,
+            330.0
+          ],
+          "track_id": "track_125",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 96.429,
+          "foot": [
+            524.0,
+            357.0
+          ],
+          "track_id": "track_149",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 99.857,
+          "foot": [
+            705.5,
+            309.0
+          ],
+          "track_id": "track_154",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 100.714,
+          "foot": [
+            522.5,
+            244.0
+          ],
+          "track_id": "track_93",
+          "via": "foot"
+        },
+        {
+          "time_sec": 101.857,
+          "foot": [
+            442.5,
+            276.0
+          ],
+          "track_id": "track_143",
+          "via": "foot"
+        },
+        {
+          "time_sec": 107.714,
+          "foot": [
+            432.0,
+            308.0
+          ],
+          "track_id": "track_158",
+          "via": "lower_body"
+        }
+      ]
+    },
+    {
+      "clip_id": "Venice-2",
+      "footage_sec": 20.0,
+      "sampled_frames": 100,
+      "alerts": [
+        {
+          "time_sec": 0.0,
+          "foot": [
+            1422.5,
+            787.0
+          ],
+          "track_id": "track_1",
+          "via": "foot"
+        },
+        {
+          "time_sec": 0.0,
+          "foot": [
+            1522.5,
+            767.0
+          ],
+          "track_id": "track_3",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 5.0,
+          "foot": [
+            928.5,
+            680.0
+          ],
+          "track_id": "track_103",
+          "via": "foot"
+        },
+        {
+          "time_sec": 5.2,
+          "foot": [
+            881.0,
+            729.0
+          ],
+          "track_id": "track_10",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 6.6,
+          "foot": [
+            884.5,
+            806.0
+          ],
+          "track_id": "track_4",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 7.8,
+          "foot": [
+            906.0,
+            1000.0
+          ],
+          "track_id": "track_2",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 8.6,
+          "foot": [
+            874.5,
+            903.0
+          ],
+          "track_id": "track_113",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 12.2,
+          "foot": [
+            976.0,
+            674.0
+          ],
+          "track_id": "track_31",
+          "via": "foot"
+        },
+        {
+          "time_sec": 14.0,
+          "foot": [
+            1245.5,
+            879.0
+          ],
+          "track_id": "track_270",
+          "via": "foot"
+        },
+        {
+          "time_sec": 15.8,
+          "foot": [
+            895.5,
+            707.0
+          ],
+          "track_id": "track_253",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 15.8,
+          "foot": [
+            930.0,
+            679.0
+          ],
+          "track_id": "track_215",
+          "via": "foot"
+        },
+        {
+          "time_sec": 16.2,
+          "foot": [
+            1392.5,
+            952.0
+          ],
+          "track_id": "track_452",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 16.6,
+          "foot": [
+            906.5,
+            725.0
+          ],
+          "track_id": "track_277",
+          "via": "foot"
+        },
+        {
+          "time_sec": 18.2,
+          "foot": [
+            905.5,
+            683.0
+          ],
+          "track_id": "track_307",
+          "via": "foot"
+        }
+      ]
+    },
+    {
+      "clip_id": "ADL-Rundle-6",
+      "footage_sec": 17.5,
+      "sampled_frames": 88,
+      "alerts": [
+        {
+          "time_sec": 2.4,
+          "foot": [
+            847.5,
+            816.0
+          ],
+          "track_id": "track_2",
+          "via": "foot"
+        },
+        {
+          "time_sec": 3.4,
+          "foot": [
+            1466.0,
+            881.0
+          ],
+          "track_id": "track_1",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 5.0,
+          "foot": [
+            1390.5,
+            1062.0
+          ],
+          "track_id": "track_5",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 6.0,
+          "foot": [
+            783.0,
+            799.0
+          ],
+          "track_id": "track_7",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 7.0,
+          "foot": [
+            1136.5,
+            784.0
+          ],
+          "track_id": "track_121",
+          "via": "foot"
+        },
+        {
+          "time_sec": 7.2,
+          "foot": [
+            816.0,
+            790.0
+          ],
+          "track_id": "track_131",
+          "via": "foot"
+        },
+        {
+          "time_sec": 7.4,
+          "foot": [
+            1093.0,
+            755.0
+          ],
+          "track_id": "track_140",
+          "via": "foot"
+        },
+        {
+          "time_sec": 8.0,
+          "foot": [
+            1029.5,
+            839.0
+          ],
+          "track_id": "track_156",
+          "via": "foot"
+        },
+        {
+          "time_sec": 8.2,
+          "foot": [
+            929.5,
+            793.0
+          ],
+          "track_id": "track_162",
+          "via": "foot"
+        },
+        {
+          "time_sec": 8.4,
+          "foot": [
+            748.5,
+            858.0
+          ],
+          "track_id": "track_161",
+          "via": "lower_body"
+        },
+        {
+          "time_sec": 8.4,
+          "foot": [
+            1174.0,
+            816.0
+          ],
+          "track_id": "track_165",
+          "via": "foot"
+        },
+        {
+          "time_sec": 10.8,
+          "foot": [
+            1227.0,
+            716.0
+          ],
+          "track_id": "track_198",
+          "via": "foot"
+        },
+        {
+          "time_sec": 13.6,
+          "foot": [
+            801.5,
+            825.0
+          ],
+          "track_id": "track_41",
+          "via": "foot"
+        },
+        {
+          "time_sec": 17.2,
+          "foot": [
+            805.5,
+            794.0
+          ],
+          "track_id": "track_8",
+          "via": "foot"
+        }
+      ]
+    }
+  ]
+}

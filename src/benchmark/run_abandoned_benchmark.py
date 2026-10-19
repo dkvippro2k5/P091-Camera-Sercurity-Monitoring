@@ -1,12 +1,31 @@
-"""Event-level abandoned-object benchmark on ABODA, with hand-made labels.
+"""Event-level abandoned-object benchmark on ABODA, AVSS 2007 and CAVIAR.
 
-Dataset: ABODA (Abandoned Object Dataset, Lin et al.), https://github.com/kevinlin311tw/ABODA
-  - 11 clips (`video1.avi` ... `video11.avi`), 640/720x480, ~30 fps, indoor and outdoor, day
-    and night, sudden lighting changes, one crowded station hall. No licence is stated and the
-    repository ships no annotations, so the videos are not redistributed here: place them in
-    `data/benchmark/aboda/` yourself.
+Datasets (`--dataset`):
 
-**Labels are ours.** `ABODA_EVENTS` was written on 2026-10-19 by stepping through each clip
+`aboda` - ABODA (Abandoned Object Dataset, Lin et al.), https://github.com/kevinlin311tw/ABODA
+  - 11 clips, 640/720x480, ~30 fps, indoor and outdoor, day and night, sudden lighting changes,
+    one crowded station hall. No licence is stated and the repository ships no annotations, so
+    the videos are not redistributed here: put `video1.mp4` ... `video11.mp4` (re-encoded from
+    the published .avi with `src.benchmark.video_convert`) in `data/benchmark/aboda/`.
+
+`avss2007` - i-LIDS AVSS 2007 abandoned-baggage clips (EASY / MEDIUM / HARD), a London
+  Underground platform, 720x576, ~3 min each, with crowds walking past. Videos and ViPER ground
+  truth come from the material of Luna et al., "Abandoned Object Detection in Video-Surveillance:
+  Survey and Comparison" (Sensors 2018), http://www-vpu.eps.uam.es/publications/AODsurvey/ -
+  not redistributed here; extract `datasets/AVSS2007/*` into `data/benchmark/avss2007/` and
+  re-encode the .mpg files. The box, the drop and the removal come from that ground truth
+  (its frame numbers are on a 30 fps clock). Its own "abandoned" frame applies a 30 s
+  stationary rule; the moment the owner walked away (`AVSS_OWNER_LEFT_SEC`) is ours, read off
+  the video like the ABODA labels.
+
+`caviar-inria` - CAVIAR INRIA lobby (CC BY-SA), https://homepages.inf.ed.ac.uk/rbf/CAVIARDATA1/,
+  384x288, 25 fps. Four clips label a "leaving object" (LeftBag, LeftBag_AtChair, LeftBox,
+  LeftBag_PickedUp); its first and last labelled frames are the drop and the removal, and the
+  owner - the person nearest the object when it appears - is taken to have left once they stay
+  farther than `CAVIAR_OWNER_GONE_RATIO` of the frame width for a second. The other lobby clips
+  (walking, browsing, meeting, fighting) contain no abandoned object and measure false alarms.
+
+**ABODA labels are ours.** `ABODA_EVENTS` was written on 2026-10-19 by stepping through each clip
 (contact sheets at 0.5-3 s) and locating each object by differencing the scene before the drop
 against after the owner left. For each abandonment:
 
@@ -31,14 +50,16 @@ there stands beside it to the end. It is kept as a hard negative — "attended l
   `ABANDON_SEC` / `OWNER_RADIUS_RATIO` / `STATIONARY_TOLERANCE_RATIO` settings in effect.
 
 Usage:
-    python -m src.benchmark.run_abandoned_benchmark --label baseline
+    python -m src.benchmark.run_abandoned_benchmark --dataset all --label baseline
 """
 
 import argparse
 import json
 import math
+import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +74,7 @@ if sys.platform == "win32":
         pass
 
 DEFAULT_DATA_DIR = BENCHMARK_DATA_DIR / "aboda"
+CAVIAR_OWNER_GONE_RATIO = 0.25
 LABEL_ABANDONED = "abandoned_object"
 MATCH_RADIUS_PX = 60.0
 EARLY_TOLERANCE_SEC = 3.0
@@ -73,7 +95,7 @@ ABODA_EVENTS: dict[str, list[ObjectLabel]] = {
     "video3": [ObjectLabel((214, 216, 44, 31), 56.5, 68.0, None, "outdoor pavement, owner lingers ~10 s first")],
     "video4": [ObjectLabel((449, 369, 55, 43), 14.0, 20.0, None, "outdoor pavement, bag against a utility box")],
     "video5": [
-        ObjectLabel((135, 199, 35, 31), 65.0, 67.0, None, "night lobby (IR), box set down in several spots from 36 s")
+        ObjectLabel((135, 199, 35, 31), 31.0, 67.0, None, "night lobby (IR), owner stands by the box until 67 s")
     ],
     "video6": [
         ObjectLabel((186, 307, 46, 29), 115.5, 118.0, 132.0, "night lobby (IR), picked up by someone else"),
@@ -123,10 +145,141 @@ class ClipOutcome:
 
 def load_aboda(data_dir: Path) -> list[ClipTruth]:
     return [
-        ClipTruth(clip, str(data_dir / f"{clip}.avi"), objects)
+        ClipTruth(clip, str(data_dir / f"{clip}.mp4"), objects)
         for clip, objects in ABODA_EVENTS.items()
-        if (data_dir / f"{clip}.avi").exists()
+        if (data_dir / f"{clip}.mp4").exists()
     ]
+
+
+# Owner walking away, in seconds, read off each clip. EASY and HARD agree with the ground
+# truth's "abandoned" frame; in MEDIUM the woman who set the bag down stands a couple of metres
+# behind it until 84 s, ~7 s after that frame (which is just the drop plus 30 s), and comes back
+# for it at ~150 s. The man beside her with a suitcase is not part of the event.
+AVSS_OWNER_LEFT_SEC = {"EASY": 96.0, "MEDIUM": 84.0, "HARD": 98.6}
+_AVSS_GT_FPS = 30.0
+_VIPER_OBJECT = re.compile(
+    r'<object framespan="(?P<span>[^"]+)" id="[^"]*" name="(?P<name>\w+)">.*?<data:bbox (?P<bbox>[^/]*)/>', re.S
+)
+
+
+def parse_viper_objects(xml_path: Path) -> dict[str, tuple[tuple[int, int, int, int], int, int]]:
+    """{descriptor name: (box, first frame, last frame)} from a ViPER file with one object each.
+
+    Read with regular expressions: the published AVSS files are not well-formed XML (a
+    mismatched closing tag in the config block), so an XML parser rejects them.
+    """
+    events = {}
+    text = xml_path.read_text(encoding="utf-8", errors="replace")
+    for match in _VIPER_OBJECT.finditer(text):
+        first, last = (int(v) for v in match["span"].strip().split(":"))
+        attrs = dict(re.findall(r'(\w+)="(\d+)"', match["bbox"]))
+        events[match["name"]] = (tuple(int(attrs[k]) for k in ("x", "y", "width", "height")), first, last)
+    return events
+
+
+def load_avss2007(data_dir: Path) -> list[ClipTruth]:
+    import cv2
+
+    truths = []
+    for level, owner_left in AVSS_OWNER_LEFT_SEC.items():
+        video, labels = data_dir / f"AVSSS07_{level}.mp4", data_dir / f"AVSSS07_{level}.txt"
+        if not (video.exists() and labels.exists()):
+            continue
+        box, put, removed = parse_viper_objects(labels)["PutObject"]
+        capture = cv2.VideoCapture(str(video))
+        duration = capture.get(cv2.CAP_PROP_FRAME_COUNT) / (capture.get(cv2.CAP_PROP_FPS) or 25.0)
+        capture.release()
+        removed_sec = removed / _AVSS_GT_FPS
+        label = ObjectLabel(
+            box,
+            put / _AVSS_GT_FPS,
+            owner_left,
+            removed_sec if removed_sec < duration - 1.0 else None,
+            f"AVSS 2007 {level}",
+        )
+        truths.append(ClipTruth(f"avss-{level.lower()}", str(video), [label]))
+    return truths
+
+
+CAVIAR_INRIA_CLIPS = (
+    "LeftBag", "LeftBag_AtChair", "LeftBox", "LeftBag_PickedUp",
+    "Walk1", "Walk2", "Walk3", "Browse1", "Browse2", "Browse3", "Browse4",
+    "Browse_WhileWaiting1", "Browse_WhileWaiting2", "Rest_InChair", "Rest_SlumpOnFloor",
+    "Rest_WiggleOnFloor", "Rest_FallOnFloor", "Meet_WalkTogether1", "Meet_WalkTogether2",
+    "Meet_WalkSplit", "Meet_Split_3rdGuy", "Meet_Crowd", "Fight_RunAway1", "Fight_RunAway2",
+    "Fight_Chase",
+)  # fmt: skip
+
+
+def caviar_left_objects(xml_path: Path, fps: float = 25.0, frame_width: int = 384) -> list[ObjectLabel]:
+    """Abandonments in a CAVIAR file: each "leaving object" and when its owner walked off."""
+    tracks: dict[str, dict[int, tuple[float, float, float, float]]] = {}
+    roles: dict[str, str] = {}
+    last_frame = 0
+    for frame in ET.parse(xml_path).getroot().iter("frame"):
+        number = int(frame.get("number"))
+        last_frame = max(last_frame, number)
+        for obj in frame.iter("object"):
+            box = obj.find("box")
+            tracks.setdefault(obj.get("id"), {})[number] = tuple(float(box.get(k)) for k in ("xc", "yc", "w", "h"))
+            roles.setdefault(obj.get("id"), (obj.findtext(".//role") or "").strip())
+
+    labels = []
+    gone_px = CAVIAR_OWNER_GONE_RATIO * frame_width
+    for object_id, track in tracks.items():
+        if roles[object_id] != "leaving object":
+            continue
+        first, last = min(track), max(track)
+        # The box once it has settled: the drop frame often catches it mid-air.
+        xc, yc, w, h = track[sorted(track)[len(track) // 2]]
+
+        def distance(person: str, frame: int, centre=(xc, yc)) -> float:
+            box = tracks[person].get(frame)
+            return math.inf if box is None else math.dist(centre, box[:2])
+
+        window = range(first - int(fps), first + int(fps) + 1)
+        people = [p for p in tracks if roles[p] != "leaving object" and any(f in tracks[p] for f in window)]
+        owner = min(people, key=lambda p: min(distance(p, f) for f in window), default=None)
+        left = first
+        if owner is not None:
+            far_since = None
+            for frame in range(first, last + 1):
+                if distance(owner, frame) <= gone_px:
+                    far_since = None
+                    continue
+                far_since = frame if far_since is None else far_since
+                if frame - far_since >= fps:
+                    break
+            left = far_since if far_since is not None else last
+        labels.append(
+            ObjectLabel(
+                (int(xc - w / 2), int(yc - h / 2), int(w), int(h)),
+                first / fps,
+                left / fps,
+                last / fps if last < last_frame - fps else None,
+                f"CAVIAR {xml_path.stem}",
+            )
+        )
+    return labels
+
+
+def load_caviar_inria(data_dir: Path) -> list[ClipTruth]:
+    return [
+        ClipTruth(f"caviar-{clip}", str(data_dir / f"{clip}.mp4"), caviar_left_objects(data_dir / f"{clip}.xml"))
+        for clip in CAVIAR_INRIA_CLIPS
+        if (data_dir / f"{clip}.mp4").exists() and (data_dir / f"{clip}.xml").exists()
+    ]
+
+
+DATASETS = {
+    "aboda": (DEFAULT_DATA_DIR, load_aboda, "ABODA, 11 clips, own labels"),
+    "avss2007": (BENCHMARK_DATA_DIR / "avss2007", load_avss2007, "AVSS 2007 (i-LIDS) EASY/MEDIUM/HARD"),
+    "caviar-inria": (
+        BENCHMARK_DATA_DIR / "caviar" / "inria",
+        load_caviar_inria,
+        "CAVIAR INRIA lobby: 4 left-object clips + 21 without one",
+    ),
+}
 
 
 def _on_object(alert: Alert, obj: ObjectLabel) -> bool:
@@ -248,7 +401,7 @@ def render_markdown(report: dict) -> str:
     cfg = report["config"]
     far = s["false_alarms_per_hour"]
     lines = [
-        f"# Abandoned-object benchmark — ABODA, own labels ({report['label']})",
+        f"# Abandoned-object benchmark — {cfg['dataset']} ({report['label']})",
         "",
         f"Run {report['run_at'][:19]}Z · weights `{cfg['weights']}` · conf {cfg['detector_confidence']} · "
         f"{cfg['target_fps']} fps · abandon {cfg['abandon_sec']} s · owner radius {cfg['owner_radius_ratio']} × width",
@@ -277,16 +430,11 @@ def render_markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--fps", type=float, default=5.0, help="Analysis rate (CAMERA_TARGET_FPS default: 5).")
-    parser.add_argument("--label", default="baseline", help="Suffix for the result files.")
-    args = parser.parse_args()
-
-    truths = load_aboda(args.data_dir)
+def run_dataset(name: str, data_dir: Path, fps: float, label: str) -> int:
+    _, loader, description = DATASETS[name]
+    truths = loader(data_dir)
     if not truths:
-        print(f"No ABODA clips under {args.data_dir}; copy video1.avi ... video11.avi there.")
+        print(f"No {name} clips under {data_dir}; see the module docstring for where they come from.")
         return 1
 
     from src.config import get_settings
@@ -295,19 +443,19 @@ def main() -> int:
     runs = []
     started = time.perf_counter()
     for index, truth in enumerate(truths, 1):
-        run = run_clip(truth, args.fps)
+        run = run_clip(truth, fps)
         runs.append(run)
-        print(f"  [{index:>2}/{len(truths)}] {truth.clip_id:<8} alerts {[(a.time_sec, a.label) for a in run.alerts] or '-'}")
+        print(f"  [{index:>2}/{len(truths)}] {truth.clip_id:<26} alerts {[(a.time_sec, a.label) for a in run.alerts] or '-'}")
 
     report = {
-        "label": args.label,
+        "label": label,
         "run_at": datetime.now(UTC).isoformat(),
         "elapsed_sec": round(time.perf_counter() - started, 1),
         "config": {
-            "dataset": "ABODA, 11 clips, own labels",
+            "dataset": description,
             "weights": settings.model_weights_path,
             "detector_confidence": settings.detector_confidence,
-            "target_fps": args.fps,
+            "target_fps": fps,
             "abandon_sec": settings.abandon_sec,
             "owner_radius_ratio": settings.owner_radius_ratio,
             "stationary_tolerance_ratio": settings.stationary_tolerance_ratio,
@@ -315,22 +463,39 @@ def main() -> int:
             "match_radius_px": MATCH_RADIUS_PX,
             "early_tolerance_sec": EARLY_TOLERANCE_SEC,
         },
+        "labels": {t.clip_id: [asdict(o) for o in t.objects] for t in truths},
         "scores": score(truths, runs),
         "runs": [asdict(r) for r in runs],
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    json_path = RESULTS_DIR / f"abandoned-benchmark-aboda-{args.label}.json"
-    md_path = RESULTS_DIR / f"abandoned-benchmark-aboda-{args.label}.md"
+    json_path = RESULTS_DIR / f"abandoned-benchmark-{name}-{label}.json"
+    md_path = RESULTS_DIR / f"abandoned-benchmark-{name}-{label}.md"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     md_path.write_text(render_markdown(report), encoding="utf-8")
 
     s = report["scores"]
     print()
-    print(f"  Recall     {_pct(s['recall'])} {_ci(s['recall_ci95'])}  ({s['detected']}/{s['abandonments']})")
-    print(f"  Precision  {_pct(s['precision'])} {_ci(s['precision_ci95'])}")
-    print(f"  False alarms {s['false_alarms']}  ({s['false_alarms_per_hour']:.1f}/h)")
+    print(
+        f"  {name}: recall {_pct(s['recall'])} {_ci(s['recall_ci95'])} ({s['detected']}/{s['abandonments']}), "
+        f"precision {_pct(s['precision'])}, false alarms {s['false_alarms']} ({s['false_alarms_per_hour']:.1f}/h)"
+    )
     print(f"  Wrote {json_path} and {md_path.name}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--dataset", choices=[*sorted(DATASETS), "all"], default="aboda")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Defaults to the dataset's own folder.")
+    parser.add_argument("--fps", type=float, default=5.0, help="Analysis rate (CAMERA_TARGET_FPS default: 5).")
+    parser.add_argument("--label", default="baseline", help="Suffix for the result files.")
+    args = parser.parse_args()
+
+    names = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
+    status = 0
+    for name in names:
+        status |= run_dataset(name, args.data_dir or DATASETS[name][0], args.fps, args.label)
+    return status
 
 
 if __name__ == "__main__":

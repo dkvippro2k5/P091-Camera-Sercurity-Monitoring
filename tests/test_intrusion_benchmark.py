@@ -89,3 +89,11 @@ def test_score_aggregates_recall_and_boundary_rate():
     assert s["precision"] == 1.0
     assert s["boundary_false_alarm_rate"] == 0.0
     assert s["false_alarms_per_hour"] == 0.0
+
+
+def test_mot_ground_truth_becomes_zero_based_foot_points(tmp_path):
+    from src.benchmark.run_intrusion_benchmark import parse_mot_feet
+
+    path = tmp_path / "gt.txt"
+    path.write_text("1,7,100,50,20,80,1,-1,-1,-1\n2,7,102,50,20,80,1,-1,-1,-1\n")
+    assert parse_mot_feet(path) == {"7": {0: (110.0, 130.0), 1: (112.0, 130.0)}}

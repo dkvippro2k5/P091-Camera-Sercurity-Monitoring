@@ -1,7 +1,7 @@
 {
   "label": "baseline",
-  "run_at": "2026-10-19T05:53:13.302311+00:00",
-  "elapsed_sec": 748.7,
+  "run_at": "2026-10-19T07:44:14.672377+00:00",
+  "elapsed_sec": 940.8,
   "config": {
     "dataset": "ABODA, 11 clips, own labels",
     "weights": "src/vision/weights/yolo26s.pt",
@@ -14,36 +14,204 @@
     "match_radius_px": 60.0,
     "early_tolerance_sec": 3.0
   },
+  "labels": {
+    "video1": [
+      {
+        "box": [
+          129,
+          323,
+          59,
+          57
+        ],
+        "placed": 43.0,
+        "unattended": 48.5,
+        "removed": null,
+        "note": "corridor, backpack on the floor, two people walk off"
+      }
+    ],
+    "video2": [
+      {
+        "box": [
+          455,
+          76,
+          23,
+          36
+        ],
+        "placed": 69.5,
+        "unattended": 72.5,
+        "removed": null,
+        "note": "outdoor pavement, bag by a pole, far from camera"
+      }
+    ],
+    "video3": [
+      {
+        "box": [
+          214,
+          216,
+          44,
+          31
+        ],
+        "placed": 56.5,
+        "unattended": 68.0,
+        "removed": null,
+        "note": "outdoor pavement, owner lingers ~10 s first"
+      }
+    ],
+    "video4": [
+      {
+        "box": [
+          449,
+          369,
+          55,
+          43
+        ],
+        "placed": 14.0,
+        "unattended": 20.0,
+        "removed": null,
+        "note": "outdoor pavement, bag against a utility box"
+      }
+    ],
+    "video5": [
+      {
+        "box": [
+          135,
+          199,
+          35,
+          31
+        ],
+        "placed": 31.0,
+        "unattended": 67.0,
+        "removed": null,
+        "note": "night lobby (IR), owner stands by the box until 67 s"
+      }
+    ],
+    "video6": [
+      {
+        "box": [
+          186,
+          307,
+          46,
+          29
+        ],
+        "placed": 115.5,
+        "unattended": 118.0,
+        "removed": 132.0,
+        "note": "night lobby (IR), picked up by someone else"
+      },
+      {
+        "box": [
+          149,
+          314,
+          41,
+          37
+        ],
+        "placed": 180.5,
+        "unattended": 184.0,
+        "removed": 207.0,
+        "note": "after a lighting change, picked up by someone else"
+      }
+    ],
+    "video7": [
+      {
+        "box": [
+          125,
+          87,
+          57,
+          70
+        ],
+        "placed": 119.0,
+        "unattended": 128.5,
+        "removed": null,
+        "note": "classroom, shopping bag on a table, light switch earlier"
+      }
+    ],
+    "video8": [
+      {
+        "box": [
+          100,
+          200,
+          185,
+          50
+        ],
+        "placed": 118.0,
+        "unattended": 123.5,
+        "removed": null,
+        "note": "dark classroom (IR), long case on a table"
+      }
+    ],
+    "video9": [
+      {
+        "box": [
+          415,
+          136,
+          67,
+          83
+        ],
+        "placed": 32.0,
+        "unattended": 37.0,
+        "removed": null,
+        "note": "classroom, shopping bag on a table"
+      }
+    ],
+    "video10": [
+      {
+        "box": [
+          155,
+          186,
+          98,
+          67
+        ],
+        "placed": 41.0,
+        "unattended": 46.5,
+        "removed": null,
+        "note": "classroom, holdall on a table"
+      }
+    ],
+    "video11": [
+      {
+        "box": [
+          400,
+          232,
+          25,
+          22
+        ],
+        "placed": 36.0,
+        "unattended": null,
+        "removed": null,
+        "note": "crowded hall; owner stands beside the bag throughout"
+      }
+    ]
+  },
   "scores": {
     "clips": 11,
     "footage_min": 20.94,
     "abandonments": 11,
     "detected": 4,
-    "false_alarms": 6,
-    "duplicate_alerts": 0,
+    "false_alarms": 3,
+    "duplicate_alerts": 1,
     "recall": 0.36363636363636365,
     "recall_ci95": [
       0.15166223614131383,
       0.6462032231083628
     ],
-    "precision": 0.4,
+    "precision": 0.5714285714285714,
     "precision_ci95": [
-      0.16817758120350967,
-      0.6873304525498135
+      0.2504542304090258,
+      0.8417830777373732
     ],
-    "f1": 0.380952380952381,
-    "false_alarms_per_hour": 17.19463209059661,
+    "f1": 0.4444444444444444,
+    "false_alarms_per_hour": 8.597316045298305,
     "latency_median_sec": 3.52,
-    "latency_max_sec": 7.72,
+    "latency_max_sec": 5.72,
     "outcomes": [
       {
         "clip_id": "video1",
         "abandonments": 1,
         "detected": 1,
-        "duplicates": 0,
+        "duplicates": 1,
         "false_alarms": 0,
         "latencies_sec": [
-          7.72
+          5.72
         ],
         "false_alarm_details": []
       },
@@ -97,26 +265,22 @@
         "abandonments": 1,
         "detected": 1,
         "duplicates": 0,
-        "false_alarms": 1,
+        "false_alarms": 0,
         "latencies_sec": [
-          2.73
+          2.93
         ],
-        "false_alarm_details": [
-          "128.6s unlabelled (backpack)"
-        ]
+        "false_alarm_details": []
       },
       {
         "clip_id": "video8",
         "abandonments": 1,
         "detected": 1,
         "duplicates": 0,
-        "false_alarms": 1,
+        "false_alarms": 0,
         "latencies_sec": [
-          -0.48
+          2.33
         ],
-        "false_alarm_details": [
-          "10.8s unlabelled (backpack)"
-        ]
+        "false_alarm_details": []
       },
       {
         "clip_id": "video9",
@@ -127,7 +291,7 @@
         "latencies_sec": [],
         "false_alarm_details": [
           "18.0s unlabelled (backpack)",
-          "45.8s unlabelled (backpack)"
+          "45.0s unlabelled (backpack)"
         ]
       },
       {
@@ -135,13 +299,11 @@
         "abandonments": 1,
         "detected": 1,
         "duplicates": 0,
-        "false_alarms": 1,
+        "false_alarms": 0,
         "latencies_sec": [
           3.52
         ],
-        "false_alarm_details": [
-          "46.4s unlabelled (backpack)"
-        ]
+        "false_alarm_details": []
       },
       {
         "clip_id": "video11",
@@ -163,7 +325,15 @@
       "sampled_frames": 366,
       "alerts": [
         {
-          "time_sec": 56.223,
+          "time_sec": 54.221,
+          "center": [
+            159.0,
+            350.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 63.03,
           "center": [
             159.0,
             350.5
@@ -208,17 +378,9 @@
       "sampled_frames": 801,
       "alerts": [
         {
-          "time_sec": 128.629,
+          "time_sec": 131.431,
           "center": [
-            354.0,
-            55.0
-          ],
-          "label": "backpack"
-        },
-        {
-          "time_sec": 131.231,
-          "center": [
-            159.0,
+            159.5,
             112.0
           ],
           "label": "backpack"
@@ -231,18 +393,10 @@
       "sampled_frames": 798,
       "alerts": [
         {
-          "time_sec": 10.811,
+          "time_sec": 125.826,
           "center": [
-            354.0,
-            54.5
-          ],
-          "label": "backpack"
-        },
-        {
-          "time_sec": 123.023,
-          "center": [
-            195.5,
-            226.0
+            196.0,
+            226.5
           ],
           "label": "suitcase"
         }
@@ -256,13 +410,13 @@
         {
           "time_sec": 18.018,
           "center": [
-            354.0,
+            354.5,
             55.0
           ],
           "label": "backpack"
         },
         {
-          "time_sec": 45.812,
+          "time_sec": 45.012,
           "center": [
             354.0,
             55.0
@@ -276,14 +430,6 @@
       "footage_sec": 75.409,
       "sampled_frames": 377,
       "alerts": [
-        {
-          "time_sec": 46.413,
-          "center": [
-            354.0,
-            54.5
-          ],
-          "label": "backpack"
-        },
         {
           "time_sec": 50.017,
           "center": [
@@ -303,7 +449,7 @@
           "time_sec": 62.2,
           "center": [
             179.5,
-            289.0
+            289.5
           ],
           "label": "handbag"
         }
