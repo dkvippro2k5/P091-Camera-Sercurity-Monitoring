@@ -19,6 +19,7 @@ from src.vision.abandoned import LABEL_ABANDONED, AbandonedObjectTracker
 from src.vision.fall_motion import FallMotionEvidence
 from src.vision.fall_pose import PoseObservation
 from src.vision.schemas import BoundingBox, IncidentDetection, Zone
+from src.vision.static_objects import StaticRegion
 from src.vision.zone_config import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -477,6 +478,7 @@ class RuleEngine:
         fall_motion_evidence: dict[str, FallMotionEvidence] | None = None,
         fall_pose_evidence: dict[str, PoseObservation] | None = None,
         person_appearance: dict[str, np.ndarray] | None = None,
+        static_regions: list[StaticRegion] | None = None,
     ) -> list[IncidentDetection]:
         """Evaluate raw tracked detections and return incident events for this frame.
 
@@ -491,6 +493,8 @@ class RuleEngine:
             fall_pose_evidence: Pose per track in `pose_candidates`, for the pose gate.
             person_appearance: Appearance signature per track in `appearance_candidates`, so
                 the abandoned rule can recognise an owner under a new track ID.
+            static_regions: Newly static places from the background model, for objects
+                left behind that the detector does not box.
 
         Returns:
             Incident events triggered on this frame. Empty when nothing fires.
@@ -515,7 +519,11 @@ class RuleEngine:
                 fall_pose_evidence or {},
             )
         )
-        events.extend(self.abandoned.update(objects, persons, frame_width, timestamp, camera_id, person_appearance))
+        events.extend(
+            self.abandoned.update(
+                objects, persons, frame_width, timestamp, camera_id, person_appearance, static_regions
+            )
+        )
 
         self._evict_stale(timestamp)
         return self._apply_cooldown(self._merge_fall_incidents(events, timestamp, camera_id), timestamp, camera_id)

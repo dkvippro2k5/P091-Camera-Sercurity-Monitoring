@@ -47,7 +47,8 @@ there stands beside it to the end. It is kept as a hard negative — "attended l
   window fired while the owner was still beside it: a false alarm ("early").
 - Any alert on nothing labelled, or on the attended bag in `video11`, is a false alarm.
 - Sampling at `--fps` (default 5) on the video clock, fresh pipeline per clip, the
-  `ABANDON_SEC` / `OWNER_RADIUS_RATIO` / `STATIONARY_TOLERANCE_RATIO` settings in effect.
+  `ABANDON_SEC` / `OWNER_RADIUS_RATIO` / `STATIONARY_TOLERANCE_RATIO` /
+  `ABANDON_BACKGROUND_ENABLED` settings in effect.
 
 Usage:
     python -m src.benchmark.run_abandoned_benchmark --dataset all --label baseline
@@ -404,7 +405,8 @@ def render_markdown(report: dict) -> str:
         f"# Abandoned-object benchmark — {cfg['dataset']} ({report['label']})",
         "",
         f"Run {report['run_at'][:19]}Z · weights `{cfg['weights']}` · conf {cfg['detector_confidence']} · "
-        f"{cfg['target_fps']} fps · abandon {cfg['abandon_sec']} s · owner radius {cfg['owner_radius_ratio']} × width",
+        f"{cfg['target_fps']} fps · abandon {cfg['abandon_sec']} s · owner radius {cfg['owner_radius_ratio']} × width · "
+        f"background model {'on' if cfg.get('abandon_background_enabled') else 'off'}",
         "",
         "| Metric | Value | 95% CI |",
         "| --- | --- | --- |",
@@ -459,6 +461,7 @@ def run_dataset(name: str, data_dir: Path, fps: float, label: str) -> int:
             "abandon_sec": settings.abandon_sec,
             "owner_radius_ratio": settings.owner_radius_ratio,
             "stationary_tolerance_ratio": settings.stationary_tolerance_ratio,
+            "abandon_background_enabled": settings.abandon_background_enabled,
             "alert_cooldown_sec": settings.alert_cooldown_sec,
             "match_radius_px": MATCH_RADIUS_PX,
             "early_tolerance_sec": EARLY_TOLERANCE_SEC,

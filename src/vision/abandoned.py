@@ -22,16 +22,26 @@ With `require_owner`, a bag nobody was ever seen with is not reported: it was al
 when the camera started, or the detector only picked it up after its owner had gone. On ABODA
 the first case is most of the false alarms and the second is rare, since the owner is usually
 still beside the bag when it is first detected.
+
+Bags the detector cannot see come in as static regions from the background model (see
+static_objects.py). A region only shows up `static_sec` after the object was put down, by
+which time its owner may be gone, so its owners are taken from where people stood around the
+moment it appeared (`since`), kept for `history_sec`, and its clock starts at that moment too.
+A region that no person's box touched around that moment has no owner, and so, with
+`require_owner`, is never reported. A region never moves: an object picked up and put down
+elsewhere is a new region.
 """
 
 import logging
 import math
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from src.vision.appearance import appearance_similarity
 from src.vision.schemas import BoundingBox, IncidentDetection
+from src.vision.static_objects import StaticRegion
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +55,12 @@ _HANDOFF_SEC = 2.0
 _HANDOFF_IOU = 0.3
 
 
+def _box_center(box: BoundingBox) -> tuple[float, float]:
+    return ((box.xmin + box.xmax) / 2.0, (box.ymin + box.ymax) / 2.0)
+
+
 def _center(det: IncidentDetection) -> tuple[float, float]:
-    return ((det.bbox.xmin + det.bbox.xmax) / 2.0, (det.bbox.ymin + det.bbox.ymax) / 2.0)
+    return _box_center(det.bbox)
 
 
 def _diagonal(det: IncidentDetection) -> float:
@@ -103,6 +117,8 @@ class AbandonedObjectTracker:
         owner_match_similarity: Appearance similarity (0-1) at which a person near the bag is
             taken for one of its owners under a new track ID. Only used with signatures.
         memory_sec: Forget a bag not seen for this long.
+        history_sec: How far back person positions are kept, to find the owners of a static
+            region that only appeared after its owner had already been standing there a while.
     """
 
     def __init__(
@@ -114,6 +130,7 @@ class AbandonedObjectTracker:
         owner_bind_sec: float = 3.0,
         owner_match_similarity: float = 0.85,
         memory_sec: float = 30.0,
+        history_sec: float = 120.0,
     ):
         self.abandon_sec = abandon_sec
         self.owner_radius_ratio = owner_radius_ratio
@@ -122,10 +139,14 @@ class AbandonedObjectTracker:
         self.owner_bind_sec = owner_bind_sec
         self.owner_match_similarity = owner_match_similarity
         self.memory_sec = memory_sec
+        self.history_sec = history_sec
         self._bags: dict[str | None, list[BagState]] = {}
+        # Per camera: (timestamp, [(person track ID, box)]) over the last `history_sec`.
+        self._history: dict[str | None, deque[tuple[float, list[tuple[str, BoundingBox]]]]] = {}
 
     def reset(self) -> None:
         self._bags.clear()
+        self._history.clear()
 
     def bags(self, camera_id: str | None) -> list[BagState]:
         return self._bags.get(camera_id, [])
@@ -164,63 +185,86 @@ class AbandonedObjectTracker:
         timestamp: float,
         camera_id: str | None,
         appearance: dict[str, np.ndarray] | None = None,
+        static_regions: list[StaticRegion] | None = None,
     ) -> list[IncidentDetection]:
         appearance = appearance or {}
         radius = frame_width * self.owner_radius_ratio
         tolerance = frame_width * self.stationary_tolerance_ratio
         bags = self._bags.setdefault(camera_id, [])
-        events = []
+        history = self._history.setdefault(camera_id, deque())
+        history.append((timestamp, [(p.track_id, p.bbox) for p in persons if p.track_id]))
+        while timestamp - history[0][0] > self.history_sec:
+            history.popleft()
 
+        sightings = []
         for obj in objects:
-            if not obj.track_id:
-                continue
-            center = _center(obj)
-            bag, moved = self._bag_for(bags, obj, center, tolerance, timestamp)
+            if obj.track_id:
+                sightings.append((obj, *self._bag_for(bags, obj, _center(obj), tolerance, timestamp)))
+        for region in static_regions or []:
+            sightings.append((region.detection, self._bag_for_region(bags, region, history, radius, timestamp), False))
+
+        events = []
+        for obj, bag, moved in sightings:
             if bag.seen_at == timestamp:
                 continue  # a second box on the same bag this frame
             bag.seen_at = timestamp
-
-            near = [(p, math.dist(_center(p), center)) for p in persons if p.track_id]
-            near = [p for p, d in sorted(near, key=lambda item: item[1]) if d <= radius]
-            if moved or timestamp - bag.stationary_since <= self.owner_bind_sec:
-                for person in near:
-                    bag.owners.setdefault(person.track_id, Owner())
-            if self._owner_present(bag, near, appearance, timestamp, {p.track_id for p in persons}):
-                bag.last_owner_seen = timestamp
-                bag.fired = False
-                continue
-            if not bag.owners:
-                if self.require_owner:
-                    continue
-                if near:
-                    # Without an owner to look for, anyone beside the bag attends it.
-                    bag.last_owner_seen = timestamp
-                    bag.fired = False
-                    continue
-
-            if any(_inside(center, p.bbox) for p in persons):
-                continue  # held, or hidden behind someone
-            anchors = [v for v in (bag.last_owner_seen, bag.stationary_since) if v is not None]
-            elapsed = timestamp - max(anchors)
-            if elapsed >= self.abandon_sec and not bag.fired:
-                bag.fired = True
-                events.append(
-                    IncidentDetection(
-                        label=LABEL_ABANDONED,
-                        track_id=obj.track_id,
-                        confidence=obj.confidence,
-                        timestamp=timestamp,
-                        camera_id=camera_id,
-                        bbox=obj.bbox,
-                        reason=(
-                            f"{obj.label} ({obj.track_id}) unattended for {elapsed:.1f}s "
-                            f"with none of its {len(bag.owners)} owner(s) within {radius:.0f}px"
-                        ),
-                    )
-                )
+            event = self._judge(obj, bag, moved, persons, appearance, radius, timestamp, camera_id)
+            if event is not None:
+                events.append(event)
 
         self._bags[camera_id] = [bag for bag in bags if timestamp - bag.last_seen <= self.memory_sec]
         return events
+
+    def _judge(
+        self,
+        obj: IncidentDetection,
+        bag: BagState,
+        moved: bool,
+        persons: list[IncidentDetection],
+        appearance: dict[str, np.ndarray],
+        radius: float,
+        timestamp: float,
+        camera_id: str | None,
+    ) -> IncidentDetection | None:
+        """Update the bag's owners from one sighting of it, and report it if it has been left."""
+        center = _center(obj)
+        near = [(p, math.dist(_center(p), center)) for p in persons if p.track_id]
+        near = [p for p, d in sorted(near, key=lambda item: item[1]) if d <= radius]
+        if moved or timestamp - bag.stationary_since <= self.owner_bind_sec:
+            for person in near:
+                bag.owners.setdefault(person.track_id, Owner())
+        if self._owner_present(bag, near, appearance, timestamp, {p.track_id for p in persons}):
+            bag.last_owner_seen = timestamp
+            bag.fired = False
+            return None
+        if not bag.owners:
+            if self.require_owner:
+                return None
+            if near:
+                # Without an owner to look for, anyone beside the bag attends it.
+                bag.last_owner_seen = timestamp
+                bag.fired = False
+                return None
+
+        if any(_inside(center, p.bbox) for p in persons):
+            return None  # held, or hidden behind someone
+        anchors = [v for v in (bag.last_owner_seen, bag.stationary_since) if v is not None]
+        elapsed = timestamp - max(anchors)
+        if elapsed < self.abandon_sec or bag.fired:
+            return None
+        bag.fired = True
+        return IncidentDetection(
+            label=LABEL_ABANDONED,
+            track_id=obj.track_id,
+            confidence=obj.confidence,
+            timestamp=timestamp,
+            camera_id=camera_id,
+            bbox=obj.bbox,
+            reason=(
+                f"{obj.label} ({obj.track_id}) unattended for {elapsed:.1f}s "
+                f"with none of its {len(bag.owners)} owner(s) within {radius:.0f}px"
+            ),
+        )
 
     def _bag_for(
         self,
@@ -255,6 +299,56 @@ class AbandonedObjectTracker:
         bag.track_ids.add(obj.track_id)
         bags.append(bag)
         return bag, False
+
+    def _bag_for_region(
+        self,
+        bags: list[BagState],
+        region: StaticRegion,
+        history: deque[tuple[float, list[tuple[str, BoundingBox]]]],
+        radius: float,
+        timestamp: float,
+    ) -> BagState:
+        """The bag a static region is part of: one it already joined, a detected bag on the same
+        spot, or a new one.
+
+        A new bag starts at `region.since`, owned by the people around it then, and last
+        attended when one of them was last beside it.
+        """
+        det = region.detection
+        center = _center(det)
+        for bag in bags:
+            if det.track_id in bag.track_ids:
+                bag.last_seen = timestamp
+                return bag
+        here = [bag for bag in bags if math.dist(bag.anchor, center) <= 0.5 * _diagonal(det)]
+        if here:
+            bag = min(here, key=lambda b: math.dist(b.anchor, center))
+            bag.track_ids.add(det.track_id)
+            bag.last_seen = timestamp
+            return bag
+
+        bag = BagState(anchor=center, first_seen=region.since, last_seen=timestamp, stationary_since=region.since)
+        bag.track_ids.add(det.track_id)
+        around = [
+            (track_id, box)
+            for seen, people in history
+            if abs(seen - region.since) <= self.owner_bind_sec
+            for track_id, box in people
+        ]
+        # Someone must have been on the spot when it appeared: a region nobody touched is the
+        # background changing (a train in, a screen, a shadow), not an object put down.
+        if any(_iou(box, det.bbox) > 0 for _, box in around):
+            for track_id, box in around:
+                if math.dist(_box_center(box), center) <= radius:
+                    bag.owners.setdefault(track_id, Owner())
+        for seen, people in history:
+            for track_id, box in people:
+                if track_id in bag.owners and seen >= region.since and math.dist(_box_center(box), center) <= radius:
+                    owner = bag.owners[track_id]
+                    owner.box, owner.seen = box, seen
+                    bag.last_owner_seen = seen
+        bags.append(bag)
+        return bag
 
     def _owner_present(
         self,

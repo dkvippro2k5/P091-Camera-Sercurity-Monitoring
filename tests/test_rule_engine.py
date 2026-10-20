@@ -638,6 +638,58 @@ def test_a_new_track_where_an_owner_just_stood_is_that_owner():
     assert len(engine.evaluate([bag, elsewhere], WIDTH, HEIGHT, 10.5, now)) == 1
 
 
+def make_region(region_id: str, since: float, cx: float, cy: float, bw: float, bh: float):
+    from src.vision.static_objects import LABEL_STATIC, StaticRegion
+
+    return StaticRegion(make_det(LABEL_STATIC, region_id, cx, cy, bw, bh), since)
+
+
+def test_a_static_region_is_owned_by_whoever_stood_on_it_when_it_appeared():
+    """The background model reports a bag only seconds after it was put down; its owner is
+    found in where people stood then, and its clock starts then too."""
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    dropper = make_det("person", "person_1", cx=0.32, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    engine.evaluate([dropper], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([dropper], WIDTH, HEIGHT, 1.0, now)
+    engine.evaluate([dropper], WIDTH, HEIGHT, 2.0, now)
+    for t in (3.0, 4.0, 5.0, 6.0, 7.0, 8.0):
+        engine.evaluate([], WIDTH, HEIGHT, t, now)
+    events = engine.evaluate([], WIDTH, HEIGHT, 9.0, now, static_regions=[region])
+    assert len(events) == 1
+    assert events[0].track_id == "static_1"
+    assert "1 owner(s)" in events[0].reason
+
+
+def test_a_static_region_whose_owner_is_still_beside_it_is_not_reported():
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    owner = make_det("person", "person_1", cx=0.32, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    for t in range(9):
+        engine.evaluate([owner], WIDTH, HEIGHT, float(t), now)
+    assert engine.evaluate([owner], WIDTH, HEIGHT, 9.0, now, static_regions=[region]) == []
+    # Owner walks off: reported once they have been gone abandon_sec.
+    assert engine.evaluate([], WIDTH, HEIGHT, 10.0, now, static_regions=[region]) == []
+    assert len(engine.evaluate([], WIDTH, HEIGHT, 11.0, now, static_regions=[region])) == 1
+
+
+def test_a_static_region_nobody_touched_is_not_reported():
+    """A screen changing or a train pulling in: people nearby, but nobody put anything there."""
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    bystander = make_det("person", "person_1", cx=0.4, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    for t in range(3):
+        engine.evaluate([bystander], WIDTH, HEIGHT, float(t), now)
+    events = [e for t in range(9, 15) for e in engine.evaluate([], WIDTH, HEIGHT, float(t), now, static_regions=[region])]
+    assert events == []
+
+
 def test_a_bag_in_someone_s_hands_is_not_reported_but_keeps_its_clock():
     engine = make_engine(abandon_sec=2.0)
     now = datetime.now()

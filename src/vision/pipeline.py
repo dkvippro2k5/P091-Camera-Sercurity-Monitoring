@@ -15,6 +15,7 @@ from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
 from src.vision.rule_engine import RuleEngine
 from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
+from src.vision.static_objects import StaticObjectDetector
 from src.vision.zone_config import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class VisionPipeline:
         fall_motion_analyzer: SparseFallMotionAnalyzer | None = None,
         fall_pose_estimator: FallPoseEstimator | None = None,
         appearance_encoder: AppearanceEncoder | None = None,
+        static_object_detector: StaticObjectDetector | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -63,6 +65,9 @@ class VisionPipeline:
         self.fall_pose_estimator = fall_pose_estimator
         # Optional: None leaves bag owners recognised by track ID alone.
         self.appearance_encoder = appearance_encoder
+        # Optional, and stateful (it holds the background picture): one per stream. None
+        # leaves the abandoned rule to the bags the detector boxes.
+        self.static_object_detector = static_object_detector
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
@@ -164,6 +169,11 @@ class VisionPipeline:
             if near_bags:
                 person_appearance = self.appearance_encoder.measure(frame, persons, near_bags)
 
+        # 3d. Objects newly left in the scene that the detector does not box.
+        static_regions = None
+        if self.static_object_detector is not None:
+            static_regions = self.static_object_detector.measure(frame, stream_time, persons, camera_id)
+
         # 4. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
@@ -175,6 +185,7 @@ class VisionPipeline:
             fall_motion_evidence=fall_motion_evidence,
             fall_pose_evidence=fall_pose_evidence,
             person_appearance=person_appearance,
+            static_regions=static_regions,
         )
 
         # 5. Annotate zones and incidents for the operator view
@@ -354,6 +365,8 @@ class VisionPipeline:
         self.rule_engine.reset()
         self.motion_gate.reset()
         self.fall_motion_analyzer.reset()
+        if self.static_object_detector is not None:
+            self.static_object_detector.reset()
         self._last_detections = []
 
         # Released in finally: an exception mid-decode would otherwise hold the file

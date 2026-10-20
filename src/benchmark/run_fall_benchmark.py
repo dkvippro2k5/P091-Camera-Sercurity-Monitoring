@@ -464,6 +464,7 @@ def _build_pipeline():
     from src.vision.fall_pose import FallPoseEstimator
     from src.vision.pipeline import VisionPipeline
     from src.vision.rule_engine import RuleEngine
+    from src.vision.static_objects import StaticObjectDetector
     from src.vision.zone_config import ZoneManager
 
     settings = get_settings()
@@ -489,6 +490,7 @@ def _build_pipeline():
             FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
         ),
         appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
+        static_object_detector=StaticObjectDetector() if settings.abandon_background_enabled else None,
     )
 
 

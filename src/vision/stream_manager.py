@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import threading
@@ -238,8 +239,14 @@ class MultiStreamManager:
         engine = template.rule_engine
         gate = template.motion_gate
         pose = template.fall_pose_estimator
+        background = template.static_object_detector
 
         def factory() -> VisionPipeline:
+            # NOT shared: it holds the camera's background picture. Same settings, fresh state.
+            static_object_detector = None
+            if background is not None:
+                static_object_detector = copy.deepcopy(background)
+                static_object_detector.reset()
             return VisionPipeline(
                 detector=IncidentDetector(
                     model_path=detector.model_path,
@@ -305,6 +312,7 @@ class MultiStreamManager:
                 ),
                 # Stateless (OpenCV histograms only), so one instance serves every worker.
                 appearance_encoder=template.appearance_encoder,
+                static_object_detector=static_object_detector,
             )
 
         return factory
