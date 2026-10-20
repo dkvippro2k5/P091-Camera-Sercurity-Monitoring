@@ -177,6 +177,16 @@ class StaticObjectDetector:
             found.append((box, float(np.nanmedian(self._since[component & static]))))
         return self._assign_ids(found, timestamp, camera_id)
 
+    def background_image(self, width: int, height: int) -> np.ndarray | None:
+        """The background picture at `width` x `height`, or None before the first frame.
+
+        At the working resolution, scaled up: enough to show a person what the spot looked
+        like before something was left there, not a sharp image.
+        """
+        if self._background is None:
+            return None
+        return cv2.resize(self._background.astype(np.uint8), (width, height), interpolation=cv2.INTER_LINEAR)
+
     def _relearn(self, small: np.ndarray) -> None:
         self._background = small.copy()
         self._since = np.full(small.shape[:2], np.nan)

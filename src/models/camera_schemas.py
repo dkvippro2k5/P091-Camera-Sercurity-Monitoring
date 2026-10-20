@@ -197,6 +197,9 @@ class Alert(BaseModel):
     triage_frame_observations: list[str] = Field(default_factory=list)
     triage_error: str | None = None
     evidence_frames: list[AlertEvidenceFrame] = Field(default_factory=list)
+    # JPEG for the VLM only, never serialised: for an object the background model found, the
+    # spot before it appeared beside the spot now (MonitoringService._on_incident).
+    triage_comparison: bytes | None = Field(default=None, exclude=True, repr=False)
 
     operator_verdict: OperatorVerdict | None = None
     # Who judged it. A labelled dataset whose labels have no author cannot be audited when

@@ -1090,3 +1090,64 @@ def test_a_clean_assessment_records_no_error(make_service):
     service.record_operator_verdict(alert.id, "real")
 
     assert service.history.all_rows()[0]["vlm_error"] is None
+
+
+# ------------------------------------------------------------------ left objects: before/after
+def test_a_background_model_abandoned_alert_sends_its_before_after_last(make_service):
+    from types import SimpleNamespace
+
+    from src.vision.schemas import BoundingBox
+
+    triage = FakeTriage()
+    service = make_service(triage=triage)
+    background = np.full((60, 80, 3), 200, dtype=np.uint8)
+    service.manager.background_image = lambda camera_id, width, height: background
+    now = time.monotonic()
+    ring = service._ring.setdefault("cam_1", deque(maxlen=service._default_ring_size))
+    ring.append(_ring_frame(now - 1.0, b"fake_jpeg_before"))
+    ring.append(_ring_frame(now + 0.1, b"fake_jpeg_after"))
+
+    event = SimpleNamespace(
+        label="abandoned_object",
+        confidence=1.0,
+        reason="static_object (static_3) unattended for 2.0s with none of its 1 owner(s) within 20px",
+        zone_name=None,
+        track_id="static_3",
+        bbox=BoundingBox(xmin=30, ymin=20, xmax=40, ymax=30),
+    )
+    service._on_incident("cam_1", SimpleNamespace(events=[event]), _frame())
+    alert = service._alerts[0]
+    assert alert.triage_comparison is not None
+    assert "triage_comparison" not in alert.model_dump()
+    assert triage.called.wait(timeout=5)
+
+    request = triage.requests[0]
+    assert request.frames == [b"fake_jpeg_before", b"fake_jpeg_after", alert.triage_comparison]
+    assert request.comparison_last and not request.cropped
+    comparison = cv2.imdecode(np.frombuffer(alert.triage_comparison, np.uint8), cv2.IMREAD_COLOR)
+    assert comparison.shape[0] == monitoring_module._COMPARISON_HEIGHT
+    # Left half is the background (200), right half the frame (0), apart from the outlines.
+    assert comparison[150:170, 5:15].mean() > 150 and comparison[150:170, -15:-5].mean() < 50
+
+
+def test_other_alerts_get_no_before_after(make_service):
+    from types import SimpleNamespace
+
+    from src.vision.schemas import BoundingBox
+
+    service = make_service()
+    service.manager.background_image = lambda camera_id, width, height: np.zeros((60, 80, 3), np.uint8)
+    box = BoundingBox(xmin=30, ymin=20, xmax=40, ymax=30)
+    detected_bag = SimpleNamespace(label="abandoned_object", reason="suitcase (track_9) unattended", bbox=box)
+    fall = SimpleNamespace(label="fall_detection", reason="static_object-like text, wrong label", bbox=box)
+    assert service._left_object_comparison("cam_1", detected_bag, _frame()) is None
+    assert service._left_object_comparison("cam_1", fall, _frame()) is None
+
+
+def test_the_prompt_explains_the_before_after_frame():
+    request = TriageRequest(label="abandoned_object", frames=[b"a", b"b"], pre_count=1, comparison_last=True)
+    prompt = OpenAIVLMTriage._build_prompt(request)
+    assert "before the object appeared" in prompt
+    assert "before the object appeared" not in OpenAIVLMTriage._build_prompt(
+        TriageRequest(label="abandoned_object", frames=[b"a", b"b"], pre_count=1)
+    )

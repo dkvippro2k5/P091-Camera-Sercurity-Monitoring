@@ -421,6 +421,15 @@ class MultiStreamManager:
             worker = self.workers.get(camera_id)
         return worker.pipeline.last_tracks() if worker else {}
 
+    def background_image(self, camera_id: str, width: int, height: int) -> np.ndarray | None:
+        """The named camera's background-model picture at the given size, or None if it has no
+        worker, no background model or no frame yet. Called from the incident callback, which
+        runs on the same processor thread that updates the background."""
+        with self._workers_lock:
+            worker = self.workers.get(camera_id)
+        detector = worker.pipeline.static_object_detector if worker else None
+        return detector.background_image(width, height) if detector else None
+
     def h264_encoder(self, camera_id: str):
         """The named camera's fMP4 encoder, or None if it has no worker or H.264 is off.
 
