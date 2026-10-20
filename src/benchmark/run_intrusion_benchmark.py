@@ -11,7 +11,8 @@ Datasets:
   - `caviar-front` / `caviar-corridor`: CAVIAR Lisbon shopping centre (EC Funded CAVIAR
     project/IST 2001 37540, CC BY-SA), https://homepages.inf.ed.ac.uk/rbf/CAVIARDATA1/ —
     the same 26 clips seen by two cameras, 384x288, 25 fps. Front: the zone is the shop floor
-    behind the entrance. Corridor: the zone is the strip along the shop fronts on the left wall.
+    behind the entrance, minus a hole over a mannequin standing on it (see `SHOP_ZONE_PX`).
+    Corridor: the zone is the strip along the shop fronts on the left wall.
   - `mot15`: three static-camera sequences of MOT15 (https://motchallenge.net, CC BY-NC-SA):
     PETS09-S2L1 (outdoor campus, 7 fps), Venice-2 (crowded square, 1080p) and ADL-Rundle-6
     (busy pavement in front of shops, 1080p). Short (~2.5 min in all) but crowded and outdoor.
@@ -102,7 +103,23 @@ REFERENCE_HEIGHT = 288.0
 # Front view: the shop floor behind the right-hand glass entrance. The threshold is y~148:
 # labelled "shop enter" foot points cluster at 140-160 and corridor walkers at 152-185, so a
 # walker along the shop front passes 5-35 px below the zone edge.
-SHOP_ZONE_PX = [(212, 60), (335, 60), (335, 146), (212, 146)]
+# A mannequin stands on that floor with its feet at (300, 127); YOLO boxes it as a person
+# (conf ~0.45, box x 294-306, y 81-127) and every new track ID on it alerted — 26 of the 73
+# false alarms in the first run, plus 7 "detections" that were the mannequin alert landing
+# within MATCH_RADIUS_PX of a shopper. That is a zone placement mistake, not a rule fault: an
+# operator would draw the zone around it. So the zone has a hole over the mannequin's feet
+# and lower body (x 293-307, y 110-132), reached by a zero-width slit from the front edge
+# so it stays a single polygon. Shoppers whose foot point crosses the hole now leave the
+# zone for those frames, which turned 70 derived entries into 72; results from before and
+# after this change are not comparable.
+MANNEQUIN_HOLE_PX = (293, 110, 307, 132)  # x0, y0, x1, y1
+_hx0, _hy0, _hx1, _hy1 = MANNEQUIN_HOLE_PX
+_slit_x = (_hx0 + _hx1) / 2
+SHOP_ZONE_PX = [
+    (212, 60), (335, 60), (335, 146),
+    (_slit_x, 146), (_slit_x, _hy1), (_hx1, _hy1), (_hx1, _hy0), (_hx0, _hy0), (_hx0, _hy1), (_slit_x, _hy1), (_slit_x, 146),
+    (212, 146),
+]
 # Corridor view: the strip along the shop fronts on the left wall, covering both entrances
 # (labelled "shop enter" points at x 50-80, y 115-135 and 165-205); corridor walkers pass just
 # to its right. 101 entries and 23 boundary walkers over the 26 clips.
