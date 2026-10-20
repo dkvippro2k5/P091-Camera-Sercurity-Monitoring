@@ -129,3 +129,118 @@ phụ phía sau tầng khác; tốc độ rơi đo được luôn có trong `rea
 
 Hạn chế: clip ngắn nên phải giữ frame cuối; báo nhầm theo giờ chỉ là ước lượng thô vì footage âm
 ít (8 phút ở UR Fall); nhãn UR Fall chỉ là cửa sổ 1 s cố định quanh cú ngã.
+
+## Benchmark đồ vật bỏ quên
+
+Detector + RuleEngine đúng cấu hình production, chạy offline, chấm theo **sự kiện** (mỗi lần bỏ
+quên), không theo clip. Giao thức và nguồn dữ liệu nằm trong docstring của
+`src/benchmark/run_abandoned_benchmark.py`; kiến trúc ở [docs/abandoned-object.md](../../docs/abandoned-object.md).
+
+- **ABODA** — 11 clip, 640/720×480, trong nhà và ngoài trời, ngày và đêm (hồng ngoại), một sảnh
+  đông người. 11 lần bỏ quên + 1 âm tính khó (`video11`: chủ đứng cạnh túi suốt clip).
+- **AVSS 2007** (i-LIDS) — 3 clip sân ga tàu điện ngầm, 720×576, ~3 phút, đông người, tàu ra vào.
+  3 lần bỏ quên.
+- **CAVIAR INRIA** — 25 clip sảnh, 384×288, camera mắt cá. 4 lần bỏ quên + 21 clip không có (đi,
+  xem, gặp nhau, ngồi, đánh nhau) để đo báo nhầm.
+
+Tổng 18 lần bỏ quên, 46 phút video. Mọi lần đo dùng cùng bộ file MP4 (`src.benchmark.video_convert`);
+số đo trên `.mpg` gốc không so được với bảng dưới.
+
+**Nhãn tự gán, không phải ground truth gốc:**
+- Toàn bộ nhãn ABODA (`ABODA_EVENTS`): bộ dữ liệu không kèm annotation. Mình gán bằng cách xem
+  từng clip và trừ ảnh trước/sau; người dùng đã kiểm tra lại (`video5` sửa thành đặt túi 31 s, rời
+  đi 67 s).
+- Mốc "chủ rời đi" của AVSS (`AVSS_OWNER_LEFT_SEC`): ground truth AVSS chỉ có lúc đặt, lúc lấy và
+  một mốc "abandoned" = lúc đặt + 30 s. MEDIUM sửa thành 84 s (chủ là người phụ nữ đặt túi lúc 47 s).
+- CAVIAR: lúc đặt/lấy là nhãn gốc; "chủ rời đi" được suy ra là lúc người gần vật nhất khi vật xuất
+  hiện ở xa hơn 25% bề rộng khung quá 1 s. `LeftBag_BehindChair` và `Fight_OneManDown` bị loại.
+
+Một cảnh báo trên vật trước `chủ rời đi − 3 s` là báo nhầm ("early"). `ABANDON_SEC` = 2 s (mặc định
+demo), 5 fps. Ngoặc vuông là khoảng tin cậy 95% (Wilson).
+
+| Phiên bản | Recall (3 bộ) | Báo nhầm | Precision | ABODA | AVSS 2007 | CAVIAR INRIA |
+| --- | --- | --- | --- | --- | --- | --- |
+| Baseline: trạng thái theo track, chủ là người gần nhất | 5/18 [12–51%] | 10 (13/h) | 33% | 4/11, 3 BN | 1/3, 7 BN | 0/4, 0 BN |
+| 1a: túi theo vị trí, chủ là mọi người quanh túi, bắt buộc có chủ | 7/18 [20–61%] | 1 (1.3/h) | 88% | 4/11, 0 BN | 3/3, 1 BN | 0/4, 0 BN |
+| 1b: 1a + nhận lại chủ bằng màu áo (**tắt mặc định**) | 7/18 | 0 | 100% | 4/11, 0 BN | 3/3, 0 BN | 0/4, 0 BN |
+| 3: 1a + background model (**hiện tại, bật mặc định**) | 16/18 [67–97%] | 10 (13/h) | 62% | 10/11, 2 BN | 3/3, 8 BN | 3/4, 0 BN |
+
+BN = báo nhầm. Chi tiết từng clip: `abandoned-benchmark-{aboda,avss2007,caviar-inria}-{baseline,step1a,step1b,step3,step3-check}.md`.
+Độ trễ từ lúc chủ rời đi đến lúc báo ở bước 3: trung vị 3.2 s (ABODA), 7.2 s (AVSS), 2.0 s (CAVIAR).
+
+### Baseline: trạng thái gắn với track
+
+Rule gốc lưu đồng hồ và chủ theo track ID của túi, chủ là người gần nhất lúc túi xuất hiện. Trên
+sân ga AVSS một vali lần lượt là `suitcase`, `handbag`, rồi bị người đi qua che 10 s — mỗi lần là
+một track mới, nên túi quên chủ và nhận người đứng gần nhất lúc đó. AVSS MEDIUM: vali của người đàn
+ông đứng ngay cạnh bị báo 4 lần. Ở ABODA, báo nhầm là túi đã nằm sẵn khi camera bắt đầu quay.
+
+### Bước 1a — túi theo vị trí, bắt buộc có chủ
+
+- Trạng thái lưu theo **vật ở một chỗ**: detection nối vào túi có cùng track, hoặc túi nằm đúng chỗ
+  đó; túi chỉ bị quên sau 30 s không thấy. Đổi nhãn, đổi ID, bị che đều giữ nguyên chủ và đồng hồ.
+- **Chủ là mọi người** trong bán kính (25% bề rộng khung) khi túi đang được mang hoặc trong 3 s đầu
+  sau khi nằm yên — không chỉ người gần nhất.
+- Túi chưa từng có chủ thì không báo (`ABANDON_REQUIRE_OWNER`).
+- Track mới đứng đúng chỗ (IoU ≥ 0.3) của một chủ vừa mất trong 2 s là chủ đó bị đánh số lại.
+- Túi nằm trong khung người không báo ở frame đó, nhưng đồng hồ không reset.
+
+Báo nhầm còn lại (AVSS MEDIUM 141 s): chủ ngồi trên ghế bị che, đổi ID và lệch chỗ đứng.
+
+### Bước 1b — nhận lại chủ bằng màu áo: tắt mặc định
+
+Histogram màu thân trên và chân của người quanh túi. Bỏ được báo nhầm cuối cùng ở 0.85, nhưng 0.8
+mất ca AVSS HARD và 0.9 làm báo nhầm quay lại, và ngưỡng được chọn trên chính dữ liệu đo — quá mong
+manh để bật. Giữ code cho đến khi có ReID thật (ví dụ OSNet).
+
+### Bước 3 — background model cho vật YOLO không thấy
+
+Sau bước 1a, **cả 11 ca sót đều do YOLO không đóng khung vật**: nhỏ, xa, quay hồng ngoại, hoặc không
+phải lớp COCO (túi ni lông trên bàn, hộp giấy). Vật vẫn hiện rõ khi so với cảnh trống, nên
+`StaticObjectDetector` giữ một ảnh nền chỉ cập nhật ở pixel khớp nền, và báo vùng khác nền liên tục
+8 s. Vùng tĩnh vào rule như một túi không bao giờ di chuyển; chủ lấy từ vị trí người quanh thời điểm
+vùng xuất hiện. Cơ chế và các bộ lọc: [docs/abandoned-object.md](../../docs/abandoned-object.md) mục 4.
+
+- Bắt thêm 9 lần bỏ quên: ABODA `video2/3/5/9`, cả 2 ca `video6`; CAVIAR `LeftBag`, `LeftBox`,
+  `LeftBag_PickedUp`. Còn sót: ABODA `video4` (túi sát hộp điện, đường viền lẫn vào cạnh hộp) và
+  CAVIAR `LeftBag_AtChair` (túi ~11×9 px cạnh ghế).
+- 9 báo nhầm mới: AVSS 7 (tàu vào/rời ga, cửa tàu, mép sân ga), ABODA 2 (`video5` báo sớm 0.4 s so
+  với dung sai; `video11` người xếp hàng YOLO chỉ thấy một phần). CAVIAR 21 clip âm tính vẫn sạch.
+- Bật mặc định theo quyết định "thà báo nhầm còn hơn bỏ sót": hợp với sảnh, hành lang, lớp học (ABODA
+  5.7 BN/h, CAVIAR 0), chưa hợp với sân ga có tàu (AVSS ~52 BN/h).
+- Chi phí ~10 ms/frame trên CPU (720p–1080p), tức ~5% một nhân mỗi camera ở 5 fps.
+
+Chưa có bộ lọc nào, background model báo nhầm 103 lần (đo bằng replay detection đã cache, khớp
+benchmark chính thức). Các bước đưa về 10, mỗi bước chọn sau khi xem ảnh các ca báo nhầm:
+
+1. Bỏ vùng có đường viền thuộc về nền chứ không phải vật — bóng ma của thứ đã rời đi, đổi sáng:
+   103 → 25.
+2. Bắt buộc có khung người chạm vào vùng lúc nó xuất hiện — tàu, màn hình: → 16. Sửa một lỗi
+   (`since` của vùng thành NaN khi phép đóng hình thái thêm pixel chưa tĩnh, khiến vùng không bao
+   giờ có chủ) làm con số thật lên lại 27.
+3. `static_sec` 5 → 8 s, lề khung người 10% → 25%, che vị trí người trong 2 s sau khi YOLO mất họ: → 21.
+4. Bỏ hysteresis của ngưỡng "khác nền": khi nền đã lệch nhẹ, người đi qua đẩy pixel vượt ngưỡng và
+   hysteresis giữ chúng lại, tạo một "vật" là vệt sàn sau lưng mỗi người: → 11.
+5. Giới hạn diện tích 2% khung, bỏ thân tàu: → 9 trên replay, 10 với module cuối cùng.
+
+**Các ngưỡng của bước 3 được chọn trên chính 18 sự kiện này** (tỷ lệ cạnh mới 0.4, ngưỡng cạnh 60,
+diện tích tối đa 2%, `static_sec` 8 s, lề khung người 25%, che người 2 s) — không có tập kiểm chứng
+độc lập, nên số liệu bước 3 lạc quan hơn thực tế.
+
+### YOLOE ghi chú cảnh báo của background model (`step3-check`)
+
+Mỗi cảnh báo từ background model được YOLOE (open-vocabulary, bộ từ cố định: túi các loại, hộp,
+người, tàu, cửa, màn hình) xem trên ảnh cắt, và kết quả được ghi vào `reason`. Không chặn cảnh báo,
+nên số phát hiện không đổi (16/18, 10 BN).
+
+| YOLOE ghi | Cảnh báo | Thực tế |
+| --- | --- | --- |
+| giống túi, ≥ 0.25 | 5 | 5 túi thật |
+| giống tàu / cửa / người, ≥ 0.25 | 5 | 5 báo nhầm |
+| không nhận rõ (< 0.25 hoặc không thấy gì) | 13 | 9 túi thật (nhỏ, xa, hồng ngoại), 4 báo nhầm |
+
+Không dùng để chặn vì chính những túi background model được thêm vào để bắt lại là những túi YOLOE
+không nhận ra. Ngưỡng 0.25 được đặt sau khi thấy hai túi hồng ngoại ở ABODA bị gọi là "person" với
+0.06 và 0.22.
+
+Ảnh trước/sau gửi cho VLM (mục 7 của tài liệu kiến trúc) chưa được đo: benchmark không chạy VLM.
