@@ -90,8 +90,10 @@ class Settings(BaseSettings):
     owner_appearance_enabled: bool = False
     owner_match_similarity: float = Field(default=0.85, gt=0.0, le=1.0)
     # Background model (src/vision/static_objects.py) for left objects the detector does not
-    # box: small, far away, infrared, or not a COCO class.
-    abandon_background_enabled: bool = False
+    # box: small, far away, infrared, or not a COCO class. On by default: a missed bag costs
+    # more than a false alarm. On ABODA + AVSS 2007 + CAVIAR (2026-10-20) it took recall from
+    # 7/18 to 16/18 and false alarms from 1 to 10, most of them trains at the AVSS platform.
+    abandon_background_enabled: bool = True
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     # On a CPU host DO NOT raise this above the default: several 4K inferences in parallel
