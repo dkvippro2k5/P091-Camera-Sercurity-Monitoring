@@ -1,0 +1,420 @@
+{
+  "label": "step1b",
+  "run_at": "2026-10-19T10:02:36.488386+00:00",
+  "elapsed_sec": 1778.8,
+  "config": {
+    "dataset": "ABODA, 11 clips, own labels",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "labels": {
+    "video1": [
+      {
+        "box": [
+          129,
+          323,
+          59,
+          57
+        ],
+        "placed": 43.0,
+        "unattended": 48.5,
+        "removed": null,
+        "note": "corridor, backpack on the floor, two people walk off"
+      }
+    ],
+    "video2": [
+      {
+        "box": [
+          455,
+          76,
+          23,
+          36
+        ],
+        "placed": 69.5,
+        "unattended": 72.5,
+        "removed": null,
+        "note": "outdoor pavement, bag by a pole, far from camera"
+      }
+    ],
+    "video3": [
+      {
+        "box": [
+          214,
+          216,
+          44,
+          31
+        ],
+        "placed": 56.5,
+        "unattended": 68.0,
+        "removed": null,
+        "note": "outdoor pavement, owner lingers ~10 s first"
+      }
+    ],
+    "video4": [
+      {
+        "box": [
+          449,
+          369,
+          55,
+          43
+        ],
+        "placed": 14.0,
+        "unattended": 20.0,
+        "removed": null,
+        "note": "outdoor pavement, bag against a utility box"
+      }
+    ],
+    "video5": [
+      {
+        "box": [
+          135,
+          199,
+          35,
+          31
+        ],
+        "placed": 31.0,
+        "unattended": 67.0,
+        "removed": null,
+        "note": "night lobby (IR), owner stands by the box until 67 s"
+      }
+    ],
+    "video6": [
+      {
+        "box": [
+          186,
+          307,
+          46,
+          29
+        ],
+        "placed": 115.5,
+        "unattended": 118.0,
+        "removed": 132.0,
+        "note": "night lobby (IR), picked up by someone else"
+      },
+      {
+        "box": [
+          149,
+          314,
+          41,
+          37
+        ],
+        "placed": 180.5,
+        "unattended": 184.0,
+        "removed": 207.0,
+        "note": "after a lighting change, picked up by someone else"
+      }
+    ],
+    "video7": [
+      {
+        "box": [
+          125,
+          87,
+          57,
+          70
+        ],
+        "placed": 119.0,
+        "unattended": 128.5,
+        "removed": null,
+        "note": "classroom, shopping bag on a table, light switch earlier"
+      }
+    ],
+    "video8": [
+      {
+        "box": [
+          100,
+          200,
+          185,
+          50
+        ],
+        "placed": 118.0,
+        "unattended": 123.5,
+        "removed": null,
+        "note": "dark classroom (IR), long case on a table"
+      }
+    ],
+    "video9": [
+      {
+        "box": [
+          415,
+          136,
+          67,
+          83
+        ],
+        "placed": 32.0,
+        "unattended": 37.0,
+        "removed": null,
+        "note": "classroom, shopping bag on a table"
+      }
+    ],
+    "video10": [
+      {
+        "box": [
+          155,
+          186,
+          98,
+          67
+        ],
+        "placed": 41.0,
+        "unattended": 46.5,
+        "removed": null,
+        "note": "classroom, holdall on a table"
+      }
+    ],
+    "video11": [
+      {
+        "box": [
+          400,
+          232,
+          25,
+          22
+        ],
+        "placed": 36.0,
+        "unattended": null,
+        "removed": null,
+        "note": "crowded hall; owner stands beside the bag throughout"
+      }
+    ]
+  },
+  "scores": {
+    "clips": 11,
+    "footage_min": 20.94,
+    "abandonments": 11,
+    "detected": 4,
+    "false_alarms": 0,
+    "duplicate_alerts": 0,
+    "recall": 0.36363636363636365,
+    "recall_ci95": [
+      0.15166223614131383,
+      0.6462032231083628
+    ],
+    "precision": 1.0,
+    "precision_ci95": [
+      0.5100999795960008,
+      1.0
+    ],
+    "f1": 0.5333333333333333,
+    "false_alarms_per_hour": 0.0,
+    "latency_median_sec": 2.93,
+    "latency_max_sec": 3.52,
+    "outcomes": [
+      {
+        "clip_id": "video1",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          1.52
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video2",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video3",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video4",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video5",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video6",
+        "abandonments": 2,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video7",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          2.93
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video8",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          2.33
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video9",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video10",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          3.52
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "video11",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "video1",
+      "footage_sec": 73.04,
+      "sampled_frames": 366,
+      "alerts": [
+        {
+          "time_sec": 50.017,
+          "center": [
+            148.5,
+            336.0
+          ],
+          "label": "handbag"
+        }
+      ]
+    },
+    {
+      "clip_id": "video2",
+      "footage_sec": 94.027,
+      "sampled_frames": 470,
+      "alerts": []
+    },
+    {
+      "clip_id": "video3",
+      "footage_sec": 87.02,
+      "sampled_frames": 435,
+      "alerts": []
+    },
+    {
+      "clip_id": "video4",
+      "footage_sec": 39.006,
+      "sampled_frames": 195,
+      "alerts": []
+    },
+    {
+      "clip_id": "video5",
+      "footage_sec": 110.01,
+      "sampled_frames": 550,
+      "alerts": []
+    },
+    {
+      "clip_id": "video6",
+      "footage_sec": 225.025,
+      "sampled_frames": 1125,
+      "alerts": []
+    },
+    {
+      "clip_id": "video7",
+      "footage_sec": 160.194,
+      "sampled_frames": 801,
+      "alerts": [
+        {
+          "time_sec": 131.431,
+          "center": [
+            159.5,
+            112.0
+          ],
+          "label": "backpack"
+        }
+      ]
+    },
+    {
+      "clip_id": "video8",
+      "footage_sec": 159.526,
+      "sampled_frames": 798,
+      "alerts": [
+        {
+          "time_sec": 125.826,
+          "center": [
+            196.0,
+            226.5
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "video9",
+      "footage_sec": 82.916,
+      "sampled_frames": 415,
+      "alerts": []
+    },
+    {
+      "clip_id": "video10",
+      "footage_sec": 75.409,
+      "sampled_frames": 377,
+      "alerts": [
+        {
+          "time_sec": 50.017,
+          "center": [
+            208.0,
+            215.5
+          ],
+          "label": "handbag"
+        }
+      ]
+    },
+    {
+      "clip_id": "video11",
+      "footage_sec": 150.033,
+      "sampled_frames": 751,
+      "alerts": []
+    }
+  ]
+}

@@ -1,0 +1,173 @@
+{
+  "label": "step1b",
+  "run_at": "2026-10-19T11:05:17.025751+00:00",
+  "elapsed_sec": 3760.4,
+  "config": {
+    "dataset": "AVSS 2007 (i-LIDS) EASY/MEDIUM/HARD",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "labels": {
+    "avss-easy": [
+      {
+        "box": [
+          59,
+          242,
+          88,
+          155
+        ],
+        "placed": 66.66666666666667,
+        "unattended": 96.0,
+        "removed": 157.56666666666666,
+        "note": "AVSS 2007 EASY"
+      }
+    ],
+    "avss-medium": [
+      {
+        "box": [
+          290,
+          147,
+          53,
+          31
+        ],
+        "placed": 47.0,
+        "unattended": 84.0,
+        "removed": 153.1,
+        "note": "AVSS 2007 MEDIUM"
+      }
+    ],
+    "avss-hard": [
+      {
+        "box": [
+          345,
+          81,
+          30,
+          65
+        ],
+        "placed": 49.3,
+        "unattended": 98.6,
+        "removed": 189.0,
+        "note": "AVSS 2007 HARD"
+      }
+    ]
+  },
+  "scores": {
+    "clips": 3,
+    "footage_min": 9.27,
+    "abandonments": 3,
+    "detected": 3,
+    "false_alarms": 0,
+    "duplicate_alerts": 1,
+    "recall": 1.0,
+    "recall_ci95": [
+      0.43849391955098227,
+      1.0
+    ],
+    "precision": 1.0,
+    "precision_ci95": [
+      0.43849391955098227,
+      1.0
+    ],
+    "f1": 1.0,
+    "false_alarms_per_hour": 0.0,
+    "latency_median_sec": 7.2,
+    "latency_max_sec": 9.43,
+    "outcomes": [
+      {
+        "clip_id": "avss-easy",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 1,
+        "false_alarms": 0,
+        "latencies_sec": [
+          2.43
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "avss-medium",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          9.43
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "avss-hard",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          7.2
+        ],
+        "false_alarm_details": []
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "avss-easy",
+      "footage_sec": 182.649,
+      "sampled_frames": 914,
+      "alerts": [
+        {
+          "time_sec": 98.432,
+          "center": [
+            106.5,
+            320.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 147.614,
+          "center": [
+            106.5,
+            320.0
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-medium",
+      "footage_sec": 161.295,
+      "sampled_frames": 807,
+      "alerts": [
+        {
+          "time_sec": 93.427,
+          "center": [
+            316.0,
+            159.5
+          ],
+          "label": "backpack"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-hard",
+      "footage_sec": 212.44,
+      "sampled_frames": 1063,
+      "alerts": [
+        {
+          "time_sec": 105.8,
+          "center": [
+            359.0,
+            117.5
+          ],
+          "label": "suitcase"
+        }
+      ]
+    }
+  ]
+}

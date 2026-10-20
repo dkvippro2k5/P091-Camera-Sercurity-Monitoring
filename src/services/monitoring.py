@@ -58,6 +58,7 @@ from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
 from src.services.notifications import NotificationWorker, TelegramNotifier, should_notify
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
+from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_pose import FallPoseEstimator
 from src.vision.pipeline import VisionPipeline
@@ -314,11 +315,15 @@ class MonitoringService:
                 abandon_sec=settings.abandon_sec,
                 owner_radius_ratio=settings.owner_radius_ratio,
                 stationary_tolerance_ratio=settings.stationary_tolerance_ratio,
+                abandon_require_owner=settings.abandon_require_owner,
+                owner_bind_sec=settings.owner_bind_sec,
+                owner_match_similarity=settings.owner_match_similarity,
             ),
             draw_overlays=True,
             fall_pose_estimator=(
                 FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
             ),
+            appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
         )
         self.manager = MultiStreamManager(
             shared_pipeline=self._pipeline_template,

@@ -13,6 +13,9 @@ from datetime import datetime
 from statistics import median
 from typing import Literal
 
+import numpy as np
+
+from src.vision.abandoned import LABEL_ABANDONED, AbandonedObjectTracker
 from src.vision.fall_motion import FallMotionEvidence
 from src.vision.fall_pose import PoseObservation
 from src.vision.schemas import BoundingBox, IncidentDetection, Zone
@@ -32,7 +35,7 @@ _FURNITURE_MEMORY_SEC = 10.0
 # Incident labels emitted downstream. Must stay in sync with PRD section 3.1.
 LABEL_INTRUSION = "intrusion"
 LABEL_FALL = "fall_detection"
-LABEL_ABANDONED = "abandoned_object"
+# LABEL_ABANDONED ("abandoned_object") lives in abandoned.py with the rule that emits it.
 
 # Span of bbox-position history retained per track, and therefore the baseline the fall rule
 # measures downward velocity against. One constant so the pruning window and the window the
@@ -148,12 +151,6 @@ class TrackState:
     fall_suppressed_pose: bool = False
     upright_samples: list[tuple[float, float, float, float, float, float]] = field(default_factory=list)
     upright_baseline: UprightBaseline | None = None
-    # Abandoned: when the object was last near a person, and where it settled.
-    last_owner_seen: float | None = None
-    stationary_since: float | None = None
-    anchor: tuple[float, float] | None = None
-    abandoned_fired: bool = False
-    owner_track_id: str | None = None
     # Track stitching & fall indicators: (timestamp, y_top, height) per analyzed frame.
     # The centroid this used to carry was dead weight — stitching matches on `last_bbox`, not on
     # this history, and the fall rule only ever needs the box's top edge and its height.
@@ -195,6 +192,8 @@ class RuleEngine:
         abandon_sec: Seconds an object must sit unattended before it is abandoned.
         owner_radius_ratio: Owner search radius as a fraction of frame width (PRD's radius R).
         stationary_tolerance_ratio: Movement below this fraction of frame width counts as still.
+        abandon_require_owner, owner_bind_sec, owner_match_similarity, abandon_memory_sec: The
+            owner model of the abandoned-object rule; see AbandonedObjectTracker.
         track_ttl_sec: Drop track state this long after a track disappears.
         track_stitch_window_sec: Grace window to stitch a new track to a recently lost track across brief occlusions.
         track_stitch_radius_ratio: How far a reappearing track may have moved, as a fraction
@@ -269,6 +268,10 @@ class RuleEngine:
         abandon_sec: float = 2.0,
         owner_radius_ratio: float = 0.25,
         stationary_tolerance_ratio: float = 0.02,
+        abandon_require_owner: bool = True,
+        owner_bind_sec: float = 3.0,
+        owner_match_similarity: float = 0.85,
+        abandon_memory_sec: float = 30.0,
         track_ttl_sec: float = 1.0,
         track_stitch_window_sec: float = 2.0,
         # 0.12 reproduces the 150px this replaced at the 720p the capacity table was
@@ -306,6 +309,15 @@ class RuleEngine:
         self.track_stitch_window_sec = track_stitch_window_sec
         self.track_stitch_radius_ratio = track_stitch_radius_ratio
         self.alert_cooldown_sec = alert_cooldown_sec
+        self.abandoned = AbandonedObjectTracker(
+            abandon_sec=abandon_sec,
+            owner_radius_ratio=owner_radius_ratio,
+            stationary_tolerance_ratio=stationary_tolerance_ratio,
+            require_owner=abandon_require_owner,
+            owner_bind_sec=owner_bind_sec,
+            owner_match_similarity=owner_match_similarity,
+            memory_sec=abandon_memory_sec,
+        )
 
         # Keyed by (camera_id, track_id) to prevent cross-camera collisions.
         # Two independent YOLO trackers can emit the same track_id (e.g. "track_1");
@@ -327,6 +339,7 @@ class RuleEngine:
         self._last_alert.clear()
         self._furniture.clear()
         self._recent_falls.clear()
+        self.abandoned.reset()
 
     @property
     def active_tracks(self) -> int:
@@ -440,6 +453,14 @@ class RuleEngine:
                 candidates.add(person.track_id)
         return candidates
 
+    def appearance_candidates(self, detections: list[IncidentDetection], frame_width: int) -> set[str]:
+        """Persons near a carriable object, whose appearance the abandoned rule may need."""
+        objects = [d for d in detections if d.label in CARRIABLE_CLASSES]
+        if not objects:
+            return set()
+        persons = [d for d in detections if d.label in PERSON_CLASSES]
+        return self.abandoned.persons_near_bags(objects, persons, frame_width)
+
     @staticmethod
     def _track_key(camera_id: str | None, track_id: str) -> tuple[str | None, str]:
         """Composite key so identical track_ids from different cameras stay separate."""
@@ -455,6 +476,7 @@ class RuleEngine:
         camera_id: str | None = None,
         fall_motion_evidence: dict[str, FallMotionEvidence] | None = None,
         fall_pose_evidence: dict[str, PoseObservation] | None = None,
+        person_appearance: dict[str, np.ndarray] | None = None,
     ) -> list[IncidentDetection]:
         """Evaluate raw tracked detections and return incident events for this frame.
 
@@ -467,6 +489,8 @@ class RuleEngine:
             camera_id: Source camera, stamped onto emitted events.
             fall_motion_evidence: Optical flow per track, for the fall indicators.
             fall_pose_evidence: Pose per track in `pose_candidates`, for the pose gate.
+            person_appearance: Appearance signature per track in `appearance_candidates`, so
+                the abandoned rule can recognise an owner under a new track ID.
 
         Returns:
             Incident events triggered on this frame. Empty when nothing fires.
@@ -491,7 +515,7 @@ class RuleEngine:
                 fall_pose_evidence or {},
             )
         )
-        events.extend(self._check_abandoned(objects, persons, frame_width, timestamp, camera_id))
+        events.extend(self.abandoned.update(objects, persons, frame_width, timestamp, camera_id, person_appearance))
 
         self._evict_stale(timestamp)
         return self._apply_cooldown(self._merge_fall_incidents(events, timestamp, camera_id), timestamp, camera_id)
@@ -561,6 +585,7 @@ class RuleEngine:
     ) -> list[IncidentDetection]:
         """Return all active/ongoing incidents for current frame detections (for persistent overlay drawing)."""
         active: list[IncidentDetection] = []
+        abandoned_track_ids = self.abandoned.fired_track_ids(camera_id)
         for det in detections:
             if not det.track_id:
                 continue
@@ -595,7 +620,7 @@ class RuleEngine:
                     )
                 )
 
-            if state.abandoned_fired:
+            if det.label in CARRIABLE_CLASSES and det.track_id in abandoned_track_ids:
                 active.append(
                     IncidentDetection(
                         label=LABEL_ABANDONED,
@@ -737,36 +762,21 @@ class RuleEngine:
         stitched.track_id = det.track_id
         stitched.last_seen = timestamp
         stitched.last_bbox = det.bbox
-        # The dwell timers are the whole point of stitching, so fallen_since / stationary_since
-        # / last_owner_seen ride along. A fired fall also remains fired until an observed
-        # recovery; otherwise every brief ID change while someone is still prone emits a
-        # duplicate incident. Abandoned-object state is also preserved until movement or the
-        # owner returning explicitly re-arms it.
+        # The dwell timers are the whole point of stitching, so fallen_since rides along. A
+        # fired fall also remains fired until an observed recovery; otherwise every brief ID
+        # change while someone is still prone emits a duplicate incident. (Bags keep their own
+        # state in AbandonedObjectTracker, which does not depend on the track ID.)
         # Position history is cleared because a stale sample would fake a velocity spike on the
         # first frame after the stitch.
         stitched.pos_history = []
         self._tracks[key] = stitched
         if stitched.label in PERSON_CLASSES:
-            self._replace_owner_track_id(camera_id, old_track_id, det.track_id)
+            self.abandoned.rename_person(camera_id, old_track_id, det.track_id)
         logger.debug(
             f"Stitched {det.label} {stitched.aliased_from} -> {det.track_id} on {camera_id} "
             f"({best_dist:.0f}px, radius {radius:.0f}px)"
         )
         return stitched
-
-    def _replace_owner_track_id(
-        self,
-        camera_id: str | None,
-        old_track_id: str,
-        new_track_id: str,
-    ) -> None:
-        """Keep bag-owner associations valid when the person tracker changes ID."""
-        for key, state in self._tracks.items():
-            if key[0] == camera_id and state.owner_track_id == old_track_id:
-                state.owner_track_id = new_track_id
-        for key, state in self._expired_tracks.items():
-            if key[0] == camera_id and state.owner_track_id == old_track_id:
-                state.owner_track_id = new_track_id
 
     def _evict_stale(self, timestamp: float) -> None:
         expired_keys = [key for key, s in self._tracks.items() if timestamp - s.last_seen > self.track_ttl_sec]
@@ -1407,112 +1417,6 @@ class RuleEngine:
                             f"{person.track_id} transitioned upright->prone and stayed down {elapsed:.1f}s "
                             f"(threshold {self.fall_dwell_sec}s), peak descent "
                             f"{state.descent_peak_speed:.2f} H/s — {state.fall_reason}{pose_note}"
-                        ),
-                    )
-                )
-
-        return events
-
-    def _check_abandoned(
-        self,
-        objects: list[IncidentDetection],
-        persons: list[IncidentDetection],
-        frame_width: int,
-        timestamp: float,
-        camera_id: str | None,
-    ) -> list[IncidentDetection]:
-        """Fire when a carriable object sits still with no person inside radius R."""
-        events = []
-        radius = frame_width * self.owner_radius_ratio
-
-        for obj in objects:
-            if not obj.track_id:
-                continue
-            state = self._tracks.get(self._track_key(camera_id, obj.track_id))
-            if state is None:
-                continue
-
-            cx = (obj.bbox.xmin + obj.bbox.xmax) / 2.0
-            cy = (obj.bbox.ymin + obj.bbox.ymax) / 2.0
-
-            if state.anchor is None:
-                state.anchor = (cx, cy)
-                state.stationary_since = timestamp
-            elif math.dist(state.anchor, (cx, cy)) > frame_width * self.stationary_tolerance_ratio:
-                # A bag that is still being carried is not abandoned. Movement starts a new
-                # stationary interval and also permits a future alert after it is put down.
-                state.anchor = (cx, cy)
-                state.stationary_since = timestamp
-                state.abandoned_fired = False
-
-            # Original Owner Tracking (Improvement 3): Bind owner_track_id if not set
-            if state.owner_track_id is None and persons:
-                close_owners = [
-                    p
-                    for p in persons
-                    if p.track_id
-                    and math.dist(
-                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
-                        (cx, cy),
-                    )
-                    <= radius
-                ]
-                if close_owners:
-                    state.owner_track_id = min(
-                        close_owners,
-                        key=lambda p: math.dist(
-                            ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
-                            (cx, cy),
-                        ),
-                    ).track_id
-
-            if state.owner_track_id:
-                # Check if the specific original owner is present and near
-                owner_near = any(
-                    p.track_id == state.owner_track_id
-                    and math.dist(
-                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
-                        (cx, cy),
-                    )
-                    <= radius
-                    for p in persons
-                )
-            else:
-                owner_near = any(
-                    math.dist(
-                        ((p.bbox.xmin + p.bbox.xmax) / 2.0, (p.bbox.ymin + p.bbox.ymax) / 2.0),
-                        (cx, cy),
-                    )
-                    <= radius
-                    for p in persons
-                )
-
-            if owner_near:
-                state.last_owner_seen = timestamp
-                state.abandoned_fired = False
-                continue
-
-            # Never-attended objects age from when they were first seen sitting still.
-            # `is not None` rather than truthiness: process_video passes video-relative
-            # time, so an owner last seen on the very first frame gives exactly 0.0, and
-            # `or` would discard it and restart the clock from the stationary anchor.
-            anchors = [value for value in (state.last_owner_seen, state.stationary_since) if value is not None]
-            unattended_since = max(anchors, default=timestamp)
-            elapsed = timestamp - unattended_since
-
-            if elapsed >= self.abandon_sec and not state.abandoned_fired:
-                state.abandoned_fired = True
-                events.append(
-                    IncidentDetection(
-                        label=LABEL_ABANDONED,
-                        track_id=obj.track_id,
-                        confidence=obj.confidence,
-                        timestamp=timestamp,
-                        camera_id=camera_id,
-                        bbox=obj.bbox,
-                        reason=(
-                            f"{obj.label} ({obj.track_id}) unattended for {elapsed:.1f}s "
-                            f"with no person within {radius:.0f}px"
                         ),
                     )
                 )

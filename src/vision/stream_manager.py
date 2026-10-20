@@ -276,6 +276,10 @@ class MultiStreamManager:
                     abandon_sec=engine.abandon_sec,
                     owner_radius_ratio=engine.owner_radius_ratio,
                     stationary_tolerance_ratio=engine.stationary_tolerance_ratio,
+                    abandon_require_owner=engine.abandoned.require_owner,
+                    owner_bind_sec=engine.abandoned.owner_bind_sec,
+                    owner_match_similarity=engine.abandoned.owner_match_similarity,
+                    abandon_memory_sec=engine.abandoned.memory_sec,
                     track_ttl_sec=engine.track_ttl_sec,
                     track_stitch_window_sec=engine.track_stitch_window_sec,
                     track_stitch_radius_ratio=engine.track_stitch_radius_ratio,
@@ -299,6 +303,8 @@ class MultiStreamManager:
                     if pose is not None and pose.enabled
                     else None
                 ),
+                # Stateless (OpenCV histograms only), so one instance serves every worker.
+                appearance_encoder=template.appearance_encoder,
             )
 
         return factory

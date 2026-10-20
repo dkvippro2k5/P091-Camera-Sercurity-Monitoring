@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import cv2
 import numpy as np
 
+from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_motion import SparseFallMotionAnalyzer
 from src.vision.fall_pose import FallPoseEstimator
@@ -47,6 +48,7 @@ class VisionPipeline:
         motion_gate: MotionGate | None = None,
         fall_motion_analyzer: SparseFallMotionAnalyzer | None = None,
         fall_pose_estimator: FallPoseEstimator | None = None,
+        appearance_encoder: AppearanceEncoder | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -59,6 +61,8 @@ class VisionPipeline:
         self.fall_motion_analyzer = fall_motion_analyzer or SparseFallMotionAnalyzer()
         # Optional: None (the default) leaves the rule engine's pose gate inactive.
         self.fall_pose_estimator = fall_pose_estimator
+        # Optional: None leaves bag owners recognised by track ID alone.
+        self.appearance_encoder = appearance_encoder
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
@@ -152,6 +156,14 @@ class VisionPipeline:
             pose_candidates = self.rule_engine.pose_candidates(persons, camera_id)
             fall_pose_evidence = self.fall_pose_estimator.measure(frame, persons, pose_candidates)
 
+        # 3c. Appearance of the people near a bag, so its owner is still recognised after the
+        # tracker gives them a new ID.
+        person_appearance = {}
+        if self.appearance_encoder is not None:
+            near_bags = self.rule_engine.appearance_candidates(detections, width)
+            if near_bags:
+                person_appearance = self.appearance_encoder.measure(frame, persons, near_bags)
+
         # 4. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
@@ -162,6 +174,7 @@ class VisionPipeline:
             camera_id=camera_id,
             fall_motion_evidence=fall_motion_evidence,
             fall_pose_evidence=fall_pose_evidence,
+            person_appearance=person_appearance,
         )
 
         # 5. Annotate zones and incidents for the operator view
