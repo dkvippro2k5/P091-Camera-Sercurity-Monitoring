@@ -459,10 +459,13 @@ def _build_pipeline():
     """The detector + rule engine `MonitoringService` builds, minus overlays and zones."""
     from src.config import get_settings
     from src.services.monitoring import _detector_labels
+    from src.vision.appearance import AppearanceEncoder
     from src.vision.detector import IncidentDetector
     from src.vision.fall_pose import FallPoseEstimator
+    from src.vision.left_object_check import LeftObjectCheck
     from src.vision.pipeline import VisionPipeline
     from src.vision.rule_engine import RuleEngine
+    from src.vision.static_objects import StaticObjectDetector
     from src.vision.zone_config import ZoneManager
 
     settings = get_settings()
@@ -478,11 +481,21 @@ def _build_pipeline():
             abandon_sec=settings.abandon_sec,
             owner_radius_ratio=settings.owner_radius_ratio,
             stationary_tolerance_ratio=settings.stationary_tolerance_ratio,
+            abandon_require_owner=settings.abandon_require_owner,
+            owner_bind_sec=settings.owner_bind_sec,
+            owner_match_similarity=settings.owner_match_similarity,
         ),
         zones_path=None,
         draw_overlays=False,
         fall_pose_estimator=(
             FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
+        ),
+        appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
+        static_object_detector=StaticObjectDetector() if settings.abandon_background_enabled else None,
+        left_object_check=(
+            LeftObjectCheck(settings.abandon_check_weights_path)
+            if settings.abandon_background_enabled and settings.abandon_check_weights_path
+            else None
         ),
     )
 

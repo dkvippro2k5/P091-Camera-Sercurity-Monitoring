@@ -156,6 +156,9 @@ class TriageRequest(BaseModel):
     # events.md stage 3 — this is what makes several simultaneous alerts on one camera
     # separable, each judged on the person it is actually about.
     cropped: bool = False
+    # True when the last frame is not from the clip but a before/after of the object's spot:
+    # the background model's picture of it (left) beside the frame the alert fired on (right).
+    comparison_last: bool = False
 
 
 class VLMTriage(Protocol):
@@ -327,6 +330,13 @@ class OpenAIVLMTriage:
             f"Frames: {request.pre_count} before the trigger, "
             f"{max(0, len(request.frames) - request.pre_count)} after, in chronological order."
         )
+        if request.comparison_last:
+            lines.append(
+                "The last frame is not part of the clip: it shows the spot the alert is about "
+                "twice, outlined in red -- on the left as it looked before the object appeared "
+                "(the background model's picture, blurrier), on the right as it is now. Use it to "
+                "tell an object that was left there from one that was always there."
+            )
         if request.cropped:
             lines.append(
                 "These frames are cropped to the one person this alert is about, padded to "

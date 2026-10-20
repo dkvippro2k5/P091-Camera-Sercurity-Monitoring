@@ -79,6 +79,25 @@ class Settings(BaseSettings):
     abandon_sec: float = Field(default=2.0, gt=0.0)
     owner_radius_ratio: float = Field(default=0.25, gt=0.0, le=1.0)
     stationary_tolerance_ratio: float = Field(default=0.02, gt=0.0, le=1.0)
+    # Owner model (see src/vision/abandoned.py): a bag nobody was seen with is not reported,
+    # and its owners are the people near it while carried or in its first seconds at rest.
+    # Recognising an owner back under a new track ID by clothing colour is off by default:
+    # on ABODA + AVSS 2007 + CAVIAR (2026-10-19) it removed the one false alarm left at
+    # 0.85, but 0.8 lost a detection and 0.9 brought the false alarm back, and that
+    # threshold was picked on the same clips.
+    abandon_require_owner: bool = True
+    owner_bind_sec: float = Field(default=3.0, ge=0.0)
+    owner_appearance_enabled: bool = False
+    owner_match_similarity: float = Field(default=0.85, gt=0.0, le=1.0)
+    # Background model (src/vision/static_objects.py) for left objects the detector does not
+    # box: small, far away, infrared, or not a COCO class. On by default: a missed bag costs
+    # more than a false alarm. On ABODA + AVSS 2007 + CAVIAR (2026-10-20) it took recall from
+    # 7/18 to 16/18 and false alarms from 1 to 10, most of them trains at the AVSS platform.
+    abandon_background_enabled: bool = True
+    # Open-vocabulary second opinion on the background model's alerts (left_object_check.py):
+    # a note in the alert reason, never a gate. Built by scripts/build_left_object_vocab.py;
+    # a missing file only logs a warning. Empty turns it off explicitly.
+    abandon_check_weights_path: str = "src/vision/weights/yoloe-26s-left-objects.pt"
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     # On a CPU host DO NOT raise this above the default: several 4K inferences in parallel

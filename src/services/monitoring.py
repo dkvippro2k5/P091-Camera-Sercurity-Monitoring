@@ -58,11 +58,14 @@ from src.services.evidence_store import EvidenceStore
 from src.services.incident_log import IncidentLog
 from src.services.notifications import NotificationWorker, TelegramNotifier, should_notify
 from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTriage, build_triage_client
+from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_pose import FallPoseEstimator
+from src.vision.left_object_check import LeftObjectCheck
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import FallPerspectiveProfile, RuleEngine
-from src.vision.schemas import FrameAnalysisResult, Zone
+from src.vision.schemas import BoundingBox, FrameAnalysisResult, Zone
+from src.vision.static_objects import LABEL_STATIC, StaticObjectDetector
 from src.vision.stream_manager import MultiStreamManager, tune_torch_for_multistream
 from src.vision.zone_config import ZoneManager
 
@@ -237,6 +240,32 @@ def _evidence_frames(
     return evidence
 
 
+_COMPARISON_HEIGHT = 320
+
+
+def _before_after(background: np.ndarray, frame: np.ndarray, box: BoundingBox) -> bytes | None:
+    """The spot around `box` in the background (left) and now (right), outlined, as one JPEG."""
+    height, width = frame.shape[:2]
+    pad = max(box.xmax - box.xmin, box.ymax - box.ymin, 48) * 2
+    x0, y0 = max(0, box.xmin - pad), max(0, box.ymin - pad)
+    x1, y1 = min(width, box.xmax + pad), min(height, box.ymax + pad)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    tiles = []
+    for image in (background, frame):
+        tile = np.ascontiguousarray(image[y0:y1, x0:x1])
+        # Drawn a few pixels outside the box: on a bag 10 px across, a line on its edge hides it.
+        margin = 4
+        corner_a = (box.xmin - x0 - margin, box.ymin - y0 - margin)
+        corner_b = (box.xmax - x0 + margin, box.ymax - y0 + margin)
+        cv2.rectangle(tile, corner_a, corner_b, (0, 0, 255), 1)
+        scale = _COMPARISON_HEIGHT / tile.shape[0]
+        tiles.append(cv2.resize(tile, (max(1, int(tile.shape[1] * scale)), _COMPARISON_HEIGHT)))
+    gap = np.full((_COMPARISON_HEIGHT, 8, 3), 255, dtype=np.uint8)
+    ok, buffer = cv2.imencode(".jpg", np.hstack([tiles[0], gap, tiles[1]]), [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    return buffer.tobytes() if ok else None
+
+
 _ZONE_NAME_PATTERN = re.compile(r"restricted zone '[^']*'")
 
 
@@ -314,10 +343,20 @@ class MonitoringService:
                 abandon_sec=settings.abandon_sec,
                 owner_radius_ratio=settings.owner_radius_ratio,
                 stationary_tolerance_ratio=settings.stationary_tolerance_ratio,
+                abandon_require_owner=settings.abandon_require_owner,
+                owner_bind_sec=settings.owner_bind_sec,
+                owner_match_similarity=settings.owner_match_similarity,
             ),
             draw_overlays=True,
             fall_pose_estimator=(
                 FallPoseEstimator(settings.fall_pose_weights_path) if settings.fall_pose_weights_path else None
+            ),
+            appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
+            static_object_detector=StaticObjectDetector() if settings.abandon_background_enabled else None,
+            left_object_check=(
+                LeftObjectCheck(settings.abandon_check_weights_path)
+                if settings.abandon_background_enabled and settings.abandon_check_weights_path
+                else None
             ),
         )
         self.manager = MultiStreamManager(
@@ -796,7 +835,26 @@ class MonitoringService:
                 reason=event.reason,
                 zone_name=event.zone_name,
                 track_id=event.track_id,
+                comparison=self._left_object_comparison(camera_id, event, frame),
             )
+
+    def _left_object_comparison(self, camera_id: str, event, frame: np.ndarray) -> bytes | None:
+        """Before/after of the spot, for an abandoned alert the background model raised.
+
+        The clip sent to the VLM covers the last few seconds, and the object was put down
+        well before that (static_sec, plus however long its owner stayed), so on its own the
+        clip shows a bag that was always there. The background picture is what shows it was
+        not. Runs on the processor thread, between frames, so the background is the one the
+        alert was raised against.
+        """
+        if event.label != "abandoned_object" or not (event.reason or "").startswith(LABEL_STATIC):
+            return None
+        try:
+            background = self.manager.background_image(camera_id, frame.shape[1], frame.shape[0])
+            return None if background is None else _before_after(background, frame, event.bbox)
+        except Exception:  # noqa: BLE001 - a missing comparison must not cost the alert
+            logger.exception(f"[{camera_id}] could not build the before/after image")
+            return None
 
     def _emit_alert(
         self,
@@ -807,6 +865,7 @@ class MonitoringService:
         reason: str | None = None,
         zone_name: str | None = None,
         track_id: str | None = None,
+        comparison: bytes | None = None,
     ) -> None:
         """Capture the frame and publish the alert.
 
@@ -835,6 +894,7 @@ class MonitoringService:
             reason=reason,
             zone_name=zone_name,
             track_id=track_id,
+            triage_comparison=comparison,
         )
 
         # Stored before the alert is published so `evidence_url` is already on the very first
@@ -987,6 +1047,8 @@ class MonitoringService:
         or a crop of the wrong person.
         """
         frames, pre_count = self._collect_clip(alert.camera_id, alert.track_id)
+        if frames and alert.triage_comparison:
+            frames = [*frames, alert.triage_comparison]  # last, and so in the evidence strip too
         return (
             frames,
             pre_count,
@@ -1086,7 +1148,10 @@ class MonitoringService:
                 # tells the model to expect a mostly-cropped clip, which is the honest
                 # signal either way: a model warned about crops it did not get is unaffected,
                 # one not warned about crops it did get can misread empty space as absence.
-                cropped=alert.track_id is not None,
+                # An abandoned alert's track is the object, and the ring only holds person
+                # boxes, so its clip is never cropped.
+                cropped=alert.track_id is not None and alert.label != "abandoned_object",
+                comparison_last=bool(alert.triage_comparison) and frames[-1:] == [alert.triage_comparison],
             )
         )
 
