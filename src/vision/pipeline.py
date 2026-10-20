@@ -11,11 +11,12 @@ from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_motion import SparseFallMotionAnalyzer
 from src.vision.fall_pose import FallPoseEstimator
+from src.vision.left_object_check import LeftObjectCheck
 from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
-from src.vision.rule_engine import RuleEngine
+from src.vision.rule_engine import LABEL_ABANDONED, RuleEngine
 from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
-from src.vision.static_objects import StaticObjectDetector
+from src.vision.static_objects import LABEL_STATIC, StaticObjectDetector
 from src.vision.zone_config import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class VisionPipeline:
         fall_pose_estimator: FallPoseEstimator | None = None,
         appearance_encoder: AppearanceEncoder | None = None,
         static_object_detector: StaticObjectDetector | None = None,
+        left_object_check: LeftObjectCheck | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -68,6 +70,8 @@ class VisionPipeline:
         # Optional, and stateful (it holds the background picture): one per stream. None
         # leaves the abandoned rule to the bags the detector boxes.
         self.static_object_detector = static_object_detector
+        # Optional: names what an abandoned alert from the background model looks like.
+        self.left_object_check = left_object_check
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
@@ -187,6 +191,8 @@ class VisionPipeline:
             person_appearance=person_appearance,
             static_regions=static_regions,
         )
+        if self.left_object_check is not None and self.left_object_check.enabled:
+            self._note_left_objects(frame, events)
 
         # 5. Annotate zones and incidents for the operator view
         output_frame = frame
@@ -218,6 +224,17 @@ class VisionPipeline:
         )
 
         return output_frame, result
+
+    def _note_left_objects(self, frame: np.ndarray, events: list) -> None:
+        """Add what the background model's abandoned alerts look like to their reasons.
+
+        Only those alerts: a bag the detector boxed has already been recognised as one.
+        """
+        for event in events:
+            if event.label == LABEL_ABANDONED and (event.reason or "").startswith(LABEL_STATIC):
+                note = self.left_object_check.note(frame, event.bbox)
+                if note:
+                    event.reason = f"{event.reason}; {note}"
 
     def overlay_last_known(
         self, frame: np.ndarray, camera_id: str | None, now: datetime | None = None

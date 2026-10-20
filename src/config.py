@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # more than a false alarm. On ABODA + AVSS 2007 + CAVIAR (2026-10-20) it took recall from
     # 7/18 to 16/18 and false alarms from 1 to 10, most of them trains at the AVSS platform.
     abandon_background_enabled: bool = True
+    # Open-vocabulary second opinion on the background model's alerts (left_object_check.py):
+    # a note in the alert reason, never a gate. Built by scripts/build_left_object_vocab.py;
+    # a missing file only logs a warning. Empty turns it off explicitly.
+    abandon_check_weights_path: str = "src/vision/weights/yoloe-26s-left-objects.pt"
     camera_target_fps: float = Field(default=5.0, gt=0.0, le=60.0)
     # Zero selects a host-aware default (1 concurrent inference on GPU, up to 2 on CPU).
     # On a CPU host DO NOT raise this above the default: several 4K inferences in parallel

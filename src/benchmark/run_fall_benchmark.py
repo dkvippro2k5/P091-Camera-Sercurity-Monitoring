@@ -462,6 +462,7 @@ def _build_pipeline():
     from src.vision.appearance import AppearanceEncoder
     from src.vision.detector import IncidentDetector
     from src.vision.fall_pose import FallPoseEstimator
+    from src.vision.left_object_check import LeftObjectCheck
     from src.vision.pipeline import VisionPipeline
     from src.vision.rule_engine import RuleEngine
     from src.vision.static_objects import StaticObjectDetector
@@ -491,6 +492,11 @@ def _build_pipeline():
         ),
         appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
         static_object_detector=StaticObjectDetector() if settings.abandon_background_enabled else None,
+        left_object_check=(
+            LeftObjectCheck(settings.abandon_check_weights_path)
+            if settings.abandon_background_enabled and settings.abandon_check_weights_path
+            else None
+        ),
     )
 
 

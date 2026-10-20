@@ -122,6 +122,7 @@ class Alert:
     time_sec: float
     center: tuple[float, float]
     label: str | None
+    reason: str | None = None
 
 
 @dataclass
@@ -390,7 +391,7 @@ def run_clip(truth: ClipTruth, target_fps: float) -> ClipRun:
                     center = ((event.bbox.xmin + event.bbox.xmax) / 2.0, (event.bbox.ymin + event.bbox.ymax) / 2.0)
                     # The reason names the detector class: "<label> (<track>) unattended ...".
                     label = (event.reason or "").split(" ", 1)[0] or None
-                    run.alerts.append(Alert(round(timestamp, 3), center, label))
+                    run.alerts.append(Alert(round(timestamp, 3), center, label, event.reason))
     finally:
         capture.release()
     run.footage_sec = round(frame_index / source_fps, 3)

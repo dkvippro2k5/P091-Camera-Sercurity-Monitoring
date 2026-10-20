@@ -10,6 +10,7 @@ import numpy as np
 
 from src.vision.detector import IncidentDetector
 from src.vision.fall_pose import FallPoseEstimator
+from src.vision.left_object_check import LeftObjectCheck
 from src.vision.motion import MotionGate
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import RuleEngine
@@ -240,6 +241,7 @@ class MultiStreamManager:
         gate = template.motion_gate
         pose = template.fall_pose_estimator
         background = template.static_object_detector
+        check = template.left_object_check
 
         def factory() -> VisionPipeline:
             # NOT shared: it holds the camera's background picture. Same settings, fresh state.
@@ -313,6 +315,12 @@ class MultiStreamManager:
                 # Stateless (OpenCV histograms only), so one instance serves every worker.
                 appearance_encoder=template.appearance_encoder,
                 static_object_detector=static_object_detector,
+                # One model per worker, like the pose model.
+                left_object_check=(
+                    LeftObjectCheck(check.model_path, check.image_size, check.min_conf, check.min_cover, check.sure_conf)
+                    if check is not None and check.enabled
+                    else None
+                ),
             )
 
         return factory

@@ -61,6 +61,7 @@ from src.services.vlm import NullVLMTriage, TriageRequest, TriageVerdict, VLMTri
 from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_pose import FallPoseEstimator
+from src.vision.left_object_check import LeftObjectCheck
 from src.vision.pipeline import VisionPipeline
 from src.vision.rule_engine import FallPerspectiveProfile, RuleEngine
 from src.vision.schemas import FrameAnalysisResult, Zone
@@ -326,6 +327,11 @@ class MonitoringService:
             ),
             appearance_encoder=AppearanceEncoder() if settings.owner_appearance_enabled else None,
             static_object_detector=StaticObjectDetector() if settings.abandon_background_enabled else None,
+            left_object_check=(
+                LeftObjectCheck(settings.abandon_check_weights_path)
+                if settings.abandon_background_enabled and settings.abandon_check_weights_path
+                else None
+            ),
         )
         self.manager = MultiStreamManager(
             shared_pipeline=self._pipeline_template,
