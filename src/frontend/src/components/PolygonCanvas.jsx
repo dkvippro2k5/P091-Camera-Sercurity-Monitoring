@@ -90,7 +90,7 @@ export default function PolygonCanvas({ imageUrl, points, onChange, onError }) {
   return (
     <div className="polygon">
       <div className="polygon-stage">
-        <img src={imageUrl} alt="Camera preview for zone drawing" onError={onError} />
+        <img src={imageUrl} alt="Ảnh camera để vẽ vùng giám sát" onError={onError} />
         <canvas ref={canvasRef} onClick={handleClick} />
       </div>
       <div className="polygon-controls">
@@ -99,15 +99,15 @@ export default function PolygonCanvas({ imageUrl, points, onChange, onError }) {
             submit-time error instead of a precondition. */}
         <span>
           {points.length === 0
-            ? 'Click the preview to place zone points (3 minimum).'
-            : `${points.length} of 3 minimum placed.`}
+            ? 'Nhấp lên ảnh để đặt các điểm vùng (tối thiểu 3 điểm).'
+            : `Đã đặt ${points.length}/3 điểm tối thiểu.`}
         </span>
         <span className="spacer" />
         <button type="button" className="compact" onClick={() => onChange(points.slice(0, -1))} disabled={!points.length}>
-          Undo
+          Hoàn tác
         </button>
         <button type="button" className="compact" onClick={() => onChange([])} disabled={!points.length}>
-          Clear
+          Xóa điểm
         </button>
       </div>
     </div>

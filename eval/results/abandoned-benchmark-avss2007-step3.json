@@ -1,0 +1,265 @@
+{
+  "label": "step3",
+  "run_at": "2026-10-20T08:21:21.929138+00:00",
+  "elapsed_sec": 666.2,
+  "config": {
+    "dataset": "AVSS 2007 (i-LIDS) EASY/MEDIUM/HARD",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "abandon_background_enabled": true,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "labels": {
+    "avss-easy": [
+      {
+        "box": [
+          59,
+          242,
+          88,
+          155
+        ],
+        "placed": 66.66666666666667,
+        "unattended": 96.0,
+        "removed": 157.56666666666666,
+        "note": "AVSS 2007 EASY"
+      }
+    ],
+    "avss-medium": [
+      {
+        "box": [
+          290,
+          147,
+          53,
+          31
+        ],
+        "placed": 47.0,
+        "unattended": 84.0,
+        "removed": 153.1,
+        "note": "AVSS 2007 MEDIUM"
+      }
+    ],
+    "avss-hard": [
+      {
+        "box": [
+          345,
+          81,
+          30,
+          65
+        ],
+        "placed": 49.3,
+        "unattended": 98.6,
+        "removed": 189.0,
+        "note": "AVSS 2007 HARD"
+      }
+    ]
+  },
+  "scores": {
+    "clips": 3,
+    "footage_min": 9.27,
+    "abandonments": 3,
+    "detected": 3,
+    "false_alarms": 8,
+    "duplicate_alerts": 3,
+    "recall": 1.0,
+    "recall_ci95": [
+      0.43849391955098227,
+      1.0
+    ],
+    "precision": 0.2727272727272727,
+    "precision_ci95": [
+      0.09745880573921467,
+      0.5656502930102463
+    ],
+    "f1": 0.42857142857142855,
+    "false_alarms_per_hour": 51.76281129579571,
+    "latency_median_sec": 7.2,
+    "latency_max_sec": 7.83,
+    "outcomes": [
+      {
+        "clip_id": "avss-easy",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 2,
+        "false_alarms": 1,
+        "latencies_sec": [
+          2.43
+        ],
+        "false_alarm_details": [
+          "40.0s early (static_object)"
+        ]
+      },
+      {
+        "clip_id": "avss-medium",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 2,
+        "latencies_sec": [
+          7.83
+        ],
+        "false_alarm_details": [
+          "108.0s unlabelled (static_object)",
+          "141.4s unlabelled (suitcase)"
+        ]
+      },
+      {
+        "clip_id": "avss-hard",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 1,
+        "false_alarms": 5,
+        "latencies_sec": [
+          7.2
+        ],
+        "false_alarm_details": [
+          "37.8s unlabelled (static_object)",
+          "58.0s unlabelled (static_object)",
+          "79.2s unlabelled (static_object)",
+          "157.4s unlabelled (static_object)",
+          "160.6s unlabelled (static_object)"
+        ]
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "avss-easy",
+      "footage_sec": 182.649,
+      "sampled_frames": 914,
+      "alerts": [
+        {
+          "time_sec": 40.007,
+          "center": [
+            87.5,
+            232.0
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 98.432,
+          "center": [
+            106.5,
+            320.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 147.614,
+          "center": [
+            106.5,
+            320.0
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 156.623,
+          "center": [
+            103.5,
+            258.0
+          ],
+          "label": "static_object"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-medium",
+      "footage_sec": 161.295,
+      "sampled_frames": 807,
+      "alerts": [
+        {
+          "time_sec": 91.825,
+          "center": [
+            315.5,
+            159.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 108.008,
+          "center": [
+            22.0,
+            145.5
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 141.408,
+          "center": [
+            534.0,
+            251.0
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-hard",
+      "footage_sec": 212.44,
+      "sampled_frames": 1063,
+      "alerts": [
+        {
+          "time_sec": 37.8,
+          "center": [
+            111.0,
+            62.5
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 58.0,
+          "center": [
+            16.5,
+            131.0
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 79.2,
+          "center": [
+            152.5,
+            61.5
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 105.8,
+          "center": [
+            359.0,
+            117.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 155.0,
+          "center": [
+            358.5,
+            100.0
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 157.4,
+          "center": [
+            41.0,
+            202.0
+          ],
+          "label": "static_object"
+        },
+        {
+          "time_sec": 160.6,
+          "center": [
+            109.5,
+            253.0
+          ],
+          "label": "static_object"
+        }
+      ]
+    }
+  ]
+}

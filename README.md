@@ -17,6 +17,11 @@ mandatory guard verdict in a React dashboard.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the component and data-flow diagrams.
 
+## Live Demo
+
+- Public URL: https://c4-cameradetection-091.id.vn/
+- Demo video: https://www.youtube.com/watch?v=DZun9iaYXDg
+
 ## Prerequisites
 
 - Python 3.11
@@ -119,7 +124,10 @@ keep `data/vision/test/fall.mp4` and `normal1.mp4` available for the bundled cas
 | `VLM_HISTORY_EXAMPLES` | Prior labelled examples sent to VLM | `6` |
 | `MODEL_WEIGHTS_PATH` | Detector checkpoint visible to the backend | `src/vision/weights/yolo26l.pt` |
 | `MODEL_WEIGHTS_HOST_PATH` | Host checkpoint mounted by Docker Compose | `./src/vision/weights/yolo26l.pt` |
-| `DETECTOR_TARGET_LABELS` | YOLO classes retained by the pipeline | `person,backpack,handbag,suitcase` |
+| `DETECTOR_TARGET_LABELS` | YOLO classes retained by the pipeline (`bed`, `couch` are context for the fall rule) | `person,backpack,handbag,suitcase,bed,couch` |
+| `ABANDON_REQUIRE_OWNER`, `OWNER_BIND_SEC` | Only report bags someone was seen with; people near a bag in its first seconds at rest become its owners | `true`, `3.0` |
+| `OWNER_APPEARANCE_ENABLED`, `OWNER_MATCH_SIMILARITY` | Also recognise a bag's owner by clothing colour after a track ID change | `false`, `0.85` |
+| `FALL_POSE_WEIGHTS_PATH` | Pose model that holds back fall alerts while the torso stays upright; missing file or empty turns it off | `src/vision/weights/yolo26s-pose.pt` |
 | `DETECTOR_CONFIDENCE` | Main YOLO acceptance threshold | `0.40` |
 | `CAMERA_TARGET_FPS` | Default analysis rate for new cameras | `5` |
 | `CAMERA_MAX_CONCURRENT_INFERENCES` | Simultaneous camera inference limit; `0` selects a host-aware default | `0` |
@@ -267,6 +275,24 @@ docker compose --env-file .env.production -f docker-compose.production.yml ps
 The production stack keeps the frontend and backend bound to loopback so an HTTPS reverse proxy can
 front the application. PostgreSQL data is persisted under `./data/postgres` and Redis under
 `./data/redis`. The manager
+### Production MediaMTX RTSP relay
+
+The production Compose stack includes MediaMTX as an authenticated RTSP relay. Create the ignored runtime configuration and set separate strong passwords in `.env.production`:
+
+```bash
+cp deploy/mediamtx/mediamtx.yml.example deploy/mediamtx/mediamtx.yml
+openssl rand -hex 32  # use different values for publish and read passwords
+```
+
+External publishers use `rtsp://publisher:<password>@rtsp.c4-cameradetection-091.id.vn:8554/test/cam01`.
+The backend reads through Compose service DNS at `rtsp://vision:<password>@mediamtx:8554/test/cam01`.
+Create the RTSP DNS record as **DNS only** (not Cloudflare-proxied), because the existing Cloudflare
+HTTP tunnel cannot carry RTSP. Allow TCP/8554 only from trusted publisher IPs and expose no MediaMTX
+HTTP/API ports. Verify with `docker compose --env-file .env.production -f docker-compose.production.yml config --quiet`
+and `docker logs p091-mediamtx` after starting the service. Do not commit `deploy/mediamtx/mediamtx.yml`
+or share credential-bearing URLs in logs, screenshots, or source control. Existing direct physical-camera
+URLs remain supported; only relay cameras should use the internal `mediamtx` hostname.
+
 dashboard receives live updates over an authenticated WebSocket at `/api/v1/manager/live`,
 while guard incident notifications continue to use SSE at `/api/v1/events`.
 

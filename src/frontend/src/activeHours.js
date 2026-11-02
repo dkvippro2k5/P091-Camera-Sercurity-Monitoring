@@ -42,22 +42,22 @@ export function toWindowString(enabled, start, end) {
  * the camera is watching.
  */
 export function describeWindow(start, end, now = new Date()) {
-  if (!start || !end) return { armed: true, text: 'Pick a start and end time.' }
+  if (!start || !end) return { armed: true, text: 'Chọn giờ bắt đầu và kết thúc.' }
   if (start === end) {
     return {
       armed: false,
-      text: 'Start and end are the same time — pick a different end time, or switch to always armed.',
+      text: 'Giờ bắt đầu và kết thúc trùng nhau — hãy chọn giờ khác hoặc bật giám sát 24/7.',
     }
   }
 
   const wraps = minutes(end) < minutes(start)
-  const span = wraps ? `${start} until ${end} the next morning` : `${start} until ${end}`
+  const span = wraps ? `${start} đến ${end} sáng hôm sau` : `${start} đến ${end}`
 
   if (isWithinWindow(start, end, now)) {
-    return { armed: true, text: `Armed ${span}. That window is active right now.` }
+    return { armed: true, text: `Đang bật từ ${span}. Khung giờ này hiện đang hoạt động.` }
   }
   return {
     armed: false,
-    text: `Armed ${span}. It is outside that window now, so this zone will not alert until ${start}.`,
+    text: `Đã cấu hình từ ${span}. Hiện ngoài khung giờ nên khu vực sẽ không cảnh báo cho đến ${start}.`,
   }
 }

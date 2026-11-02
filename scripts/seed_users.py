@@ -1,4 +1,4 @@
-"""Create and manage the operator accounts in `data/users.json`.
+"""Create and manage the operator accounts.
 
     python scripts/seed_users.py                          # interactive: create the first two
     python scripts/seed_users.py --add --role guard       # add one more
@@ -6,6 +6,14 @@
 
 There is no signup endpoint by design — see `src/services/user_store.py`. Accounts are made
 here, on the box, by whoever runs the shift.
+
+**Which store** is decided by `DATABASE_URL` alone, exactly as `main.lifespan` decides it:
+a `postgresql://` URL means the accounts live in Postgres, anything else means
+`data/users.json`. That agreement is load-bearing. This script previously also required
+`APP_ENV=production` before it would use Postgres, so on a development box pointed at a
+Postgres URL it wrote to the JSON file while the app read from Postgres — an account that
+was created successfully, listed correctly, sat in the file on disk, and could not log in.
+`--path` still forces the JSON file for seeding a local non-Postgres run.
 
 Passwords are always prompted for, never taken as an argument: anything on argv lands in
 shell history and is visible in the process list to every other user on the machine.
@@ -31,6 +39,42 @@ from src.services.user_store import DEFAULT_USERS_PATH, UserStore  # noqa: E402
 
 # Short enough not to encourage a sticky note, long enough to be worth hashing.
 _MIN_PASSWORD_LENGTH = 8
+
+
+def _open_store(settings, path: str):
+    """Pick the same store the running app will read from.
+
+    This has to mirror `main.lifespan` exactly — `DATABASE_URL` alone decides, nothing else.
+    It used to additionally require `APP_ENV=production` here, and that extra condition is
+    precisely what made an account vanish: on a development box pointed at Postgres, the app
+    authenticated against Postgres while this script wrote to `data/users.json`. The account
+    was created, `--list` showed it, the file on disk contained it, and the login still failed
+    with "incorrect username or password" — because the two halves were looking at different
+    stores and neither said so.
+
+    An explicit `--path` still forces the JSON file, for seeding a roster that a local
+    non-Postgres run will read.
+    """
+    if path != DEFAULT_USERS_PATH:
+        return UserStore(path=path)
+    if settings.database_url.startswith(("postgresql://", "postgres://")):
+        return PostgresUserStore(settings.database_url)
+    return UserStore(path=path)
+
+
+def _describe_store(settings, path: str) -> str:
+    """Where the accounts are going, in the operator's words.
+
+    Printed on every run because "which store" is invisible otherwise, and getting it wrong
+    produces an account that appears to exist and cannot log in.
+    """
+    if path != DEFAULT_USERS_PATH:
+        return path
+    if settings.database_url.startswith(("postgresql://", "postgres://")):
+        # Host and database only — a URL with a password in it must not be printed.
+        tail = settings.database_url.split("@")[-1]
+        return f"PostgreSQL ({tail})"
+    return path
 
 
 def _prompt_password(username: str) -> str | None:
@@ -71,20 +115,19 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    store = (
-        PostgresUserStore(settings.database_url)
-        if args.path == DEFAULT_USERS_PATH
-        and settings.app_env.lower() == "production"
-        and settings.database_url.startswith(("postgresql://", "postgres://"))
-        else UserStore(path=args.path)
-    )
+    store = _open_store(settings, args.path)
+    # Stated on every run, not just on failure. The store is chosen from configuration the
+    # operator cannot see from here, and an account written to the wrong one looks completely
+    # successful right up until the login is refused.
+    where = _describe_store(settings, args.path)
+    print(f"Store: {where}\n")
 
     if args.list:
         users = store.list_users()
         if not users:
-            print(f"No accounts in {args.path}. Run this script with no arguments to create them.")
+            print(f"No accounts in {where}. Run this script with no arguments to create them.")
             return 1
-        print(f"{len(users)} account(s) in {args.path}:\n")
+        print(f"{len(users)} account(s) in {where}:\n")
         for user in sorted(users, key=lambda u: (u.role, u.username)):
             print(f"  {user.role:<8}  {user.username:<16}  {user.display_name}")
         return 0
@@ -100,7 +143,7 @@ def main() -> int:
 
     # Default: seed one of each, which is the minimum for the app to be usable.
     if store.list_users():
-        print(f"{args.path} already has accounts. Use --add for another, or --list to see them.")
+        print(f"{where} already has accounts. Use --add for another, or --list to see them.")
         return 1
 
     print("Creating the first two accounts.\n")
@@ -114,8 +157,8 @@ def main() -> int:
         if not _create(store, username, role, display_name):
             return 1
 
-    print(f"\nDone — {args.path}")
-    print("Passwords are stored as scrypt hashes; this file is gitignored. Keep it that way.")
+    print(f"\nDone — {where}")
+    print("Passwords are stored as scrypt hashes, never in plain text.")
     return 0
 
 

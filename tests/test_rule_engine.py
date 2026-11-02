@@ -94,19 +94,32 @@ def test_intrusion_ignores_idle_zones_outside_active_hours():
 
 
 def test_intrusion_accepts_partial_lower_body_overlap_when_feet_are_outside():
+    engine = make_engine(zone=make_zone())
+    # Straddling the zone's left edge: the foot point is just outside, but the right part of
+    # the legs, at the feet too, is inside.
+    person = make_det("person", "person_1", cx=0.37, cy=0.5, bw=0.12, bh=0.4)
+
+    events = engine.evaluate([person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test")
+
+    assert len(events) == 1
+    assert events[0].label == "intrusion"
+    assert "lower-body overlap" in events[0].reason
+
+
+def test_intrusion_ignores_a_body_overhanging_the_far_edge_with_the_feet_in_front():
     zone = Zone(
         name="restricted",
         polygon=[(0.4, 0.4), (0.6, 0.4), (0.6, 0.7), (0.4, 0.7)],
         active_hours=None,
     )
     engine = make_engine(zone=zone)
-    # The feet are below the zone, but the lower body overlaps about half of it.
+    # The feet are below the zone and the thighs cover about half of it: someone walking in
+    # front of a shop floor seen from above, not someone on it.
     person = make_det("person", "person_1", cx=0.5, cy=0.5, bw=0.2, bh=0.8)
 
-    events = engine.evaluate([person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test")
-
-    assert len(events) == 1
-    assert events[0].label == "intrusion"
+    assert engine.evaluate(
+        [person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test"
+    ) == []
 
 
 def test_intrusion_fallback_never_samples_below_the_person_box():
@@ -167,14 +180,15 @@ def test_fall_fires_after_dwell_and_resets_when_upright():
     assert events[0].label == "fall_detection"
     assert events[0].track_id == "person_2"
 
-    # Stands back up -> suspicion cleared; a later collapse arms and fires on its own.
-    assert step(5.0, standing) == []
-    assert step(5.2, standing) == []
-    assert step(5.4, collapsed) == []
+    # Stands back up and stays up (recovery must hold 0.6s) -> suspicion cleared; a later
+    # collapse arms and fires on its own.
+    for t in (5.0, 5.2, 5.4, 5.6, 5.8):
+        assert step(t, standing) == []
+    assert step(6.0, collapsed) == []
 
     events = []
-    for i in range(1, 17):  # t = 5.6 .. 8.6
-        events.extend(step(5.4 + i * 0.2, collapsed))
+    for i in range(1, 17):  # t = 6.2 .. 9.2
+        events.extend(step(6.0 + i * 0.2, collapsed))
     assert len(events) == 1
 
 
@@ -235,9 +249,11 @@ def test_abandoned_clock_restarts_after_object_moves():
     now = datetime.now()
 
     bag = make_det("backpack", "bag_1", cx=0.2, cy=0.3, bw=0.06, bh=0.08)
+    owner = make_det("person", "person_1", cx=0.22, cy=0.32, bw=0.08, bh=0.35)
     carried = make_det("backpack", "bag_1", cx=0.5, cy=0.3, bw=0.06, bh=0.08)
 
-    engine.evaluate([bag], WIDTH, HEIGHT, timestamp=1.0, now=now)
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, timestamp=1.0, now=now)
+    engine.evaluate([bag], WIDTH, HEIGHT, timestamp=2.0, now=now)
     engine.evaluate([carried], WIDTH, HEIGHT, timestamp=5.0, now=now)
     assert engine.evaluate([carried], WIDTH, HEIGHT, timestamp=11.0, now=now) == []
     events = engine.evaluate([carried], WIDTH, HEIGHT, timestamp=15.0, now=now)
@@ -332,8 +348,8 @@ def test_abandoned_timer_counts_from_owner_seen_at_time_zero():
         now,
         "cam_test",
     )
-    state = engine._tracks[("cam_test", "bag_1")]
-    assert state.last_owner_seen == 0.0
+    [bag] = engine.abandoned.bags("cam_test")
+    assert bag.last_owner_seen == 0.0
 
     # Owner leaves. The bag is then moved once, resetting its stationary anchor at t=5,
     # which is the value the buggy fallback used instead of the owner timestamp.
@@ -427,6 +443,66 @@ def test_fall_dwell_survives_track_id_change():
     assert state.fallen_since == pytest.approx(0.4)
 
 
+def test_id_change_at_impact_stitches_even_when_the_centre_drops_past_the_width_radius():
+    """The tracker often issues a new ID as the person lands; the box centre drops ~half a body.
+
+    The width-based radius is 0.12 * 640 = 77 px. Here the centre moves 91 px between the
+    last mid-fall box and the first lying box, so without the fall-aware radius the lying
+    person started a fresh "upright" track that could never arm (UR Fall benchmark).
+    """
+    engine = make_engine(fall_dwell_sec=3.0, track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    standing = make_det("person", "person_10", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    going_down = make_det("person", "person_10", cx=0.5, cy=0.65, bw=0.2, bh=0.2)
+    lying_new_id = make_det("person", "person_20", cx=0.5, cy=0.84, bw=0.3, bh=0.09)
+
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.2, now, "cam_test")
+    engine.evaluate([going_down], WIDTH, HEIGHT, 0.4, now, "cam_test")
+    assert engine._tracks[("cam_test", "person_10")].fall_phase in ("descending", "prone")
+
+    engine.evaluate([lying_new_id], WIDTH, HEIGHT, 0.6, now, "cam_test")
+
+    state = engine._tracks[("cam_test", "person_20")]
+    assert state.aliased_from == "person_10"
+    assert state.fall_phase != "upright"
+
+
+def test_a_track_that_changes_class_starts_a_new_state():
+    """The tracker is class-agnostic: a bed's track can pick up the person falling onto it
+    (GMDCSA24 s2-fall-04). The bed's state must not become the person's — they should get
+    a fresh state and stitch to their own falling track instead."""
+    engine = make_engine(fall_dwell_sec=3.0, track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    bed = make_det("bed", "track_2", cx=0.5, cy=0.8, bw=0.5, bh=0.2)
+    standing = make_det("person", "track_1", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    going_down = make_det("person", "track_1", cx=0.5, cy=0.65, bw=0.2, bh=0.2)
+    lying_on_bed_id = make_det("person", "track_2", cx=0.5, cy=0.8, bw=0.3, bh=0.09)
+
+    engine.evaluate([standing, bed], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([standing, bed], WIDTH, HEIGHT, 0.2, now, "cam_test")
+    engine.evaluate([going_down, bed], WIDTH, HEIGHT, 0.4, now, "cam_test")
+    engine.evaluate([lying_on_bed_id], WIDTH, HEIGHT, 0.6, now, "cam_test")
+
+    state = engine._tracks[("cam_test", "track_2")]
+    assert state.label == "person"
+    assert state.aliased_from == "track_1"
+    assert state.upright_baseline is not None
+
+
+def test_an_upright_track_keeps_the_narrow_stitch_radius():
+    """The fall-aware radius must not let a walking person's state jump to someone else."""
+    engine = make_engine(track_ttl_sec=0.3, track_stitch_window_sec=2.0)
+    now = datetime.now()
+    standing = make_det("person", "person_10", cx=0.5, cy=0.5, bw=0.08, bh=0.35)
+    elsewhere = make_det("person", "person_20", cx=0.5, cy=0.69, bw=0.08, bh=0.35)  # 91 px away
+
+    engine.evaluate([standing], WIDTH, HEIGHT, 0.0, now, "cam_test")
+    engine.evaluate([elsewhere], WIDTH, HEIGHT, 0.2, now, "cam_test")
+
+    assert engine._tracks[("cam_test", "person_20")].aliased_from is None
+
+
 def test_persistent_fall_does_not_refire_after_track_id_change():
     engine = make_engine(fall_dwell_sec=0.4, track_ttl_sec=0.3, track_stitch_window_sec=2.0)
     now = datetime.now()
@@ -477,20 +553,21 @@ def test_abandoned_original_owner_tracking():
     owner = make_det("person", "owner_orig", cx=0.31, cy=0.31, bw=0.08, bh=0.35)
     bystander = make_det("person", "bystander_stranger", cx=0.45, cy=0.32, bw=0.08, bh=0.35)
 
-    # Initial frame: owner near bag -> owner_track_id set to owner_orig
+    # Initial frame: owner near bag -> owner_orig owns it
     engine.evaluate([bag, owner], WIDTH, HEIGHT, timestamp=1.0, now=now)
-    state = engine._tracks[(None, "bag_owner_test")]
-    assert state.owner_track_id == "owner_orig"
+    [state] = engine.abandoned.bags(None)
+    assert set(state.owners) == {"owner_orig"}
 
-    # Owner leaves, but stranger stands near bag
-    engine.evaluate([bag, bystander], WIDTH, HEIGHT, timestamp=2.0, now=now)
-    # Because original owner left, timer accumulates despite bystander
+    # Owner leaves; once the bag has settled, a stranger stands near it
+    engine.evaluate([bag, bystander], WIDTH, HEIGHT, timestamp=5.0, now=now)
+    # Because the owner left, the timer accumulates despite the bystander
     events = engine.evaluate([bag, bystander], WIDTH, HEIGHT, timestamp=7.0, now=now)
     assert len(events) == 1
     assert events[0].label == "abandoned_object"
 
 
-def test_abandoned_binds_the_nearest_owner_not_detection_order():
+def test_everyone_beside_a_bag_when_it_is_put_down_is_an_owner():
+    """In a crowd the nearest person is as often a passer-by as the owner (AVSS 2007 MEDIUM)."""
     engine = make_engine(abandon_sec=5.0)
     now = datetime.now()
     bag = make_det("backpack", "bag_1", cx=0.3, cy=0.3, bw=0.06, bh=0.08)
@@ -498,8 +575,147 @@ def test_abandoned_binds_the_nearest_owner_not_detection_order():
     nearest = make_det("person", "nearest", cx=0.31, cy=0.3, bw=0.08, bh=0.35)
 
     engine.evaluate([bag, farther, nearest], WIDTH, HEIGHT, 1.0, now)
+    # The nearest one walks off; the other stays by the bag.
+    assert engine.evaluate([bag, farther], WIDTH, HEIGHT, 4.0, now) == []
+    assert engine.evaluate([bag, farther], WIDTH, HEIGHT, 10.0, now) == []
+    assert engine.evaluate([bag], WIDTH, HEIGHT, 11.0, now) == []
+    assert len(engine.evaluate([bag], WIDTH, HEIGHT, 15.0, now)) == 1
 
-    assert engine._tracks[(None, "bag_1")].owner_track_id == "nearest"
+
+def test_a_bag_nobody_was_seen_with_is_not_reported():
+    now = datetime.now()
+    bag = make_det("backpack", "bag_1", cx=0.3, cy=0.3, bw=0.06, bh=0.08)
+
+    strict = make_engine(abandon_sec=2.0)
+    assert [e for t in range(10) for e in strict.evaluate([bag], WIDTH, HEIGHT, float(t), now)] == []
+
+    lenient = make_engine(abandon_sec=2.0, abandon_require_owner=False)
+    assert len([e for t in range(10) for e in lenient.evaluate([bag], WIDTH, HEIGHT, float(t), now)]) == 1
+
+
+def test_a_bag_keeps_its_owner_and_clock_through_a_relabel_and_new_track():
+    engine = make_engine(abandon_sec=5.0)
+    now = datetime.now()
+    owner = make_det("person", "person_1", cx=0.31, cy=0.3, bw=0.08, bh=0.35)
+
+    engine.evaluate([make_det("suitcase", "track_4", 0.3, 0.3, 0.06, 0.08), owner], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([make_det("suitcase", "track_4", 0.3, 0.3, 0.06, 0.08)], WIDTH, HEIGHT, 1.0, now)
+    # Hidden for a while, then picked up again as a "handbag" under a new track ID.
+    relabelled = make_det("handbag", "track_9", 0.302, 0.3, 0.06, 0.08)
+    assert engine.evaluate([relabelled], WIDTH, HEIGHT, 4.0, now) == []
+    events = engine.evaluate([relabelled], WIDTH, HEIGHT, 5.0, now)
+    assert len(events) == 1  # 5 s after the owner left, not 5 s after the new track appeared
+    assert events[0].track_id == "track_9"
+
+
+def test_an_owner_back_under_a_new_track_id_is_recognised_by_appearance():
+    import numpy as np
+
+    engine = make_engine(abandon_sec=5.0)
+    now = datetime.now()
+    bag = make_det("backpack", "bag_1", cx=0.3, cy=0.3, bw=0.06, bh=0.08)
+    dark_coat = np.array([[0.8, 0.2, 0.0], [0.1, 0.1, 0.8]], dtype=np.float32)
+    red_jacket = np.array([[0.0, 0.2, 0.8], [0.8, 0.1, 0.1]], dtype=np.float32)
+
+    def frame(t, track_id=None, look=None):
+        person = [make_det("person", track_id, cx=0.4, cy=0.3, bw=0.08, bh=0.35)] if track_id else []
+        appearance = {track_id: look} if look is not None else None
+        return engine.evaluate([bag, *person], WIDTH, HEIGHT, t, now, person_appearance=appearance)
+
+    frame(0.0, "owner_1", dark_coat)
+    frame(1.0)  # owner steps out of view
+    # Back three seconds later; the tracker has long dropped the old ID.
+    assert frame(4.0, "track_77", dark_coat) == []
+    assert frame(8.0, "track_77", dark_coat) == []
+    # A stranger in different clothes is not taken for the owner.
+    frame(9.0)
+    assert frame(12.0, "track_80", red_jacket) == []
+    assert len(frame(13.0, "track_80", red_jacket)) == 1
+
+
+def test_a_new_track_where_an_owner_just_stood_is_that_owner():
+    """The tracker renumbering someone in place, while their clothes read differently as they turn."""
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    bag = make_det("suitcase", "bag_1", cx=0.3, cy=0.3, bw=0.06, bh=0.08)
+    owner = make_det("person", "track_120", cx=0.4, cy=0.3, bw=0.08, bh=0.35)
+    renumbered = make_det("person", "track_238", cx=0.405, cy=0.3, bw=0.08, bh=0.35)
+    elsewhere = make_det("person", "track_300", cx=0.2, cy=0.3, bw=0.08, bh=0.35)
+
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, 5.0, now)
+    for t in (5.4, 6.0, 7.0, 8.0):
+        assert engine.evaluate([bag, renumbered], WIDTH, HEIGHT, t, now) == []
+    # Someone turning up elsewhere near the bag later is not handed the bag.
+    engine.evaluate([bag], WIDTH, HEIGHT, 8.5, now)
+    assert len(engine.evaluate([bag, elsewhere], WIDTH, HEIGHT, 10.5, now)) == 1
+
+
+def make_region(region_id: str, since: float, cx: float, cy: float, bw: float, bh: float):
+    from src.vision.static_objects import LABEL_STATIC, StaticRegion
+
+    return StaticRegion(make_det(LABEL_STATIC, region_id, cx, cy, bw, bh), since)
+
+
+def test_a_static_region_is_owned_by_whoever_stood_on_it_when_it_appeared():
+    """The background model reports a bag only seconds after it was put down; its owner is
+    found in where people stood then, and its clock starts then too."""
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    dropper = make_det("person", "person_1", cx=0.32, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    engine.evaluate([dropper], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([dropper], WIDTH, HEIGHT, 1.0, now)
+    engine.evaluate([dropper], WIDTH, HEIGHT, 2.0, now)
+    for t in (3.0, 4.0, 5.0, 6.0, 7.0, 8.0):
+        engine.evaluate([], WIDTH, HEIGHT, t, now)
+    events = engine.evaluate([], WIDTH, HEIGHT, 9.0, now, static_regions=[region])
+    assert len(events) == 1
+    assert events[0].track_id == "static_1"
+    assert "1 owner(s)" in events[0].reason
+
+
+def test_a_static_region_whose_owner_is_still_beside_it_is_not_reported():
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    owner = make_det("person", "person_1", cx=0.32, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    for t in range(9):
+        engine.evaluate([owner], WIDTH, HEIGHT, float(t), now)
+    assert engine.evaluate([owner], WIDTH, HEIGHT, 9.0, now, static_regions=[region]) == []
+    # Owner walks off: reported once they have been gone abandon_sec.
+    assert engine.evaluate([], WIDTH, HEIGHT, 10.0, now, static_regions=[region]) == []
+    assert len(engine.evaluate([], WIDTH, HEIGHT, 11.0, now, static_regions=[region])) == 1
+
+
+def test_a_static_region_nobody_touched_is_not_reported():
+    """A screen changing or a train pulling in: people nearby, but nobody put anything there."""
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    bystander = make_det("person", "person_1", cx=0.4, cy=0.3, bw=0.08, bh=0.35)
+    region = make_region("static_1", 1.0, cx=0.3, cy=0.42, bw=0.04, bh=0.05)
+
+    for t in range(3):
+        engine.evaluate([bystander], WIDTH, HEIGHT, float(t), now)
+    events = [e for t in range(9, 15) for e in engine.evaluate([], WIDTH, HEIGHT, float(t), now, static_regions=[region])]
+    assert events == []
+
+
+def test_a_bag_in_someone_s_hands_is_not_reported_but_keeps_its_clock():
+    engine = make_engine(abandon_sec=2.0)
+    now = datetime.now()
+    bag = make_det("handbag", "bag_1", cx=0.3, cy=0.3, bw=0.04, bh=0.05)
+    owner = make_det("person", "owner", cx=0.4, cy=0.3, bw=0.08, bh=0.35)
+    passer_by = make_det("person", "passer_by", cx=0.3, cy=0.3, bw=0.08, bh=0.35)
+
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, 0.0, now)
+    engine.evaluate([bag, owner], WIDTH, HEIGHT, 4.0, now)
+    # Someone walks in front of the bag after the owner left: covered, so not reported yet...
+    assert engine.evaluate([bag, passer_by], WIDTH, HEIGHT, 6.5, now) == []
+    # ...but the clock kept running, so it is reported as soon as the bag is clear again.
+    assert len(engine.evaluate([bag], WIDTH, HEIGHT, 6.7, now)) == 1
 
 
 def test_owner_association_survives_person_track_id_change():
@@ -510,11 +726,13 @@ def test_owner_association_survives_person_track_id_change():
     owner_v2 = make_det("person", "owner_2", cx=0.315, cy=0.3, bw=0.08, bh=0.35)
 
     engine.evaluate([bag, owner_v1], WIDTH, HEIGHT, 0.0, now)
-    engine.evaluate([bag, owner_v2], WIDTH, HEIGHT, 0.2, now)
-    state = engine._tracks[(None, "bag_1")]
+    engine.evaluate([bag, owner_v1], WIDTH, HEIGHT, 5.0, now)
+    # The tracker renumbers the owner after the bag has settled; the stitch hands the new ID over.
+    engine.evaluate([bag, owner_v2], WIDTH, HEIGHT, 5.2, now)
+    [state] = engine.abandoned.bags(None)
 
-    assert state.owner_track_id == "owner_2"
-    assert engine.evaluate([bag, owner_v2], WIDTH, HEIGHT, 2.0, now) == []
+    assert {"owner_1", "owner_2"} <= set(state.owners)
+    assert engine.evaluate([bag, owner_v2], WIDTH, HEIGHT, 7.0, now) == []
 
 
 def test_camera_fall_profile_overrides_only_the_selected_camera():

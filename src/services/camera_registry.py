@@ -5,6 +5,7 @@ import logging
 import os
 
 from src.config import get_settings
+from src.services import db_pool
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class PostgresCameraRegistry:
             )
 
     def _connect(self):
-        return self._psycopg.connect(self.database_url)
+        return db_pool.connection(self.database_url)
 
     def load(self) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -75,9 +76,15 @@ class PostgresCameraRegistry:
 
 
 def create_camera_registry(path: str):
+    """Select the camera-config store from DATABASE_URL, falling back to a local JSON file.
+
+    Selected by DATABASE_URL, not APP_ENV -- the same fix already applied to `event_store.py`
+    and `embedding_store.py`. Gating on which environment string happens to be set, rather
+    than on what the configured database actually is, meant a fully-configured Postgres URL
+    outside "production" was silently ignored and the operator's camera setup only ever
+    landed in `data/cameras.json` -- while every other durable table went to Postgres.
+    """
     settings = get_settings()
-    if settings.app_env.lower() == "production" and settings.database_url.startswith(
-        ("postgresql://", "postgres://")
-    ):
+    if settings.database_url.startswith(("postgresql://", "postgres://")):
         return PostgresCameraRegistry(settings.database_url)
     return FileCameraRegistry(path)

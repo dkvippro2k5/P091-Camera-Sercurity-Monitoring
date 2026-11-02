@@ -7,12 +7,16 @@ from datetime import UTC, datetime
 import cv2
 import numpy as np
 
+from src.vision.appearance import AppearanceEncoder
 from src.vision.detector import IncidentDetector
 from src.vision.fall_motion import SparseFallMotionAnalyzer
+from src.vision.fall_pose import FallPoseEstimator
+from src.vision.left_object_check import LeftObjectCheck
 from src.vision.motion import MotionGate
 from src.vision.overlay import draw_events, draw_tracks, draw_zones
-from src.vision.rule_engine import RuleEngine
+from src.vision.rule_engine import LABEL_ABANDONED, RuleEngine
 from src.vision.schemas import BoundingBox, FrameAnalysisResult, VideoAnalysisSummary
+from src.vision.static_objects import LABEL_STATIC, StaticObjectDetector
 from src.vision.zone_config import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,10 @@ class VisionPipeline:
         inference_size: tuple[int, int] | None = None,
         motion_gate: MotionGate | None = None,
         fall_motion_analyzer: SparseFallMotionAnalyzer | None = None,
+        fall_pose_estimator: FallPoseEstimator | None = None,
+        appearance_encoder: AppearanceEncoder | None = None,
+        static_object_detector: StaticObjectDetector | None = None,
+        left_object_check: LeftObjectCheck | None = None,
     ):
         self.detector = detector or IncidentDetector()
         self.rule_engine = rule_engine or RuleEngine(zone_manager=ZoneManager.from_file(zones_path))
@@ -55,9 +63,23 @@ class VisionPipeline:
         # Stateful — it holds the previous frame — so it must not be shared between streams.
         self.motion_gate = motion_gate or MotionGate(enabled=False)
         self.fall_motion_analyzer = fall_motion_analyzer or SparseFallMotionAnalyzer()
+        # Optional: None (the default) leaves the rule engine's pose gate inactive.
+        self.fall_pose_estimator = fall_pose_estimator
+        # Optional: None leaves bag owners recognised by track ID alone.
+        self.appearance_encoder = appearance_encoder
+        # Optional, and stateful (it holds the background picture): one per stream. None
+        # leaves the abandoned rule to the bags the detector boxes.
+        self.static_object_detector = static_object_detector
+        # Optional: names what an abandoned alert from the background model looks like.
+        self.left_object_check = left_object_check
         # Carried across a gated skip so overlays stay populated instead of flickering
         # empty on every skipped frame.
         self._last_detections: list = []
+        # The (width, height) `_last_detections`' bboxes are in pixel terms of, so
+        # `last_tracks()` can normalize them regardless of what resolution the caller reads
+        # them back at. See `last_tracks` for why normalized is what a cross-thread reader
+        # actually needs.
+        self._last_detections_frame_size: tuple[int, int] = (0, 0)
 
     def process_frame(
         self,
@@ -136,6 +158,26 @@ class VisionPipeline:
             stream_time,
         )
 
+        # 3b. Pose, only for tracks whose fall alert is being timed, so it can be held back
+        # when the torso stays upright (kneeling, sitting down, picking something up).
+        fall_pose_evidence = {}
+        if self.fall_pose_estimator is not None and self.fall_pose_estimator.enabled:
+            pose_candidates = self.rule_engine.pose_candidates(persons, camera_id)
+            fall_pose_evidence = self.fall_pose_estimator.measure(frame, persons, pose_candidates)
+
+        # 3c. Appearance of the people near a bag, so its owner is still recognised after the
+        # tracker gives them a new ID.
+        person_appearance = {}
+        if self.appearance_encoder is not None:
+            near_bags = self.rule_engine.appearance_candidates(detections, width)
+            if near_bags:
+                person_appearance = self.appearance_encoder.measure(frame, persons, near_bags)
+
+        # 3d. Objects newly left in the scene that the detector does not box.
+        static_regions = None
+        if self.static_object_detector is not None:
+            static_regions = self.static_object_detector.measure(frame, stream_time, persons, camera_id)
+
         # 4. Apply temporal rules to decide which of them constitute incidents
         events = self.rule_engine.evaluate(
             detections=detections,
@@ -145,7 +187,12 @@ class VisionPipeline:
             now=wall_time,
             camera_id=camera_id,
             fall_motion_evidence=fall_motion_evidence,
+            fall_pose_evidence=fall_pose_evidence,
+            person_appearance=person_appearance,
+            static_regions=static_regions,
         )
+        if self.left_object_check is not None and self.left_object_check.enabled:
+            self._note_left_objects(frame, events)
 
         # 5. Annotate zones and incidents for the operator view
         output_frame = frame
@@ -165,6 +212,7 @@ class VisionPipeline:
         processing_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
         self._last_detections = detections
+        self._last_detections_frame_size = (width, height)
 
         result = FrameAnalysisResult(
             frame_id=frame_id,
@@ -176,6 +224,74 @@ class VisionPipeline:
         )
 
         return output_frame, result
+
+    def _note_left_objects(self, frame: np.ndarray, events: list) -> None:
+        """Add what the background model's abandoned alerts look like to their reasons.
+
+        Only those alerts: a bag the detector boxed has already been recognised as one.
+        """
+        for event in events:
+            if event.label == LABEL_ABANDONED and (event.reason or "").startswith(LABEL_STATIC):
+                note = self.left_object_check.note(frame, event.bbox)
+                if note:
+                    event.reason = f"{event.reason}; {note}"
+
+    def overlay_last_known(
+        self, frame: np.ndarray, camera_id: str | None, now: datetime | None = None
+    ) -> np.ndarray:
+        """Cheap redraw: last-known zones + tracked boxes on a *copy* of `frame`, no inference.
+
+        `frame` need not be the frame that produced `self._last_detections` — a higher-cadence
+        caller (the display loop decoupled from inference, see `CameraStreamWorker._display_loop`)
+        redraws newer raw frames with the last inference's boxes, at zero YOLO cost. Never
+        mutates `self._last_detections`, never runs the motion gate or rule engine.
+        """
+        if not self.draw_overlays:
+            return frame
+        wall_time = now or datetime.now()
+        # Copy is not optional: `frame` may be the reader thread's shared single-slot buffer,
+        # which something else could be reading concurrently (see the class docstring's note
+        # on process_frame never mutating its input).
+        output_frame = frame.copy()
+        zones = self.rule_engine.zone_manager.zones_for(camera_id)
+        output_frame = draw_zones(output_frame, zones, wall_time)
+        return draw_tracks(output_frame, self._last_detections, [])
+
+    def last_tracks(self) -> dict[str, tuple[float, float, float, float]]:
+        """The most recent inference's tracked boxes, by `track_id`, normalized to [0, 1].
+
+        Read from a different thread than the one running `process_frame` — the ring feed
+        in `MonitoringService._on_raw_frame` runs on the display loop, while this dict is
+        written on the processor loop (see `CameraStreamWorker`'s two threads). Normalized
+        coordinates are what makes that safe to read without a lock: `_last_detections` and
+        `_last_detections_frame_size` are captured together here, but the *ring's* frame at
+        the moment a caller uses this result may already be a different capture, possibly at
+        a different resolution (a mid-session capture_max_height change, a source that
+        changed its native size). Pixel coordinates from one frame silently misapply to
+        another; a normalized box only needs the ring frame's own shape to scale correctly.
+
+        Only `person` boxes are returned — this exists for the VLM crop, which only ever
+        wants to isolate the person a fall/intrusion alert is about.
+
+        Returns an empty dict before the first inference, or if the last inference had no
+        recorded frame size (should not happen outside tests that hand-set
+        `_last_detections`).
+        """
+        width, height = self._last_detections_frame_size
+        if width <= 0 or height <= 0:
+            return {}
+        tracks: dict[str, tuple[float, float, float, float]] = {}
+        for det in self._last_detections:
+            if det.label != "person" or not det.track_id:
+                continue
+            box = det.bbox
+            tracks[det.track_id] = (
+                box.xmin / width,
+                box.ymin / height,
+                box.xmax / width,
+                box.ymax / height,
+            )
+        return tracks
 
     def _skipped_result(
         self,
@@ -190,15 +306,7 @@ class VisionPipeline:
         The frame is handed to previews and recorders regardless of whether inference ran,
         so this path still produces an output frame — it just carries no fresh detections.
         """
-        output_frame = frame
-
-        if self.draw_overlays:
-            output_frame = frame.copy()
-            zones = self.rule_engine.zone_manager.zones_for(camera_id)
-            output_frame = draw_zones(output_frame, zones, wall_time)
-            # Carry the last known detections so the operator view does not flicker empty
-            # between inferences on an idle scene.
-            output_frame = draw_tracks(output_frame, self._last_detections, [])
+        output_frame = self.overlay_last_known(frame, camera_id, wall_time)
 
         return output_frame, FrameAnalysisResult(
             frame_id=frame_id,
@@ -274,6 +382,8 @@ class VisionPipeline:
         self.rule_engine.reset()
         self.motion_gate.reset()
         self.fall_motion_analyzer.reset()
+        if self.static_object_detector is not None:
+            self.static_object_detector.reset()
         self._last_detections = []
 
         # Released in finally: an exception mid-decode would otherwise hold the file

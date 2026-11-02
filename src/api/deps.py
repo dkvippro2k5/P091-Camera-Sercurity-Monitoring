@@ -15,10 +15,14 @@ They are used two ways, which is not redundancy:
   whether an `auth.revoked` broadcast is about it.
 """
 
+import logging
+
 from fastapi import HTTPException, Request, WebSocket
 
 from src.services.sessions import COOKIE_NAME, SessionStore
 from src.services.user_store import User, UserStore
+
+logger = logging.getLogger(__name__)
 
 # 401 tells the browser "log in"; 403 tells it "you are logged in but this is not yours".
 # The frontend branches on exactly this difference: 401 returns to the login screen, 403
@@ -71,7 +75,17 @@ def require_guard(request: Request) -> User:
 
 
 def require_operator(request: Request) -> User:
-    """Allow either operator role onto shared system-status routes."""
+    """Allow either operator role onto the shared read surface.
+
+    That surface is system status, notification settings, the durable incident history, and
+    the stored evidence stills it links to. The boundary it draws is *read versus act*, not
+    *manager versus guard*: a manager reviewing what the room did needs to see the frame an
+    alert was raised on, because the frame is the evidence being audited.
+
+    What stays on `require_guard` is the other half of that sentence — live footage, and
+    every write. Verdicts, acknowledgements, camera configuration and the video streams are
+    the guard's, so a manager can see what happened and only a guard can act on it.
+    """
     return current_user(request)
 
 
@@ -83,8 +97,12 @@ def require_manager(request: Request) -> User:
     return user
 
 
-def current_websocket_manager(websocket: WebSocket) -> User | None:
-    """Resolve and authorize the session cookie for a manager WebSocket."""
+def _current_websocket_user(websocket: WebSocket, role: str) -> User | None:
+    """Resolve the session cookie for a WebSocket and check it carries `role`.
+
+    Returns None rather than raising: a WebSocket has no HTTP response to carry a 401/403,
+    so the caller closes the socket with a policy code instead.
+    """
     users = getattr(websocket.app.state, "users", None)
     sessions = getattr(websocket.app.state, "sessions", None)
     if users is None or sessions is None:
@@ -93,9 +111,23 @@ def current_websocket_manager(websocket: WebSocket) -> User | None:
     if session is None:
         return None
     user = users.get(session.username)
-    if user is None or user.role != "manager":
+    if user is None or user.role != role:
         return None
     return user
+
+
+def current_websocket_manager(websocket: WebSocket) -> User | None:
+    """Resolve and authorize the session cookie for a manager WebSocket."""
+    return _current_websocket_user(websocket, "manager")
+
+
+def current_websocket_guard(websocket: WebSocket) -> User | None:
+    """Resolve and authorize the session cookie for a guard WebSocket.
+
+    Mirrors `require_guard` for the live video socket: watching footage is a guard's
+    surface, and the HTTP MJPEG route it replaces sits behind the same gate.
+    """
+    return _current_websocket_user(websocket, "guard")
 
 
 def session_is_live(request: Request) -> bool:
@@ -117,5 +149,15 @@ def session_is_live(request: Request) -> bool:
         # deployment problem the operator cannot do anything about.
         return True
 
-    session = sessions.resolve(request.cookies.get(COOKIE_NAME), touch=False)
-    return session is not None and users.get(session.username) is not None
+    try:
+        session = sessions.resolve(request.cookies.get(COOKIE_NAME), touch=False)
+        return session is not None and users.get(session.username) is not None
+    except Exception:  # noqa: BLE001 - "never raises" has to hold for the callers to be safe
+        # Same judgement as the branch above, for the same reason: this runs inside the alert
+        # stream's and the manager WebSocket's loops, where an exception does not become a
+        # 500 — it tears the connection down mid-flight and the operator's alert feed simply
+        # stops. A database that is briefly unreachable or a connection pool that is briefly
+        # saturated is an infrastructure problem, not evidence that this session was revoked,
+        # so the stream stays up and the next poll re-checks.
+        logger.exception("Could not re-check the session; leaving the stream open")
+        return True

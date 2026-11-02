@@ -25,7 +25,6 @@ growing file on the request path can.
 import json
 import logging
 import os
-import sqlite3
 import threading
 from datetime import UTC, datetime
 
@@ -37,6 +36,17 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 DEFAULT_INCIDENT_LOG_PATH = os.path.join(_PROJECT_ROOT, "data", "incidents.jsonl")
 
 
+# Why the store calls below catch bare `Exception` rather than a tuple:
+#
+# The JSONL file is the fallback *for the database being unusable*, so the set of failures
+# worth falling back on is "whatever the store raised". It used to be `(OSError, sqlite3.Error)`,
+# which covered every backend that existed at the time. Postgres raises `psycopg.Error`, which
+# is neither — so once `DATABASE_URL` started actually selecting Postgres, a database blip
+# stopped falling back and instead propagated out of `record_alert` (documented "never raises")
+# into the camera's processor thread, killing that camera's pipeline. Naming psycopg here would
+# fix today's backend and re-open the same hole for the next one.
+
+
 class IncidentLog:
     """Append-only log of every alert, with a fold-on-read for verdict updates."""
 
@@ -46,7 +56,8 @@ class IncidentLog:
         if self.store is None and path == DEFAULT_INCIDENT_LOG_PATH:
             try:
                 self.store = create_event_store()
-            except (OSError, ValueError):
+            except Exception:  # noqa: BLE001 - an unreachable database must not stop startup
+                logger.exception("Could not open the event store; falling back to the JSONL log")
                 self.store = None
         self._lock = threading.Lock()
 
@@ -70,16 +81,25 @@ class IncidentLog:
             try:
                 self.store.insert_incident(row)
                 return
-            except (OSError, sqlite3.Error):
-                logger.exception("Could not write incident to SQLite")
-            self._append(row)
+            except Exception:  # noqa: BLE001 - see _STORE_FAILURE note below
+                logger.exception("Could not write incident to the event store")
+        self._append(row)
+
+    def record_evidence_frames(self, alert_id: str, frames: list[dict]) -> None:
+        if self.store is not None:
+            try:
+                self.store.update_incident_frames(alert_id, frames)
+                return
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not update incident evidence frames")
+        self._append({"kind": "evidence_frames", "alert_id": alert_id, "evidence_frames": frames})
 
     def record_evidence(self, alert_id: str, evidence_url: str) -> None:
         if self.store is not None:
             try:
                 self.store.update_incident_evidence(alert_id, evidence_url)
                 return
-            except (OSError, sqlite3.Error):
+            except Exception:  # noqa: BLE001 - see _STORE_FAILURE note below
                 logger.exception("Could not update incident evidence URL")
         self._append({"kind": "evidence", "alert_id": alert_id, "evidence_url": evidence_url})
 
@@ -105,8 +125,8 @@ class IncidentLog:
             try:
                 self.store.update_incident_review(row)
                 return
-            except (OSError, sqlite3.Error):
-                logger.exception("Could not write incident review to SQLite")
+            except Exception:  # noqa: BLE001 - see _STORE_FAILURE note below
+                logger.exception("Could not write incident review to the event store")
         self._append(row)
 
     def _append(self, row: dict) -> None:
@@ -162,6 +182,7 @@ class IncidentLog:
         alerts: dict[str, dict] = {}
         reviews: dict[str, dict] = {}
         evidence: dict[str, dict] = {}
+        evidence_frames: dict[str, dict] = {}
         for row in self._read():
             alert_id = row.get("alert_id")
             if not alert_id:
@@ -172,6 +193,8 @@ class IncidentLog:
                 reviews[alert_id] = row
             elif row.get("kind") == "evidence":
                 evidence[alert_id] = row
+            elif row.get("kind") == "evidence_frames":
+                evidence_frames[alert_id] = row
             else:
                 alerts[alert_id] = row
 
@@ -187,6 +210,7 @@ class IncidentLog:
                     "actual_event_type": (review or {}).get("actual_event_type"),
                     "reviewed_at": (review or {}).get("reviewed_at"),
                     "evidence_url": (evidence.get(alert_id) or {}).get("evidence_url"),
+                    "evidence_frames": (evidence_frames.get(alert_id) or {}).get("evidence_frames", []),
                 }
             )
         folded.sort(key=lambda row: row.get("created_at") or "")

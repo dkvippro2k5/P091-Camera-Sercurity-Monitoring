@@ -1,0 +1,211 @@
+{
+  "label": "baseline",
+  "run_at": "2026-10-19T07:55:38.626672+00:00",
+  "elapsed_sec": 683.9,
+  "config": {
+    "dataset": "AVSS 2007 (i-LIDS) EASY/MEDIUM/HARD",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "labels": {
+    "avss-easy": [
+      {
+        "box": [
+          59,
+          242,
+          88,
+          155
+        ],
+        "placed": 66.66666666666667,
+        "unattended": 96.0,
+        "removed": 157.56666666666666,
+        "note": "AVSS 2007 EASY"
+      }
+    ],
+    "avss-medium": [
+      {
+        "box": [
+          290,
+          147,
+          53,
+          31
+        ],
+        "placed": 47.0,
+        "unattended": 84.0,
+        "removed": 153.1,
+        "note": "AVSS 2007 MEDIUM"
+      }
+    ],
+    "avss-hard": [
+      {
+        "box": [
+          345,
+          81,
+          30,
+          65
+        ],
+        "placed": 49.3,
+        "unattended": 98.6,
+        "removed": 189.0,
+        "note": "AVSS 2007 HARD"
+      }
+    ]
+  },
+  "scores": {
+    "clips": 3,
+    "footage_min": 9.27,
+    "abandonments": 3,
+    "detected": 1,
+    "false_alarms": 7,
+    "duplicate_alerts": 0,
+    "recall": 0.3333333333333333,
+    "recall_ci95": [
+      0.0614903152761605,
+      0.7923450448735121
+    ],
+    "precision": 0.125,
+    "precision_ci95": [
+      0.02241690886329617,
+      0.4708948057698615
+    ],
+    "f1": 0.18181818181818182,
+    "false_alarms_per_hour": 45.292459883821245,
+    "latency_median_sec": 50.81,
+    "latency_max_sec": 50.81,
+    "outcomes": [
+      {
+        "clip_id": "avss-easy",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [
+          50.81
+        ],
+        "false_alarm_details": [
+          "89.8s early (suitcase)"
+        ]
+      },
+      {
+        "clip_id": "avss-medium",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 5,
+        "latencies_sec": [],
+        "false_alarm_details": [
+          "39.4s unlabelled (suitcase)",
+          "45.2s unlabelled (handbag)",
+          "57.0s unlabelled (suitcase)",
+          "66.4s unlabelled (suitcase)",
+          "71.2s early (suitcase)"
+        ]
+      },
+      {
+        "clip_id": "avss-hard",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 1,
+        "latencies_sec": [],
+        "false_alarm_details": [
+          "212.0s after removal (handbag)"
+        ]
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "avss-easy",
+      "footage_sec": 182.649,
+      "sampled_frames": 914,
+      "alerts": [
+        {
+          "time_sec": 89.823,
+          "center": [
+            106.5,
+            320.0
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 146.813,
+          "center": [
+            106.5,
+            320.0
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-medium",
+      "footage_sec": 161.295,
+      "sampled_frames": 807,
+      "alerts": [
+        {
+          "time_sec": 39.406,
+          "center": [
+            421.0,
+            275.0
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 45.212,
+          "center": [
+            27.0,
+            422.5
+          ],
+          "label": "handbag"
+        },
+        {
+          "time_sec": 57.024,
+          "center": [
+            406.5,
+            276.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 66.433,
+          "center": [
+            420.0,
+            275.5
+          ],
+          "label": "suitcase"
+        },
+        {
+          "time_sec": 71.205,
+          "center": [
+            316.5,
+            159.5
+          ],
+          "label": "suitcase"
+        }
+      ]
+    },
+    {
+      "clip_id": "avss-hard",
+      "footage_sec": 212.44,
+      "sampled_frames": 1063,
+      "alerts": [
+        {
+          "time_sec": 212.0,
+          "center": [
+            376.0,
+            144.0
+          ],
+          "label": "handbag"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,531 @@
+{
+  "label": "step3",
+  "run_at": "2026-10-20T08:35:20.933373+00:00",
+  "elapsed_sec": 837.6,
+  "config": {
+    "dataset": "CAVIAR INRIA lobby: 4 left-object clips + 21 without one",
+    "weights": "src/vision/weights/yolo26s.pt",
+    "detector_confidence": 0.4,
+    "target_fps": 5.0,
+    "abandon_sec": 2.0,
+    "owner_radius_ratio": 0.25,
+    "stationary_tolerance_ratio": 0.02,
+    "abandon_background_enabled": true,
+    "alert_cooldown_sec": 30.0,
+    "match_radius_px": 60.0,
+    "early_tolerance_sec": 3.0
+  },
+  "labels": {
+    "caviar-LeftBag": [
+      {
+        "box": [
+          302,
+          101,
+          16,
+          22
+        ],
+        "placed": 37.8,
+        "unattended": 39.8,
+        "removed": 54.16,
+        "note": "CAVIAR LeftBag"
+      }
+    ],
+    "caviar-LeftBag_AtChair": [
+      {
+        "box": [
+          66,
+          117,
+          11,
+          9
+        ],
+        "placed": 18.2,
+        "unattended": 22.8,
+        "removed": 37.0,
+        "note": "CAVIAR LeftBag_AtChair"
+      }
+    ],
+    "caviar-LeftBox": [
+      {
+        "box": [
+          138,
+          152,
+          16,
+          19
+        ],
+        "placed": 22.84,
+        "unattended": 32.32,
+        "removed": null,
+        "note": "CAVIAR LeftBox"
+      }
+    ],
+    "caviar-LeftBag_PickedUp": [
+      {
+        "box": [
+          210,
+          27,
+          18,
+          14
+        ],
+        "placed": 20.12,
+        "unattended": 29.16,
+        "removed": 40.6,
+        "note": "CAVIAR LeftBag_PickedUp"
+      }
+    ],
+    "caviar-Walk1": [],
+    "caviar-Walk2": [],
+    "caviar-Walk3": [],
+    "caviar-Browse1": [],
+    "caviar-Browse2": [],
+    "caviar-Browse3": [],
+    "caviar-Browse4": [],
+    "caviar-Browse_WhileWaiting1": [],
+    "caviar-Browse_WhileWaiting2": [],
+    "caviar-Rest_InChair": [],
+    "caviar-Rest_SlumpOnFloor": [],
+    "caviar-Rest_WiggleOnFloor": [],
+    "caviar-Rest_FallOnFloor": [],
+    "caviar-Meet_WalkTogether1": [],
+    "caviar-Meet_WalkTogether2": [],
+    "caviar-Meet_WalkSplit": [],
+    "caviar-Meet_Split_3rdGuy": [],
+    "caviar-Meet_Crowd": [],
+    "caviar-Fight_RunAway1": [],
+    "caviar-Fight_RunAway2": [],
+    "caviar-Fight_Chase": []
+  },
+  "scores": {
+    "clips": 25,
+    "footage_min": 15.88,
+    "abandonments": 4,
+    "detected": 3,
+    "false_alarms": 0,
+    "duplicate_alerts": 0,
+    "recall": 0.75,
+    "recall_ci95": [
+      0.3006360524426366,
+      0.9544139373553637
+    ],
+    "precision": 1.0,
+    "precision_ci95": [
+      0.43849391955098227,
+      1.0
+    ],
+    "f1": 0.8571428571428571,
+    "false_alarms_per_hour": 0.0,
+    "latency_median_sec": 2.04,
+    "latency_max_sec": 5.2,
+    "outcomes": [
+      {
+        "clip_id": "caviar-LeftBag",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          5.2
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-LeftBag_AtChair",
+        "abandonments": 1,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-LeftBox",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          -2.72
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-LeftBag_PickedUp",
+        "abandonments": 1,
+        "detected": 1,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [
+          2.04
+        ],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Walk1",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Walk2",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Walk3",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse1",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse2",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse3",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse4",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse_WhileWaiting1",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Browse_WhileWaiting2",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Rest_InChair",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Rest_SlumpOnFloor",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Rest_WiggleOnFloor",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Rest_FallOnFloor",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Meet_WalkTogether1",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Meet_WalkTogether2",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Meet_WalkSplit",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Meet_Split_3rdGuy",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Meet_Crowd",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Fight_RunAway1",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Fight_RunAway2",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      },
+      {
+        "clip_id": "caviar-Fight_Chase",
+        "abandonments": 0,
+        "detected": 0,
+        "duplicates": 0,
+        "false_alarms": 0,
+        "latencies_sec": [],
+        "false_alarm_details": []
+      }
+    ]
+  },
+  "runs": [
+    {
+      "clip_id": "caviar-LeftBag",
+      "footage_sec": 57.6,
+      "sampled_frames": 288,
+      "alerts": [
+        {
+          "time_sec": 45.0,
+          "center": [
+            307.0,
+            116.5
+          ],
+          "label": "static_object"
+        }
+      ]
+    },
+    {
+      "clip_id": "caviar-LeftBag_AtChair",
+      "footage_sec": 44.64,
+      "sampled_frames": 224,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-LeftBox",
+      "footage_sec": 34.56,
+      "sampled_frames": 173,
+      "alerts": [
+        {
+          "time_sec": 29.6,
+          "center": [
+            144.5,
+            157.0
+          ],
+          "label": "static_object"
+        }
+      ]
+    },
+    {
+      "clip_id": "caviar-LeftBag_PickedUp",
+      "footage_sec": 54.24,
+      "sampled_frames": 272,
+      "alerts": [
+        {
+          "time_sec": 31.2,
+          "center": [
+            222.5,
+            34.0
+          ],
+          "label": "static_object"
+        }
+      ]
+    },
+    {
+      "clip_id": "caviar-Walk1",
+      "footage_sec": 24.48,
+      "sampled_frames": 123,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Walk2",
+      "footage_sec": 42.24,
+      "sampled_frames": 212,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Walk3",
+      "footage_sec": 55.2,
+      "sampled_frames": 276,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse1",
+      "footage_sec": 41.76,
+      "sampled_frames": 209,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse2",
+      "footage_sec": 35.04,
+      "sampled_frames": 176,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse3",
+      "footage_sec": 36.48,
+      "sampled_frames": 183,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse4",
+      "footage_sec": 45.6,
+      "sampled_frames": 228,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse_WhileWaiting1",
+      "footage_sec": 31.68,
+      "sampled_frames": 159,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Browse_WhileWaiting2",
+      "footage_sec": 75.84,
+      "sampled_frames": 380,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Rest_InChair",
+      "footage_sec": 40.32,
+      "sampled_frames": 202,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Rest_SlumpOnFloor",
+      "footage_sec": 36.48,
+      "sampled_frames": 183,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Rest_WiggleOnFloor",
+      "footage_sec": 51.84,
+      "sampled_frames": 260,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Rest_FallOnFloor",
+      "footage_sec": 40.32,
+      "sampled_frames": 202,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Meet_WalkTogether1",
+      "footage_sec": 28.32,
+      "sampled_frames": 142,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Meet_WalkTogether2",
+      "footage_sec": 33.12,
+      "sampled_frames": 166,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Meet_WalkSplit",
+      "footage_sec": 24.96,
+      "sampled_frames": 125,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Meet_Split_3rdGuy",
+      "footage_sec": 36.96,
+      "sampled_frames": 185,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Meet_Crowd",
+      "footage_sec": 19.68,
+      "sampled_frames": 99,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Fight_RunAway1",
+      "footage_sec": 22.08,
+      "sampled_frames": 111,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Fight_RunAway2",
+      "footage_sec": 22.08,
+      "sampled_frames": 111,
+      "alerts": []
+    },
+    {
+      "clip_id": "caviar-Fight_Chase",
+      "footage_sec": 17.28,
+      "sampled_frames": 87,
+      "alerts": []
+    }
+  ]
+}

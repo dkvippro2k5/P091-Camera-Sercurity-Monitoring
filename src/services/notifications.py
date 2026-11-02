@@ -1,7 +1,7 @@
-"""Asynchronous incident notifications.
+"""Asynchronous Telegram incident notifications.
 
-Zalo is deliberately an adapter here: credentials and recipient IDs stay in environment
-configuration, and a failed notification is logged without affecting camera processing.
+Credentials and recipient IDs stay in environment configuration, and a failed notification
+is logged without affecting camera processing.
 """
 
 import json
@@ -14,38 +14,79 @@ from urllib.request import Request, urlopen
 logger = logging.getLogger(__name__)
 
 
-class ZaloNotifier:
-    endpoint = "https://openapi.zalo.me/v3.0/oa/message/cs"
+class TelegramNotifier:
+    """Send confirmed incidents to Telegram users and groups."""
 
-    def __init__(self, enabled: bool, access_token: str, recipients: str) -> None:
-        self.enabled = enabled and bool(access_token)
-        self.access_token = access_token
-        self.recipients = [item.strip() for item in recipients.split(",") if item.strip()]
+    def __init__(self, enabled: bool, bot_token: str, chat_ids: str) -> None:
+        self.enabled = enabled and bool(bot_token)
+        self.bot_token = bot_token
+        self.chat_ids = [item.strip() for item in chat_ids.split(",") if item.strip()]
+        self.endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     def send_alert(self, alert: dict) -> bool:
-        if not self.enabled or not self.recipients:
+        if not self.enabled or not self.chat_ids:
             return True
+
+        label = alert.get("label", "incident")
+        label_text, severity = {
+            "fall_detection": ("PHÁT HIỆN NGÃ", "Nghiêm trọng"),
+            "intrusion": ("PHÁT HIỆN XÂM NHẬP", "Cao"),
+            "abandoned_object": ("PHÁT HIỆN ĐỒ VẬT BỊ BỎ LẠI", "Trung bình"),
+        }.get(label, ("CẢNH BÁO AN NINH", "Cần kiểm tra"))
+        rationale = str(alert.get("triage_rationale") or "").strip()
+        observations = [
+            str(item).strip()
+            for item in (alert.get("triage_frame_observations") or [])
+            if str(item).strip()
+        ]
+        # Keep the message useful on a phone without dumping every sampled frame note.
+        evidence = "\n".join(f"• {item}" for item in observations[:6])
+        context = f"\n\n*Mô tả:*\n{rationale}" if rationale else ""
+        if evidence:
+            context += f"\n\n*Diễn biến quan sát:*\n{evidence}"
         message = (
-            f"[{alert.get('label', 'incident')}] {alert.get('camera_name', alert.get('camera_id', 'camera'))} "
-            f"at {alert.get('created_at', '')}. Confidence: {float(alert.get('confidence', 0)):.0%}."
+            f"🚨 *{label_text}*\n"
+            f"📍 Camera: {alert.get('camera_name', alert.get('camera_id', 'không xác định'))}\n"
+            f"🕒 Thời gian: {alert.get('created_at', 'không xác định')}\n"
+            f"⚠️ Mức độ: *{severity}*\n"
+            f"🤖 Độ tin cậy VLM: {float(alert.get('triage_confidence') or 0):.0%}\n"
+            f"🔎 Độ tin cậy detector: {float(alert.get('confidence', 0)):.0%}"
+            f"{context}\n\nVui lòng kiểm tra camera và xử lý nếu cần."
         )
+        # Telegram Markdown requires escaping only when user/model text contains formatting
+        # punctuation; use plain text for model-generated evidence to avoid broken messages.
+        payload_text = message.replace("*", "")
+        message = payload_text
         succeeded = True
-        for recipient in self.recipients:
-            payload = json.dumps({"recipient": {"user_id": recipient}, "message": {"text": message}}).encode()
-            request = Request(
-                self.endpoint,
-                data=payload,
-                headers={"access_token": self.access_token, "Content-Type": "application/json"},
-                method="POST",
-            )
+        for chat_id in self.chat_ids:
+            # The message is deliberately plain text after removing Markdown markers above.
+            # Omitting parse_mode prevents camera IDs/model text containing underscores or other
+            # punctuation from being rejected by Telegram's Markdown parser (HTTP 400).
+            payload = json.dumps({"chat_id": chat_id, "text": message}).encode()
+            request = Request(self.endpoint, data=payload, headers={"Content-Type": "application/json"}, method="POST")
             try:
                 with urlopen(request, timeout=8) as response:  # noqa: S310 - fixed HTTPS endpoint
                     if response.status >= 300:
                         raise RuntimeError(f"HTTP {response.status}")
+                    body = json.loads(response.read() or b"{}")
+                    if not body.get("ok", False):
+                        raise RuntimeError(body.get("description", "Telegram rejected message"))
             except Exception as exc:  # noqa: BLE001 - notification must never break monitoring
                 succeeded = False
-                logger.warning("Zalo notification failed for %s: %s", recipient, exc)
+                logger.warning("Telegram notification failed for %s: %s", chat_id, exc)
         return succeeded
+
+
+# Backward-compatible import for existing integrations.
+ZaloNotifier = TelegramNotifier
+
+
+def is_telegram_eligible(alert: dict) -> bool:
+    return alert.get("triage_status") == "complete" and alert.get("triage_verdict") == "real"
+
+
+def should_notify(notifier, alert: dict) -> bool:
+    return bool(notifier.enabled and is_telegram_eligible(alert))
 
 
 class NotificationWorker:

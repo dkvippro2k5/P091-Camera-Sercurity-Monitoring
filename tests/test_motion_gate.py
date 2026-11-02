@@ -143,7 +143,10 @@ def test_abandoned_object_still_fires_with_gating_enabled():
     detector = StaticBagDetector()
     pipeline = VisionPipeline(
         detector=detector,
-        rule_engine=RuleEngine(zone_manager=ZoneManager(), abandon_sec=2.0, track_ttl_sec=1000.0),
+        # No person ever appears, so the bag has no owner to require.
+        rule_engine=RuleEngine(
+            zone_manager=ZoneManager(), abandon_sec=2.0, track_ttl_sec=1000.0, abandon_require_owner=False
+        ),
         zones_path=None,
         draw_overlays=False,
         motion_gate=MotionGate(enabled=True, heartbeat_sec=0.5),

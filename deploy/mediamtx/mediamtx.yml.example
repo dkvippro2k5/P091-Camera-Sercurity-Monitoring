@@ -1,0 +1,19 @@
+# Production MediaMTX configuration for P-091.
+# Replace both placeholders on the server; do not commit the resulting file.
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+# Keep the RTSP relay authenticated. Cloudflare's HTTP tunnel does not proxy this port.
+authMethod: internal
+authInternalUsers:
+  - user: publisher
+    pass: ${MEDIAMTX_PUBLISH_PASSWORD}
+    permissions:
+      - action: publish
+        path: "~^test/.+$"
+  - user: vision
+    pass: ${MEDIAMTX_READ_PASSWORD}
+    permissions:
+      - action: read
+        path: "~^test/.+$"

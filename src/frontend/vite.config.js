@@ -14,6 +14,19 @@ export default defineConfig({
         // and reporting an AggregateError while the backend is restarting.
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // Proxy the WebSocket upgrade too, not just plain HTTP.
+        //
+        // Two routes depend on this and both fail silently without it: the live video socket
+        // (`/api/v1/cameras/{id}/video`, the grid's H.264 feed) and the manager dashboard's
+        // `/api/v1/manager/live`. Without `ws`, Vite answers the upgrade itself rather than
+        // forwarding it — the browser sees a socket that opens and then closes with no
+        // frames, so the grid tile stays black and nothing in the console explains why. The
+        // client's MJPEG fallback only engages after the socket has already failed, and in
+        // dev that failure is this proxy rather than a real encoder problem.
+        //
+        // Production is unaffected: nginx already forwards `Upgrade`/`Connection` for
+        // `location /api/` (see nginx.conf). This only closes the dev/prod gap.
+        ws: true,
       },
     },
   },
