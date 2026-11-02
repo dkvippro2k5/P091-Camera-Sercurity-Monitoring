@@ -830,21 +830,28 @@ class RuleEngine:
                 # Sample the lower body instead of using any-box overlap, which would alert
                 # when a shoulder merely clips the zone boundary. Two of eight samples is a
                 # 25% lower-body overlap approximation.
+                #
+                # At least one of them must be in the row at the feet. With only the thigh row
+                # inside, the feet stand in front of the zone and the body hides its far edge:
+                # someone walking along a shop front seen from above. That was 48 of the 50
+                # fallback false alarms on caviar-front, and it fired before a real entry, so
+                # the track counted as alerted and missed the entry itself. Straddling a side
+                # edge, the case the fallback is for, puts samples in both rows.
                 width = max(1.0, float(person.bbox.xmax - person.bbox.xmin))
                 height = max(1.0, float(person.bbox.ymax - person.bbox.ymin))
                 sample_points = [
-                    (person.bbox.xmin + width * x_ratio, person.bbox.ymin + height * y_ratio)
+                    (person.bbox.xmin + width * x_ratio, person.bbox.ymin + height * y_ratio, y_ratio == 0.92)
                     for y_ratio in (0.72, 0.92)
                     for x_ratio in (0.2, 0.4, 0.6, 0.8)
                 ]
-                sample_counts: dict[str, tuple[Zone, int]] = {}
-                for sample_x, sample_y in sample_points:
+                sample_counts: dict[str, tuple[Zone, int, int]] = {}
+                for sample_x, sample_y, at_feet in sample_points:
                     for zone in self.zone_manager.zones_containing(
                         camera_id, sample_x, sample_y, frame_width, frame_height, now
                     ):
-                        existing = sample_counts.get(zone.name)
-                        sample_counts[zone.name] = (zone, (existing[1] if existing else 0) + 1)
-                hits = [zone for zone, count in sample_counts.values() if count >= 2]
+                        _, count, feet = sample_counts.get(zone.name, (zone, 0, 0))
+                        sample_counts[zone.name] = (zone, count + 1, feet + at_feet)
+                hits = [zone for zone, count, feet in sample_counts.values() if count >= 2 and feet >= 1]
                 used_lower_body_overlap = bool(hits)
             current = {z.name for z in hits}
 

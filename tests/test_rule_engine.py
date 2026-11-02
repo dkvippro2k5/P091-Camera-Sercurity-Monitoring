@@ -94,19 +94,32 @@ def test_intrusion_ignores_idle_zones_outside_active_hours():
 
 
 def test_intrusion_accepts_partial_lower_body_overlap_when_feet_are_outside():
+    engine = make_engine(zone=make_zone())
+    # Straddling the zone's left edge: the foot point is just outside, but the right part of
+    # the legs, at the feet too, is inside.
+    person = make_det("person", "person_1", cx=0.37, cy=0.5, bw=0.12, bh=0.4)
+
+    events = engine.evaluate([person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test")
+
+    assert len(events) == 1
+    assert events[0].label == "intrusion"
+    assert "lower-body overlap" in events[0].reason
+
+
+def test_intrusion_ignores_a_body_overhanging_the_far_edge_with_the_feet_in_front():
     zone = Zone(
         name="restricted",
         polygon=[(0.4, 0.4), (0.6, 0.4), (0.6, 0.7), (0.4, 0.7)],
         active_hours=None,
     )
     engine = make_engine(zone=zone)
-    # The feet are below the zone, but the lower body overlaps about half of it.
+    # The feet are below the zone and the thighs cover about half of it: someone walking in
+    # front of a shop floor seen from above, not someone on it.
     person = make_det("person", "person_1", cx=0.5, cy=0.5, bw=0.2, bh=0.8)
 
-    events = engine.evaluate([person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test")
-
-    assert len(events) == 1
-    assert events[0].label == "intrusion"
+    assert engine.evaluate(
+        [person], WIDTH, HEIGHT, timestamp=1.0, now=datetime.now(), camera_id="cam_test"
+    ) == []
 
 
 def test_intrusion_fallback_never_samples_below_the_person_box():

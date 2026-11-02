@@ -91,6 +91,29 @@ def test_score_aggregates_recall_and_boundary_rate():
     assert s["false_alarms_per_hour"] == 0.0
 
 
+def test_the_shop_zone_leaves_out_the_mannequin_but_keeps_the_floor_around_it():
+    from datetime import datetime
+
+    from src.benchmark.run_intrusion_benchmark import SHOP_ZONE_PX, _point_in_polygon
+    from src.vision.schemas import Zone
+    from src.vision.zone_config import ZoneManager
+
+    zones = ZoneManager()
+    zones.set_zones("front", [Zone(name="shop", polygon=[(x / 384, y / 288) for x, y in SHOP_ZONE_PX])])
+    noon = datetime(2026, 1, 1, 12, 0)
+
+    def inside(x, y):
+        # The benchmark labels and the rule must agree on the hole.
+        labelled = _point_in_polygon(x, y, SHOP_ZONE_PX)
+        assert labelled == bool(zones.zones_containing("front", x, y, 384, 288, noon))
+        return labelled
+
+    mannequin = [(300, 127), (296, 114), (304, 123)]  # feet and lower-body samples
+    floor = [(250, 100), (320, 126), (285, 134), (300, 140), (299, 140), (300, 100)]
+    assert not any(inside(x, y) for x, y in mannequin)
+    assert all(inside(x, y) for x, y in floor)
+
+
 def test_mot_ground_truth_becomes_zero_based_foot_points(tmp_path):
     from src.benchmark.run_intrusion_benchmark import parse_mot_feet
 
