@@ -244,3 +244,125 @@ không nhận ra. Ngưỡng 0.25 được đặt sau khi thấy hai túi hồng 
 0.06 và 0.22.
 
 Ảnh trước/sau gửi cho VLM (mục 7 của tài liệu kiến trúc) chưa được đo: benchmark không chạy VLM.
+
+## Benchmark xâm nhập
+
+Detector + RuleEngine với cấu hình rule như production, chạy offline, chấm theo **lần vào vùng**.
+Pipeline của benchmark không có background model, pose hay YOLOE; chúng không ảnh hưởng rule xâm
+nhập. Giao thức nằm trong docstring của `src/benchmark/run_intrusion_benchmark.py`; kiến trúc ở
+[docs/intrusion.md](../../docs/intrusion.md).
+
+- **CAVIAR Lisbon, camera trước (`caviar-front`)** — 26 clip, 384×288, 24 phút. Zone là sàn cửa
+  hàng sau cửa kính; người đi trên hành lang trước kính là người đi dọc mép.
+- **CAVIAR Lisbon, camera hành lang (`caviar-corridor`)** — cùng 26 clip, 24 phút. Zone là dải hẹp
+  (35 px) dọc mặt tiền cửa hàng bên trái.
+- **MOT15** — PETS09-S2L1, Venice-2, ADL-Rundle-6: ngoài trời, đông người, 2,5 phút.
+
+Tổng 224 lần vào vùng, 51 phút video, 5 fps. Mọi lần đo dùng cùng bộ file MP4.
+
+**Nhãn tự suy ra, không phải ground truth gốc:** không bộ nào có nhãn xâm nhập.
+- Mỗi camera có một zone vẽ tay (`SHOP_ZONE_PX`, `CORRIDOR_ZONE_PX`, `MOT15_ZONES_PX`). Một người
+  "vào vùng" khi điểm chân của box ground-truth nằm trong zone ≥ 0,4 s; ra ≥ 1 s rồi vào lại là lần
+  vào mới. Đổi zone là đổi nhãn.
+- Người đi cách zone ≤ 15 px mà không vào là "người đi dọc mép".
+- MOT15 chỉ gán nhãn một phần đám đông, nên cảnh báo trên người không có nhãn vẫn tính là báo nhầm,
+  và báo nhầm/giờ của nó bị phóng đại vì chỉ có 2,5 phút.
+
+Một cảnh báo khớp một lần vào khi nằm trong khoảng 1 s trước lúc vào đến 1 s sau lúc ra, và điểm
+chân cách người đó ≤ 40 px (ở 288 dòng). Cảnh báo thêm trên cùng lần vào là báo trùng, không tính
+là báo nhầm. Ngoặc vuông là khoảng tin cậy 95% (Wilson) của recall.
+
+| Phiên bản | caviar-front | caviar-corridor | MOT15 |
+| --- | --- | --- | --- |
+| Baseline (zone gốc) | 44/70 [51–73%], 73 BN, P 37.6% | 83/101 [74–88%], 13 BN, P 86.5% | 37/51 [59–83%], 18 BN, P 67.3% |
+| Baseline, zone 2: khoét ma-nơ-canh | 42/72 [47–69%], 50 BN, P 45.7% | (zone không đổi) | (zone không đổi) |
+| 1: fallback nửa dưới phải có điểm ở hàng chân (**hiện tại**) | 59/72 [72–89%], 4 BN, P 93.7% | 83/101 [74–88%], 13 BN, P 86.5% | 43/51 [72–92%], 10 BN, P 81.1% |
+
+BN = báo nhầm, P = precision. Chi tiết từng clip:
+`intrusion-benchmark-{caviar-front,caviar-corridor,mot15}-{baseline,baseline-zone2,step1}.md`.
+Số của zone gốc và zone 2 ở `caviar-front` không so trực tiếp được: chúng chấm trên hai bộ nhãn khác
+nhau (70 và 72 lần vào).
+
+Bước 1, chi tiết:
+
+| Chỉ số | caviar-front | caviar-corridor | MOT15 | Tổng |
+| --- | --- | --- | --- | --- |
+| Recall | 81.9% | 82.2% | 84.3% | 82.6% (185/224) |
+| Precision | 93.7% | 86.5% | 81.1% | 87.3% |
+| Người đi dọc mép bị báo | 2/27 | 9/23 | 6/15 | 17/65 |
+| Báo trùng | 9 | 3 | 3 | 15 |
+| Báo nhầm / giờ | 10 | 32 | 238 | 32 |
+| Độ trễ sau lúc vào (trung vị / tối đa) | 0.4 s / 12.0 s | 0.2 s / 1.0 s | −0.1 s / 1.3 s | |
+
+Độ trễ âm: cảnh báo đến trước mốc vào trong nhãn, vì điểm chân của box YOLO lệch vài pixel so với
+box gán nhãn.
+
+### Zone 2 — ma-nơ-canh trong zone `caviar-front`
+
+Một ma-nơ-canh đứng trên sàn cửa hàng, chân ở (300, 127). YOLO gọi nó là `person` (conf ~0.45, box
+x 294–306, y 81–127), và mỗi lần tracker cấp ID mới cho nó là một cảnh báo: 26 trong 73 báo nhầm
+của baseline. Thêm 7 lần "phát hiện" của baseline thật ra là cảnh báo trên ma-nơ-canh, tình cờ nằm
+trong 40 px của một người khách đang vào; recall trên người thật của baseline là khoảng 37/70.
+
+Đây là lỗi đặt zone, không phải lỗi rule: người vận hành sẽ vẽ zone tránh nó. Zone 2 có một lỗ
+x 293–307, y 110–132 che chân và nửa dưới ma-nơ-canh (chỉ che chân thì fallback nửa dưới vẫn bắt),
+nối ra mép trước bằng một khe rộng 0 px để vẫn là một polygon. Khách đi xuyên qua lỗ thì ra khỏi
+vùng trong những frame đó, nên 70 lần vào thành 72. Lỗ nhỏ nhất che được ma-nơ-canh được chọn để
+nhãn đổi ít nhất.
+
+### Bước 1 — fallback nửa dưới phải có điểm ở hàng chân
+
+Khi điểm chân ở ngoài zone, rule lấy 8 điểm mẫu ở 72% và 92% chiều cao box và báo nếu ≥ 2 điểm
+trong zone — dành cho người bị che một phần, điểm chân không tin được. Trên zone 2, fallback gây
+50/50 báo nhầm ở `caviar-front`, 12/13 ở corridor và 14/18 ở MOT15.
+
+Xem ảnh từng ca (zone, box YOLO, điểm chân, 8 điểm mẫu) rồi đếm điểm trong zone theo hàng:
+
+| | Cảnh báo đúng qua fallback | Báo nhầm qua fallback |
+| --- | --- | --- |
+| caviar-front | 10/11 chỉ có hàng 72% | **48/50 chỉ có hàng 72%** |
+| caviar-corridor | **50/50 có ≥ 1 điểm ở hàng 92%** | 11/12 có ≥ 1 điểm ở hàng 92% |
+| MOT15 | **13/13 có ≥ 1 điểm ở hàng 92%** | 10/14 chỉ có hàng 72% |
+
+Chỉ có hàng 72% trong zone nghĩa là chân đứng trước zone và thân che mép xa của nó: người đi trên
+hành lang trước kính, nhìn từ trên xuống. Fallback giờ cần thêm ≥ 1 điểm ở hàng 92%. Đứng chéo qua
+mép bên của zone — ca fallback được làm ra để bắt, cũng là ca của dải hẹp ở corridor — có điểm ở cả
+hai hàng.
+
+Recall **tăng**: cảnh báo fallback trước đây nổ khi người còn ngoài vùng (bị chấm là báo nhầm) và
+dùng mất lần báo duy nhất của track, nên lúc người đó vào thật thì không báo nữa. Ở front, số lần
+vào bắt được tăng 42 → 59 và độ trễ trung vị giảm 3.2 s → 0.4 s. Corridor không đổi, vì báo nhầm ở
+đó hầu hết có điểm ở hàng 92%.
+
+**Điều kiện được chọn sau khi xem chính các clip này** — không có tập kiểm chứng độc lập, nên số
+liệu lạc quan hơn thực tế.
+
+### Đã thử và không dùng
+
+Thử bằng replay detection đã cache (khớp benchmark chính thức từng cảnh báo, cùng thời điểm và track
+ID trên cả 55 clip):
+
+- **Gộp cảnh báo theo sự cố** (track mới gần box cuối của track vừa báo, trong cooldown, kiểu
+  `_merge_fall_incidents`), tổng trên 3 bộ:
+
+  | Biến thể | Lần vào bị mất | Báo trùng bớt được |
+  | --- | --- | --- |
+  | Chỉ theo vị trí | 103 | 12 |
+  | Chỉ track sinh trong vùng (≤ 1 s) | 45 | 8 |
+  | Track cũ đã mất ≤ 1 s | 7 | 4 |
+  | Track cũ đã mất ≤ 2 s, track mới sinh trong vùng | 3 | 2 |
+
+  Người khác nhau hay xuất hiện ở cùng chỗ (cửa cửa hàng, đi theo cặp), nên không biến thể nào
+  đáng đổi.
+- **Re-arm chỉ sau khi ra khỏi vùng ≥ 1 s**: bớt 1 báo trùng ở front, mất 3 lần vào ở MOT15.
+- **Fallback cần ≥ 2 điểm ở hàng 92%**: corridor mất 12 lần vào.
+
+### Còn lại
+
+- **Người đi dọc dải hẹp ở corridor** (9/23 bị báo): chân và mép trái box đè lên dải 35 px; hình
+  học không tách được với người vào thật.
+- **39 lần vào bị sót** (13 / 18 / 8) chưa được phân loại.
+- **Báo trùng** (9 / 3 / 3): chủ yếu là người đổi track ID khi đang ở trong vùng, nhiều nhất ở
+  `ShopAssistant*` (nhân viên đi lại trong cửa hàng).
+- **`WalkByShop1` ở camera trước quay với góc zoom khác** các clip còn lại: zone vẽ cho góc chuẩn
+  không khớp cảnh, và có một ma-nơ-canh khác trong zone. Chưa xử lý riêng.
