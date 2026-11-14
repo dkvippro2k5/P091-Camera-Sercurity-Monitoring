@@ -881,6 +881,47 @@ def test_build_triage_client_builds_the_real_one_when_configured():
     assert isinstance(build_triage_client(settings), OpenAIVLMTriage)
 
 
+class _ModelListClient:
+    """Stands in for the SDK client's `models.list()`; raises when given an exception."""
+
+    def __init__(self, served):
+        self._served = served
+        self.models = self
+
+    def list(self):
+        if isinstance(self._served, Exception):
+            raise self._served
+        return [type("Model", (), {"id": name})() for name in self._served]
+
+
+def test_a_model_the_endpoint_does_not_serve_is_reported_at_startup(caplog):
+    from src.services.vlm import check_triage_model
+
+    triage = OpenAIVLMTriage(api_key="sk-x", model="qwen-vl-plus", base_url="https://example.invalid/v1")
+    triage._client = _ModelListClient(["qwen3-vl-plus", "qwen3-omni-flash"])
+
+    assert "qwen-vl-plus" in triage.missing_model()
+    with caplog.at_level("ERROR"):
+        check_triage_model(triage)
+    assert "not served" in caplog.text
+
+
+def test_a_served_model_or_an_unlistable_endpoint_is_not_reported():
+    triage = OpenAIVLMTriage(api_key="sk-x", model="qwen3-vl-plus", base_url="https://example.invalid/v1")
+    triage._client = _ModelListClient(["qwen3-vl-plus"])
+    assert triage.missing_model() is None
+
+    # A listing that fails says nothing about the model itself.
+    triage._client = _ModelListClient(RuntimeError("listing not supported"))
+    assert triage.missing_model() is None
+
+
+def test_the_startup_check_skips_clients_with_nothing_to_look_up():
+    from src.services.vlm import check_triage_model
+
+    check_triage_model(NullVLMTriage("disabled"))  # must not raise
+
+
 def test_thinking_mode_is_disabled_only_for_a_qwen3_model_on_a_compatible_endpoint():
     """qwen3* models default to a thinking mode that adds 8-25s/alert; `enable_thinking: False`
     is a DashScope-only extension. The vision models (qwen-vl-*) don't run thinking mode and
