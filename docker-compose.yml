@@ -13,8 +13,17 @@ services:
       - ./data:/app/data
       # Model weights are deployment data, not part of the Git repository or image.
       - ${MODEL_WEIGHTS_HOST_PATH:-./src/vision/weights/yolo26l.pt}:/app/models/detector.pt:ro
+      # Weights of the optional layers: the fall pose gate and the open-vocabulary note on
+      # left-object alerts. `*.pt` is kept out of the image, so without this mount both layers
+      # switch themselves off with only a log warning, and the container runs a different
+      # pipeline from the one benchmarked. A directory rather than per-file mounts: a missing
+      # file then disables just its layer, where a missing file mount becomes an empty
+      # directory that the model loader trips over.
+      - ${OPTIONAL_WEIGHTS_HOST_DIR:-./src/vision/weights}:/app/weights:ro
     environment:
       MODEL_WEIGHTS_PATH: /app/models/detector.pt
+      FALL_POSE_WEIGHTS_PATH: /app/weights/yolo26s-pose.pt
+      ABANDON_CHECK_WEIGHTS_PATH: /app/weights/yoloe-26s-left-objects.pt
       OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
       MKL_NUM_THREADS: ${MKL_NUM_THREADS:-2}
       OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-2}
