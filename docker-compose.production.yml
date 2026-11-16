@@ -61,11 +61,15 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-p091}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-p091}
       REDIS_URL: redis://redis:6379/0
       MODEL_WEIGHTS_PATH: /app/models/detector.pt
+      # The optional layers' weights, from the directory mounted below (see docker-compose.yml).
+      FALL_POSE_WEIGHTS_PATH: /app/weights/yolo26s-pose.pt
+      ABANDON_CHECK_WEIGHTS_PATH: /app/weights/yoloe-26s-left-objects.pt
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
       - ${MODEL_WEIGHTS_HOST_PATH:-./models/yolo26n.pt}:/app/models/detector.pt:ro
+      - ${OPTIONAL_WEIGHTS_HOST_DIR:-./models}:/app/weights:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -213,6 +213,24 @@ class OpenAIVLMTriage:
         wants_no_thinking = bool(base_url) and str(model).lower().startswith("qwen3")
         self._extra_body = {"enable_thinking": False} if wants_no_thinking else {}
 
+    def missing_model(self) -> str | None:
+        """Why the configured model cannot be used, or None when it can or that is unknown.
+
+        A model name the endpoint does not serve fails every single call with a 404, and
+        `assess` turns each one into an `uncertain` the operator reads as "assessment
+        unavailable" -- nothing says the configuration is wrong. A provider retiring a name
+        did exactly that here (`qwen-vl-plus` on DashScope). Listing models costs no tokens.
+        A listing that fails says nothing about the model, so it is not reported as missing.
+        """
+        try:
+            served = {model.id for model in self._client.models.list()}
+        except Exception as exc:  # noqa: BLE001 - an unlistable endpoint is not a missing model
+            logger.info(f"Could not list models to check VLM_MODEL '{self.model}': {type(exc).__name__}: {exc}")
+            return None
+        if self.model in served:
+            return None
+        return f"VLM_MODEL '{self.model}' is not served by this endpoint; every triage call will fail."
+
     def assess(self, request: TriageRequest) -> TriageVerdict:
         """Judge one alert. Never raises.
 
@@ -551,3 +569,16 @@ def build_triage_client(settings) -> VLMTriage:  # noqa: ANN001 - Settings, avoi
     except Exception as exc:  # noqa: BLE001 - a missing openai package must not block startup
         logger.error(f"Could not build the VLM client, continuing without triage: {exc}")
         return NullVLMTriage(f"VLM client unavailable: {exc}")
+
+
+def check_triage_model(triage: VLMTriage) -> None:
+    """Log loudly at startup when the configured VLM model does not exist. Never raises.
+
+    Only the API client can be checked; the null and local clients have nothing to look up.
+    """
+    check = getattr(triage, "missing_model", None)
+    if check is None:
+        return
+    problem = check()
+    if problem:
+        logger.error(problem)

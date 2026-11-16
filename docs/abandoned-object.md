@@ -236,5 +236,6 @@ của background model và YOLOE được chọn trên chính 18 sự kiện nà
 - **Ai nhặt túi lên không được phân biệt:** người lạ lấy túi cũng làm túi "được trông" và biến mất
   như chủ lấy lại. Cần nhãn "ai lấy" để đo.
 - **Dữ liệu ít:** 18 sự kiện, khoảng tin cậy rộng; ngưỡng không có tập kiểm chứng độc lập.
-- **Docker** chưa mount `yoloe-26s-left-objects.pt` (cũng như `yolo26s-pose.pt`): bản Docker chạy
-  không có ghi chú YOLOE.
+- **Docker** mount thư mục `OPTIONAL_WEIGHTS_HOST_DIR` vào `/app/weights` cho
+  `yoloe-26s-left-objects.pt` và `yolo26s-pose.pt`. Thiếu file thì tầng đó tắt, chỉ có một dòng
+  cảnh báo trong log.

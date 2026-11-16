@@ -21,6 +21,7 @@ from src.services.login_limiter import LoginLimiter
 from src.services.monitoring import MonitoringService
 from src.services.sessions import SessionStore
 from src.services.user_store import UserStore
+from src.services.vlm import check_triage_model
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ async def lifespan(app: FastAPI):
     service.bind_loop(asyncio.get_running_loop())
     app.state.monitoring = service
     print(f"Monitoring service ready ({len(service.list_cameras())} camera(s) restored)")
+    # A network round trip, so it runs off the loop and startup does not wait for it. Kept on
+    # app.state so the task is not garbage-collected before it finishes.
+    app.state.triage_model_check = asyncio.create_task(asyncio.to_thread(check_triage_model, service.triage))
 
     try:
         yield
